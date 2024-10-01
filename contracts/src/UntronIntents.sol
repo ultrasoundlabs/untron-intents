@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "./interfaces/IERC7683.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 abstract contract UntronIntents is ISettlementContract {
     mapping(address => uint256) public nonces;
