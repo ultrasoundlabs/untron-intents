@@ -1,0 +1,9 @@
+{
+    "feee_api_key": "",
+    "tron_private_key": "",
+    "ethereum_private_key": "",
+    "networks": [{
+        "contract_address": "",
+        "rpc": ""
+    }]
+}
