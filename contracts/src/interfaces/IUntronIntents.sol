@@ -18,6 +18,11 @@ interface IUntronIntents is IOriginSettler {
         uint256 outputAmount;
     }
 
+    /// @notice Get the gasless nonce for a user
+    /// @param user The user to get the nonce for
+    /// @return The gasless nonce for the user
+    function gaslessNonces(address user) external view returns (uint256);
+
     /// @notice Get the intent for an order
     /// @param orderId The ID of the order
     /// @return The intent for the order
