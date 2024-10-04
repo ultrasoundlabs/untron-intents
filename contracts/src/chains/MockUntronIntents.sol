@@ -20,15 +20,11 @@ contract MockUntronIntents is Initializable, OwnableUpgradeable, UntronIntents {
     /// @dev This is required for upgradeable contracts
     function initialize() public initializer {
         __Ownable_init(msg.sender);
+        __UntronIntents_init();
     }
 
     /// @inheritdoc UntronIntents
-    function _determineBeneficiary(Intent memory intent, bytes calldata, uint32 fillDeadline)
-        internal
-        view
-        override
-        returns (address)
-    {
-        return uint32(block.timestamp) <= fillDeadline ? owner() : intent.user;
+    function _validateFill(Intent memory, bytes calldata) internal view override returns (bool) {
+        return msg.sender == owner();
     }
 }

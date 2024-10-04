@@ -57,7 +57,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = IUntronIntents.Intent({
-            user: user,
+            refundBeneficiary: user,
             inputToken: address(inputToken),
             inputAmount: inputAmount,
             to: to,
@@ -73,7 +73,7 @@ contract UntronIntentsTest is Test {
         bytes32 orderId = keccak256(abi.encode(order));
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
 
-        assertEq(storedIntent.user, user);
+        assertEq(storedIntent.refundBeneficiary, user);
         assertEq(storedIntent.inputToken, address(inputToken));
         assertEq(storedIntent.inputAmount, inputAmount);
         assertEq(storedIntent.to, to);
@@ -92,7 +92,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = IUntronIntents.Intent({
-            user: user,
+            refundBeneficiary: user,
             inputToken: address(inputToken),
             inputAmount: inputAmount,
             to: to,
@@ -119,7 +119,7 @@ contract UntronIntentsTest is Test {
 
         // Check that the intent was deleted
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
-        assertEq(storedIntent.user, address(0));
+        assertEq(storedIntent.refundBeneficiary, address(0));
         assertEq(storedIntent.inputToken, address(0));
         assertEq(storedIntent.inputAmount, 0);
         assertEq(storedIntent.to, bytes21(0));
@@ -133,7 +133,7 @@ contract UntronIntentsTest is Test {
         returns (IUntronIntents.Intent memory)
     {
         return IUntronIntents.Intent({
-            user: address(0),
+            refundBeneficiary: address(0),
             inputToken: address(0),
             inputAmount: inputAmount,
             to: to,
@@ -181,7 +181,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -192,7 +192,7 @@ contract UntronIntentsTest is Test {
         bytes32 orderId = keccak256(abi.encode(order));
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
 
-        assertEq(storedIntent.user, user);
+        assertEq(storedIntent.refundBeneficiary, user);
         assertEq(storedIntent.inputToken, address(inputToken));
         assertEq(storedIntent.inputAmount, inputAmount);
         assertEq(storedIntent.to, to);
@@ -207,7 +207,7 @@ contract UntronIntentsTest is Test {
         bytes21 to = bytes21(uint168(0x123456789abcdef0123456789abcdef012345));
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         vm.warp(block.timestamp + 2 hours);
@@ -232,7 +232,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -265,7 +265,7 @@ contract UntronIntentsTest is Test {
         bytes21 to = bytes21(uint168(0x123456789abcdef0123456789abcdef012345));
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -326,7 +326,7 @@ contract UntronIntentsTest is Test {
             bytes21 to = bytes21(uint168(0x123456789abcdef0123456789abcdef012345));
             intent = createIntent(inputAmount, outputAmount, to);
         }
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
         bytes memory orderData = abi.encode(intent);
 
@@ -334,7 +334,34 @@ contract UntronIntentsTest is Test {
             createGaslessOrder(user, untronIntents.gaslessNonces(user), openDeadline, fillDeadline, orderData);
         order.originSettler = address(untronIntents);
 
-        bytes32 messageHash = keccak256(abi.encode(order));
+        // EIP-712 domain
+        bytes32 DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("UntronIntents"),
+                keccak256("1"),
+                block.chainid,
+                address(untronIntents)
+            )
+        );
+
+        // EIP-712 struct hash
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount)"
+                ),
+                intent.refundBeneficiary,
+                intent.inputToken,
+                intent.inputAmount,
+                intent.to,
+                intent.outputAmount
+            )
+        );
+
+        // EIP-712 message hash
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, messageHash);
 
         vm.startPrank(user);
@@ -346,7 +373,7 @@ contract UntronIntentsTest is Test {
         bytes32 orderId = keccak256(abi.encode(order));
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
 
-        assertEq(storedIntent.user, user);
+        assertEq(storedIntent.refundBeneficiary, user);
         assertEq(inputToken.balanceOf(address(untronIntents)), inputAmount);
     }
 
@@ -365,7 +392,7 @@ contract UntronIntentsTest is Test {
         address attacker = vm.addr(attackerPrivateKey);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
         bytes memory orderData = abi.encode(intent);
 
@@ -396,7 +423,7 @@ contract UntronIntentsTest is Test {
         address user = vm.addr(userPrivateKey);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
         bytes memory orderData = abi.encode(intent);
 
@@ -434,7 +461,7 @@ contract UntronIntentsTest is Test {
         uint32 fillDeadline = uint32(block.timestamp - 30 minutes);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
         bytes memory orderData = abi.encode(intent);
 
@@ -493,7 +520,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -529,7 +556,7 @@ contract UntronIntentsTest is Test {
 
         IUntronIntents.Intent memory intent = untronIntents.intents(nonExistentOrderId);
 
-        assertEq(intent.user, address(0));
+        assertEq(intent.refundBeneficiary, address(0));
         assertEq(intent.inputAmount, 0);
     }
 
@@ -545,7 +572,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount * 2);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -577,7 +604,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -619,7 +646,7 @@ contract UntronIntentsTest is Test {
         inputToken.approve(address(untronIntents), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputAmount, outputAmount, to);
-        intent.user = user;
+        intent.refundBeneficiary = user;
         intent.inputToken = address(inputToken);
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
@@ -635,7 +662,7 @@ contract UntronIntentsTest is Test {
         bytes32 orderId = keccak256(abi.encode(order));
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
 
-        assertEq(storedIntent.user, user);
+        assertEq(storedIntent.refundBeneficiary, user);
         assertEq(storedIntent.inputToken, address(inputToken));
         assertEq(storedIntent.inputAmount, inputAmount);
         assertEq(storedIntent.to, to);

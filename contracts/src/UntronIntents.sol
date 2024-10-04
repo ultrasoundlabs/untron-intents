@@ -3,12 +3,13 @@ pragma solidity ^0.8.20;
 
 import "./interfaces/IUntronIntents.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /// @title Basic ERC-7683 logic for Untron Intents
 /// @author Ultrasound Labs
 /// @dev This contracts implements basic logic for EVM->TRON intent-based transfers.
 ///      It does not implement fill verification logic, which must be implemented by the inheriting contract.
-abstract contract UntronIntents is IUntronIntents {
+abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @dev A mapping of user addresses to their gasless nonce.
     /// @dev Used to prevent replay attacks for gasless orders.
     mapping(address => uint256) public gaslessNonces;
@@ -28,6 +29,20 @@ abstract contract UntronIntents is IUntronIntents {
     bytes32 internal constant TRON_SETTLEMENT_ADDRESS = bytes32(bytes21(0)); // TODO:
     /// @dev The TRON SLIP-44 coin ID (used as a chain ID)
     uint32 internal constant TRON_COINID = 0x800000c3;
+
+    // EIP-712 type hashes
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private constant INTENT_TYPEHASH = keccak256(
+        "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount)"
+    );
+    bytes32 private DOMAIN_SEPARATOR;
+
+    function __UntronIntents_init() internal onlyInitializing {
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256("UntronIntents"), keccak256("1"), block.chainid, address(this))
+        );
+    }
 
     /// @notice Get this network's chain ID
     /// @return uint64 The chain ID
@@ -123,8 +138,21 @@ abstract contract UntronIntents is IUntronIntents {
         // Deserialize the signature
         (uint8 v, bytes32 r, bytes32 s) = abi.decode(signature, (uint8, bytes32, bytes32));
 
-        // Reconstruct the message that was signed
-        bytes32 messageHash = keccak256(abi.encode(order));
+        // Decode the intent from the order data
+        Intent memory intent = abi.decode(order.orderData, (Intent));
+
+        // Reconstruct the message that was signed using EIP-712
+        bytes32 structHash = keccak256(
+            abi.encode(
+                INTENT_TYPEHASH,
+                intent.refundBeneficiary,
+                intent.inputToken,
+                intent.inputAmount,
+                intent.to,
+                intent.outputAmount
+            )
+        );
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
 
         // Recover the signer's address
         address signer = ecrecover(messageHash, v, r, s);
@@ -134,9 +162,6 @@ abstract contract UntronIntents is IUntronIntents {
 
         // Order ID is the hash of the order (OnchainCrossChainOrder or GaslessCrossChainOrder)
         bytes32 orderId = keccak256(abi.encode(order));
-
-        // Decode the intent from the order data
-        Intent memory intent = abi.decode(order.orderData, (Intent));
 
         // Transfer the input token from the user to this contract
         require(
@@ -176,11 +201,15 @@ abstract contract UntronIntents is IUntronIntents {
         // Get the fill deadline from the fillDeadlines mapping
         uint32 fillDeadline = fillDeadlines[orderId];
 
-        // Determine who should get the funds for the intent (the filler, the user, or no one)
-        address beneficiary = _determineBeneficiary(intent, proof, fillDeadline);
+        // Validate the fill of the order
+        if (fillDeadline > block.timestamp) {
+            require(_validateFill(intent, proof), "Invalid fill");
+        }
 
         // Transfer the input token from the filler to the user
-        IERC20(intent.inputToken).transfer(beneficiary, intent.inputAmount);
+        IERC20(intent.inputToken).transfer(
+            fillDeadline > block.timestamp ? msg.sender : intent.refundBeneficiary, intent.inputAmount
+        );
 
         // Delete the intent from the intents mapping
         delete _intents[orderId];
@@ -188,16 +217,12 @@ abstract contract UntronIntents is IUntronIntents {
         delete fillDeadlines[orderId];
     }
 
-    /// @notice Determine who should get the funds for the intent (the filler, the user, or no one)
+    /// @notice Validate the fill of the order
     /// @param intent The intent to validate
     /// @param proof The proof of fulfillment
-    /// @param fillDeadline The deadline for the fill of the order
-    /// @return address The address of the beneficiary
-    /// @dev In the mock, the beneficiary is always the owner. In production, this will be verified by
+    /// @return bool Whether the fill is valid
+    /// @dev In the mock, the fill is always valid. In production, this will be verified by
     ///      the ZK proof of the fill on Tron blockchain. After deadline, the user will be able to reclaim
     ///      the funds without the proof, in case the filler doesn't fill the order and prove it before the deadline.
-    function _determineBeneficiary(Intent memory intent, bytes calldata proof, uint32 fillDeadline)
-        internal
-        virtual
-        returns (address);
+    function _validateFill(Intent memory intent, bytes calldata proof) internal virtual returns (bool);
 }

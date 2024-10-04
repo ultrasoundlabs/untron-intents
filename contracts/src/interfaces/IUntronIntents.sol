@@ -6,8 +6,8 @@ import "./IERC7683.sol";
 interface IUntronIntents is IOriginSettler {
     /// @dev The intent struct for an order
     struct Intent {
-        // The user who initiated the order
-        address user;
+        // The address that can reclaim the order if it is not filled (usually its creator)
+        address refundBeneficiary;
         // The input token for the order
         address inputToken;
         // The input amount for the order
