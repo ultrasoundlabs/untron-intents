@@ -334,6 +334,8 @@ contract UntronIntentsTest is Test {
             createGaslessOrder(user, untronIntents.gaslessNonces(user), openDeadline, fillDeadline, orderData);
         order.originSettler = address(untronIntents);
 
+        bytes32 orderId = keccak256(abi.encode(order));
+
         // EIP-712 domain
         bytes32 DOMAIN_SEPARATOR = keccak256(
             abi.encode(
@@ -349,13 +351,14 @@ contract UntronIntentsTest is Test {
         bytes32 structHash = keccak256(
             abi.encode(
                 keccak256(
-                    "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount)"
+                    "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount,bytes32 orderId)"
                 ),
                 intent.refundBeneficiary,
                 intent.inputToken,
                 intent.inputAmount,
                 intent.to,
-                intent.outputAmount
+                intent.outputAmount,
+                orderId
             )
         );
 
@@ -369,8 +372,6 @@ contract UntronIntentsTest is Test {
         vm.stopPrank();
 
         untronIntents.openFor(order, abi.encode(v, r, s), "");
-
-        bytes32 orderId = keccak256(abi.encode(order));
         IUntronIntents.Intent memory storedIntent = untronIntents.intents(orderId);
 
         assertEq(storedIntent.refundBeneficiary, user);

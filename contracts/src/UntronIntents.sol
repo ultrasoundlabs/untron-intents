@@ -34,7 +34,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     bytes32 private constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant INTENT_TYPEHASH = keccak256(
-        "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount)"
+        "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount,bytes32 orderId)"
     );
     bytes32 private DOMAIN_SEPARATOR;
 
@@ -135,8 +135,8 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Increment the user's gasless nonce
         gaslessNonces[order.user]++;
 
-        // Deserialize the signature
-        (uint8 v, bytes32 r, bytes32 s) = abi.decode(signature, (uint8, bytes32, bytes32));
+        // Order ID is the hash of the order (OnchainCrossChainOrder or GaslessCrossChainOrder)
+        bytes32 orderId = keccak256(abi.encode(order));
 
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
@@ -149,19 +149,20 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
                 intent.inputToken,
                 intent.inputAmount,
                 intent.to,
-                intent.outputAmount
+                intent.outputAmount,
+                orderId
             )
         );
         bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+
+        // Deserialize the signature
+        (uint8 v, bytes32 r, bytes32 s) = abi.decode(signature, (uint8, bytes32, bytes32));
 
         // Recover the signer's address
         address signer = ecrecover(messageHash, v, r, s);
 
         // Verify that the signature was created by order.user
         require(signer == order.user, "Invalid signature");
-
-        // Order ID is the hash of the order (OnchainCrossChainOrder or GaslessCrossChainOrder)
-        bytes32 orderId = keccak256(abi.encode(order));
 
         // Transfer the input token from the user to this contract
         require(
