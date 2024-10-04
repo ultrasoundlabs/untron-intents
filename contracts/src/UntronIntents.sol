@@ -14,6 +14,8 @@ abstract contract UntronIntents is IUntronIntents {
     mapping(address => uint256) public gaslessNonces;
     /// @dev A mapping of order IDs to their corresponding intents.
     mapping(bytes32 => Intent) internal _intents;
+    /// @dev A mapping of order IDs to their fill deadlines.
+    mapping(bytes32 => uint32) public fillDeadlines;
 
     /// @inheritdoc IUntronIntents
     function intents(bytes32 orderId) external view returns (Intent memory) {
@@ -89,6 +91,8 @@ abstract contract UntronIntents is IUntronIntents {
 
         // Store the intent in the intents mapping
         _intents[orderId] = intent;
+        // Store the fill deadline in the fillDeadlines mapping
+        fillDeadlines[orderId] = order.fillDeadline;
 
         // Emit an Open event
         emit Open(orderId, resolvedOrder);
@@ -136,11 +140,13 @@ abstract contract UntronIntents is IUntronIntents {
 
         // Transfer the input token from the user to this contract
         require(
-            IERC20(intent.inputToken).transferFrom(msg.sender, address(this), intent.inputAmount), "Insufficient funds"
+            IERC20(intent.inputToken).transferFrom(order.user, address(this), intent.inputAmount), "Insufficient funds"
         );
 
         // Store the intent in the intents mapping
         _intents[orderId] = intent;
+        // Store the fill deadline in the fillDeadlines mapping
+        fillDeadlines[orderId] = order.fillDeadline;
 
         // Resolve the intent into a cross-chain order for fillers to use when filling the order
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
@@ -167,22 +173,31 @@ abstract contract UntronIntents is IUntronIntents {
         // Get the intent from the intents mapping
         Intent memory intent = _intents[orderId];
 
+        // Get the fill deadline from the fillDeadlines mapping
+        uint32 fillDeadline = fillDeadlines[orderId];
+
         // Determine who should get the funds for the intent (the filler, the user, or no one)
-        address beneficiary = _determineBeneficiary(intent, proof);
+        address beneficiary = _determineBeneficiary(intent, proof, fillDeadline);
 
         // Transfer the input token from the filler to the user
         IERC20(intent.inputToken).transfer(beneficiary, intent.inputAmount);
 
         // Delete the intent from the intents mapping
         delete _intents[orderId];
+        // Delete the fill deadline from the fillDeadlines mapping
+        delete fillDeadlines[orderId];
     }
 
     /// @notice Determine who should get the funds for the intent (the filler, the user, or no one)
     /// @param intent The intent to validate
     /// @param proof The proof of fulfillment
+    /// @param fillDeadline The deadline for the fill of the order
     /// @return address The address of the beneficiary
     /// @dev In the mock, the beneficiary is always the owner. In production, this will be verified by
     ///      the ZK proof of the fill on Tron blockchain. After deadline, the user will be able to reclaim
     ///      the funds without the proof, in case the filler doesn't fill the order and prove it before the deadline.
-    function _determineBeneficiary(Intent memory intent, bytes calldata proof) internal virtual returns (address);
+    function _determineBeneficiary(Intent memory intent, bytes calldata proof, uint32 fillDeadline)
+        internal
+        virtual
+        returns (address);
 }
