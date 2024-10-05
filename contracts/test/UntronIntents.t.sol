@@ -336,23 +336,10 @@ contract UntronIntentsTest is Test {
 
         bytes32 orderId = keccak256(abi.encode(order));
 
-        // EIP-712 domain
-        bytes32 DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("UntronIntents"),
-                keccak256("1"),
-                block.chainid,
-                address(untronIntents)
-            )
-        );
-
         // EIP-712 struct hash
         bytes32 structHash = keccak256(
             abi.encode(
-                keccak256(
-                    "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount,bytes32 orderId)"
-                ),
+                untronIntents.INTENT_TYPEHASH(),
                 intent.refundBeneficiary,
                 intent.inputToken,
                 intent.inputAmount,
@@ -363,7 +350,7 @@ contract UntronIntentsTest is Test {
         );
 
         // EIP-712 message hash
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", untronIntents.DOMAIN_SEPARATOR(), structHash));
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, messageHash);
 

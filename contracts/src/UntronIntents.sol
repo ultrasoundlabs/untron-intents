@@ -24,19 +24,20 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     }
 
     /// @dev The USDT TRC20 token on Tron
-    bytes32 internal constant USDT_TRC20 = bytes32(bytes21(0x41a614f803b6fd780986a42c78ec9c7f77e6ded13c));
+    bytes32 internal constant USDT_TRC20 =
+        bytes32(uint256(uint168(bytes21(0x41a614f803b6fd780986a42c78ec9c7f77e6ded13c))));
     /// @dev The DestinationSettler contract address on Tron
-    bytes32 internal constant TRON_SETTLEMENT_ADDRESS = bytes32(bytes21(0)); // TODO:
+    bytes32 internal constant TRON_SETTLEMENT_ADDRESS = bytes32(uint256(uint168(bytes21(0)))); // TODO:
     /// @dev The TRON SLIP-44 coin ID (used as a chain ID)
     uint32 internal constant TRON_COINID = 0x800000c3;
 
     // EIP-712 type hashes
     bytes32 private constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    bytes32 private constant INTENT_TYPEHASH = keccak256(
+    bytes32 public constant INTENT_TYPEHASH = keccak256(
         "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount,bytes32 orderId)"
     );
-    bytes32 private DOMAIN_SEPARATOR;
+    bytes32 public DOMAIN_SEPARATOR;
 
     function __UntronIntents_init() internal onlyInitializing {
         DOMAIN_SEPARATOR = keccak256(
@@ -68,7 +69,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
 
         // And one output in USDT TRC20 on Tron
         Output[] memory minReceived = new Output[](1);
-        minReceived[0] = Output(USDT_TRC20, intent.outputAmount, bytes32(intent.to), TRON_COINID);
+        minReceived[0] = Output(USDT_TRC20, intent.outputAmount, bytes32(uint256(uint168(intent.to))), TRON_COINID);
 
         // The single fill instruction is to send the output to the settlement address on Tron
         FillInstruction[] memory fillInstructions = new FillInstruction[](1);

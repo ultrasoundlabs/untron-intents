@@ -18,6 +18,13 @@ interface IUntronIntents is IOriginSettler {
         uint256 outputAmount;
     }
 
+    /// @notice EIP-712 typehash for the intent struct + order ID
+    /// @dev Needed to sign gasless orders.
+    ///      ABI is equal to Intent struct but with bytes32 (orderId) at the end
+    function INTENT_TYPEHASH() external view returns (bytes32);
+    /// @notice EIP-712 domain separator
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+
     /// @notice Get the gasless nonce for a user
     /// @param user The user to get the nonce for
     /// @return The gasless nonce for the user
