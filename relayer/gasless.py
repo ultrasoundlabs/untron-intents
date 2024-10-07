@@ -5,6 +5,7 @@ from eth_account.messages import encode_structured_data
 from web3 import Web3
 from base58 import b58decode_check
 from eth_abi import encode
+import requests
 
 def encode_order(order):
     return encode(["(address,address,uint256,uint64,uint32,uint32,bytes)"], [order])
@@ -100,21 +101,16 @@ def permit(web3, private_key, sender_private_key, input_token, input_amount, spe
     r = signed_message.r.to_bytes(32, byteorder='big')
     s = signed_message.s.to_bytes(32, byteorder='big')
     
-    # Build the transaction
-    tx = token_contract.functions.permit(owner, spender, input_amount, deadline, v, r, s).build_transaction({
-        'from': Account.from_key(sender_private_key).address,
-        'nonce': web3.eth.get_transaction_count(Account.from_key(sender_private_key).address),
-        'gas': 200000,  # Adjust as needed
-        'gasPrice': web3.eth.gas_price,
-    })
-
-    # Sign and send the transaction
-    signed_tx = Account.from_key(sender_private_key).sign_transaction(tx)
-    tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
-    
-    # Wait for the transaction receipt
-    tx_receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    return tx_receipt
+    print(requests.post("http://localhost:3000/intents/permit", json={
+        "tokenAddress": input_token,
+        "owner": Account.from_key(private_key).address,
+        "spender": spender,
+        "value": str(input_amount),
+        "deadline": str(deadline),
+        "v": str(v),
+        "r": "0x" + r.hex(),
+        "s": "0x" + s.hex()
+    }).json())
 
 def main():
     parser = argparse.ArgumentParser(description="Create and sign a gasless order for Untron Intents")
@@ -135,8 +131,7 @@ def main():
     web3 = Web3(Web3.HTTPProvider(args.rpc))
     chain_id = web3.eth.chain_id
 
-    receipt = permit(web3, args.private_key, args.sender_private_key, args.input_token, args.input_amount, args.origin_settler)
-    print(receipt)
+    # permit(web3, args.private_key, args.sender_private_key, args.input_token, args.input_amount, args.origin_settler)
 
     contract = web3.eth.contract(args.origin_settler, abi=json.load(open("abi.json"))["abi"])
     domain_separator = contract.functions.DOMAIN_SEPARATOR().call()
@@ -170,22 +165,16 @@ def main():
     r = signed_message.r.to_bytes(32, byteorder='big')
     s = signed_message.s.to_bytes(32, byteorder='big')
     sig = encode(["(uint8,bytes32,bytes32)"], [(v, r, s)])
+    print(sig.hex())
 
-    # Build the transaction
-    tx = contract.functions.openFor(order, sig, b"").build_transaction({
-        'from': Account.from_key(args.sender_private_key).address,
-        'nonce': web3.eth.get_transaction_count(Account.from_key(args.sender_private_key).address),
-        'gas': 300000,  # Adjust as needed
-        'gasPrice': web3.eth.gas_price,
-    })
-
-    # Sign and send the transaction
-    signed_tx = Account.from_key(args.sender_private_key).sign_transaction(tx)
-    tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
-    
-    # Wait for the transaction receipt
-    tx_receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
-    print(f"Transaction successful. Transaction hash: {tx_receipt.transactionHash.hex()}")
+    print(requests.post("http://localhost:3000/intents/gasless-order", json={
+        "user": args.user,
+        "openDeadline": str(args.open_deadline),
+        "fillDeadline": str(args.fill_deadline),
+        "nonce": str(nonce),
+        "orderData": encode_order(order).hex(),
+        "signature": "0x" + sig.hex()
+    }).json())
 
 if __name__ == "__main__":
     main()
