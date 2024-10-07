@@ -17,10 +17,11 @@ contract MockUntronIntents is Initializable, OwnableUpgradeable, UntronIntents {
     }
 
     /// @notice Initialize the contract
+    /// @param _permit2 The address of the Permit2 contract
     /// @dev This is required for upgradeable contracts
-    function initialize() public initializer {
+    function initialize(address _permit2) public initializer {
         __Ownable_init(msg.sender);
-        __UntronIntents_init();
+        __UntronIntents_init(_permit2);
     }
 
     /// @inheritdoc UntronIntents
