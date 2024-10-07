@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "./interfaces/IUntronIntents.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "permit2/interfaces/IPermit2.sol";
 
 /// @title Basic ERC-7683 logic for Untron Intents
 /// @author Ultrasound Labs
@@ -32,10 +33,10 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     uint32 internal constant TRON_COINID = 0x800000c3;
 
     // EIP-712 type hashes
-    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+    bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 public constant INTENT_TYPEHASH = keccak256(
-        "Intent(address refundBeneficiary,address inputToken,uint256 inputAmount,bytes21 to,uint256 outputAmount,bytes32 orderId)"
+        "Intent(address refundBeneficiary,(address,uint256)[] inputs,bytes21 to,uint256 outputAmount,bytes32 orderId)"
     );
     bytes32 public DOMAIN_SEPARATOR;
 
@@ -55,6 +56,12 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         return chainId;
     }
 
+    function disperse(Input[] memory inputs, address from, address to) internal {
+        for (uint256 i = 0; i < inputs.length; i++) {
+            require(IERC20(inputs[i].token).transferFrom(from, to, inputs[i].amount), "Transfer failed");
+        }
+    }
+
     /// @notice Resolve an intent into a resolved cross-chain order
     /// @param intent The intent to resolve
     /// @return ResolvedCrossChainOrder The resolved cross-chain order
@@ -63,10 +70,6 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         view
         returns (ResolvedCrossChainOrder memory)
     {
-        // Intron swap has one input in an ERC20 token on the source chain
-        Input[] memory maxSpent = new Input[](1);
-        maxSpent[0] = Input(intent.inputToken, intent.inputAmount);
-
         // And one output in USDT TRC20 on Tron
         Output[] memory minReceived = new Output[](1);
         minReceived[0] = Output(USDT_TRC20, intent.outputAmount, bytes32(uint256(uint168(intent.to))), TRON_COINID);
@@ -80,7 +83,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
             originChainId: _chainId(),
             openDeadline: uint32(block.timestamp),
             fillDeadline: fillDeadline,
-            maxSpent: maxSpent,
+            maxSpent: intent.inputs,
             minReceived: minReceived,
             fillInstructions: fillInstructions
         });
@@ -97,10 +100,8 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
 
-        // Transfer the input token from the user to this contract
-        require(
-            IERC20(intent.inputToken).transferFrom(msg.sender, address(this), intent.inputAmount), "Insufficient funds"
-        );
+        // Transfer the input tokens from the user to this contract
+        disperse(intent.inputs, msg.sender, address(this));
 
         // Resolve the intent into a cross-chain order for fillers to use when filling the order
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
@@ -145,13 +146,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Reconstruct the message that was signed using EIP-712
         bytes32 structHash = keccak256(
             abi.encode(
-                INTENT_TYPEHASH,
-                intent.refundBeneficiary,
-                intent.inputToken,
-                intent.inputAmount,
-                intent.to,
-                intent.outputAmount,
-                orderId
+                INTENT_TYPEHASH, intent.refundBeneficiary, intent.inputs, intent.to, intent.outputAmount, orderId
             )
         );
         bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
@@ -165,10 +160,8 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Verify that the signature was created by order.user
         require(signer == order.user, "Invalid signature");
 
-        // Transfer the input token from the user to this contract
-        require(
-            IERC20(intent.inputToken).transferFrom(order.user, address(this), intent.inputAmount), "Insufficient funds"
-        );
+        // Transfer the input tokens from the user to this contract
+        disperse(intent.inputs, order.user, address(this));
 
         // Store the intent in the intents mapping
         _intents[orderId] = intent;
@@ -208,10 +201,8 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
             require(_validateFill(intent, proof), "Invalid fill");
         }
 
-        // Transfer the input token from the filler to the user
-        IERC20(intent.inputToken).transfer(
-            fillDeadline > block.timestamp ? msg.sender : intent.refundBeneficiary, intent.inputAmount
-        );
+        // Transfer the input tokens from the filler to the user
+        disperse(intent.inputs, address(this), fillDeadline > block.timestamp ? msg.sender : intent.refundBeneficiary);
 
         // Delete the intent from the intents mapping
         delete _intents[orderId];

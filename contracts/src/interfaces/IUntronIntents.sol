@@ -8,10 +8,8 @@ interface IUntronIntents is IOriginSettler {
     struct Intent {
         // The address that can reclaim the order if it is not filled (usually its creator)
         address refundBeneficiary;
-        // The input token for the order
-        address inputToken;
-        // The input amount for the order
-        uint256 inputAmount;
+        // The ERC20 inputs for the order
+        Input[] inputs;
         // The Tron address to send USDT TRC20 to
         bytes21 to;
         // The output amount of USDT TRC20 for the order
