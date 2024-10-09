@@ -1,7 +1,6 @@
 import argparse
 import json
 from eth_account import Account
-from eth_account.messages import encode_structured_data
 from web3 import Web3
 from base58 import b58decode_check
 from eth_abi import encode
@@ -15,7 +14,7 @@ def sign_gasless_order(private_key, order_id, order_data, domain_separator, inte
 
     message = b"\x19\x01" + domain_separator + struct_hash
 
-    return Account.signHash(Web3.keccak(message), private_key)
+    return Account._sign_hash(Web3.keccak(message), private_key)
 
 def permit(web3, private_key, sender_private_key, input_token, input_amount, spender):
     # Get the token contract
@@ -150,7 +149,8 @@ def main():
         args.output_amount
     )
 
-    order = (args.origin_settler, args.user, nonce, chain_id, args.open_deadline, args.fill_deadline, encode(["(address,address,uint256,bytes21,uint256)"], [intent]))
+    encoded_intent = encode(["(address,address,uint256,bytes21,uint256)"], [intent])
+    order = (args.origin_settler, args.user, nonce, chain_id, args.open_deadline, args.fill_deadline, encoded_intent)
     print(order)
 
     signed_message = sign_gasless_order(
@@ -172,7 +172,7 @@ def main():
         "openDeadline": str(args.open_deadline),
         "fillDeadline": str(args.fill_deadline),
         "nonce": str(nonce),
-        "orderData": encode_order(order).hex(),
+        "orderData": "0x" + encoded_intent.hex(),
         "signature": "0x" + sig.hex()
     }).json())
 
