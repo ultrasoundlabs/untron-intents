@@ -7,6 +7,10 @@ import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.so
 import "../src/chains/MockUntronIntents.sol";
 import "../src/UntronIntentsProxy.sol";
 
+// Deploy to test locally with anvil
+// Use the following command:
+// forge create --rpc-url http://localhost:8545 --private-key <private-key> 
+// src/chains/MockUntronIntents.sol: MockUntronIntents 
 contract DeployUntronIntents is Script {
     UntronIntentsProxy proxy;
     MockUntronIntents wrappedProxyV1;
@@ -22,5 +26,5 @@ contract DeployUntronIntents is Script {
         wrappedProxyV1.initialize(address(0x0));
 
         console.log("UntronIntentsProxy deployed at address: ", address(proxy));
-    }
+.    }
 }
