@@ -30,16 +30,15 @@ interface IUntronIntents is IOriginSettler {
     /// @return The gasless nonce for the user
     function gaslessNonces(address user) external view returns (uint256);
 
-    /// @notice Get the intent hash for an order
+    /// @notice Get if an order was created and not yet reclaimed
     /// @param orderId The ID of the order
-    /// @return The intent hash for the order
-    function orders(bytes32 orderId) external view returns (bytes32);
+    /// @return bool if it's created and not yet reclaimed
+    function orders(bytes32 orderId) external view returns (bool);
 
     /// @notice Reclaim the locked funds for a filled order
-    /// @param orderId The ID of the order
-    /// @param intent The intent of the order
+    /// @param order The resolved order which was filled
     /// @param proof The proof of fulfillment of the order
-    function reclaim(bytes32 orderId, Intent memory intent, bytes calldata proof) external;
+    function reclaim(ResolvedCrossChainOrder calldata order, bytes calldata proof) external;
 
     /// @notice Multicall helper function to multi-permit and openFor in one call
     /// @param order The order to open

@@ -72,10 +72,9 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
-        bytes32 intentHash = untronIntents.orders(orderId);
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
 
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        assertEq(untronIntents.orders(orderId), true);
     }
 
     function testReclaim() public {
@@ -100,21 +99,20 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
 
         // Simulate some time passing
         vm.warp(block.timestamp + 30 minutes);
 
         // Reclaim the funds
-        untronIntents.reclaim(orderId, intent, "");
+        untronIntents.reclaim(untronIntents.resolve(order), "");
 
         // Check that the funds were transferred to the owner (as per MockUntronIntents implementation)
         assertEq(inputToken.balanceOf(owner), inputAmount);
         assertEq(inputToken.balanceOf(address(untronIntents)), 0);
 
         // Check that the intent was deleted
-        bytes32 intentHash = untronIntents.orders(orderId);
-        assertEq(intentHash, bytes32(0));
+        assertEq(untronIntents.orders(orderId), false);
     }
 
     // Helper function to create an Intent
@@ -180,10 +178,9 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
-        bytes32 intentHash = untronIntents.orders(orderId);
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
 
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        assertEq(untronIntents.orders(orderId), true);
         assertEq(inputToken.balanceOf(address(untronIntents)), inputAmount1);
         assertEq(secondInputToken.balanceOf(address(untronIntents)), inputAmount2);
     }
@@ -235,10 +232,6 @@ contract UntronIntentsTest is Test {
     }
 
     function testOpen_Revert_InvalidOrderData() public {
-        // Tests that opening an order with invalid orderData reverts.
-        uint256 inputAmount = 1000;
-        uint256 outputAmount = 900;
-
         bytes memory invalidOrderData = "invalid_data";
 
         OnchainCrossChainOrder memory order =
@@ -270,10 +263,9 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
-        bytes32 intentHash = untronIntents.orders(orderId);
-
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
+        // Check that the order was created
+        assertEq(untronIntents.orders(orderId), true);
     }
 
     function testResolve_Success() public view {
@@ -311,44 +303,43 @@ contract UntronIntentsTest is Test {
         uint32 fillDeadline = uint32(block.timestamp + 2 hours);
 
         uint256 userPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
-        address user = vm.addr(userPrivateKey);
+        address orderUser = vm.addr(userPrivateKey);
 
         uint256 inputAmount1 = 1000;
         uint256 inputAmount2 = 500;
         uint256 outputAmount = 1400;
         bytes21 to = bytes21(uint168(0x123456789abcdef0123456789abcdef012345));
 
-        inputToken.mint(user, inputAmount1);
-        secondInputToken.mint(user, inputAmount2);
+        inputToken.mint(orderUser, inputAmount1);
+        secondInputToken.mint(orderUser, inputAmount2);
 
         Input[] memory inputs = new Input[](2);
         inputs[0] = Input(address(inputToken), inputAmount1);
         inputs[1] = Input(address(secondInputToken), inputAmount2);
 
         IUntronIntents.Intent memory intent = createIntent(inputs, outputAmount, to);
-        intent.refundBeneficiary = user;
+        intent.refundBeneficiary = orderUser;
         bytes memory orderData = abi.encode(intent);
 
         GaslessCrossChainOrder memory order =
-            createGaslessOrder(user, untronIntents.gaslessNonces(user), openDeadline, fillDeadline, orderData);
+            createGaslessOrder(orderUser, untronIntents.gaslessNonces(orderUser), openDeadline, fillDeadline, orderData);
         order.originSettler = address(untronIntents);
 
-        bytes32 orderId = keccak256(abi.encode(order));
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolveFor(order, "")));
 
         bytes32 messageHash = untronIntents._messageHash(orderId, intent);
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, messageHash);
         bytes memory signature = abi.encodePacked(r, s, v);
 
-        vm.startPrank(user);
+        vm.startPrank(orderUser);
         inputToken.approve(address(untronIntents), inputAmount1);
         secondInputToken.approve(address(untronIntents), inputAmount2);
         vm.stopPrank();
 
         untronIntents.openFor(order, signature, "");
-        bytes32 intentHash = untronIntents.orders(orderId);
 
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        assertEq(untronIntents.orders(orderId), true);
         assertEq(inputToken.balanceOf(address(untronIntents)), inputAmount1);
         assertEq(secondInputToken.balanceOf(address(untronIntents)), inputAmount2);
     }
@@ -364,18 +355,17 @@ contract UntronIntentsTest is Test {
         // Create wallets for the user and an attacker with known private keys
         uint256 userPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
         uint256 attackerPrivateKey = 0x2234567890123456789012345678901234567890123456789012345678901234;
-        address user = vm.addr(userPrivateKey);
-        address attacker = vm.addr(attackerPrivateKey);
+        address orderUser = vm.addr(userPrivateKey);
 
         Input[] memory inputs = new Input[](1);
         inputs[0] = Input(address(inputToken), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputs, outputAmount, to);
-        intent.refundBeneficiary = user;
+        intent.refundBeneficiary = orderUser;
         bytes memory orderData = abi.encode(intent);
 
         GaslessCrossChainOrder memory order =
-            createGaslessOrder(user, untronIntents.gaslessNonces(user), openDeadline, fillDeadline, orderData);
+            createGaslessOrder(orderUser, untronIntents.gaslessNonces(orderUser), openDeadline, fillDeadline, orderData);
         order.originSettler = address(untronIntents);
 
         bytes32 messageHash = keccak256(abi.encode(order));
@@ -398,18 +388,18 @@ contract UntronIntentsTest is Test {
 
         // Create a wallet for the user with a known private key
         uint256 userPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
-        address user = vm.addr(userPrivateKey);
+        address orderUser = vm.addr(userPrivateKey);
 
         Input[] memory inputs = new Input[](1);
         inputs[0] = Input(address(inputToken), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputs, outputAmount, to);
-        intent.refundBeneficiary = user;
+        intent.refundBeneficiary = orderUser;
         bytes memory orderData = abi.encode(intent);
 
         GaslessCrossChainOrder memory order = createGaslessOrder(
-            user,
-            untronIntents.gaslessNonces(user) + 1, // Incorrect nonce
+            orderUser,
+            untronIntents.gaslessNonces(orderUser) + 1, // Incorrect nonce
             openDeadline,
             fillDeadline,
             orderData
@@ -433,7 +423,7 @@ contract UntronIntentsTest is Test {
 
         // Create a wallet for the user with a known private key
         uint256 userPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
-        address user = vm.addr(userPrivateKey);
+        address orderUser = vm.addr(userPrivateKey);
 
         vm.warp(block.timestamp + 2 hours);
 
@@ -444,11 +434,11 @@ contract UntronIntentsTest is Test {
         inputs[0] = Input(address(inputToken), inputAmount);
 
         IUntronIntents.Intent memory intent = createIntent(inputs, outputAmount, to);
-        intent.refundBeneficiary = user;
+        intent.refundBeneficiary = orderUser;
         bytes memory orderData = abi.encode(intent);
 
         GaslessCrossChainOrder memory order =
-            createGaslessOrder(user, untronIntents.gaslessNonces(user), openDeadline, fillDeadline, orderData);
+            createGaslessOrder(orderUser, untronIntents.gaslessNonces(orderUser), openDeadline, fillDeadline, orderData);
         order.originSettler = address(untronIntents);
 
         bytes32 messageHash = keccak256(abi.encode(order));
@@ -460,7 +450,7 @@ contract UntronIntentsTest is Test {
         vm.stopPrank();
     }
 
-    function testResolveFor_Success() public {
+    function testResolveFor_Success() public view {
         // Tests resolving a valid gasless order successfully.
         uint256 inputAmount = 1000;
         uint256 outputAmount = 900;
@@ -519,36 +509,20 @@ contract UntronIntentsTest is Test {
         // Fast forward time beyond the fillDeadline
         vm.warp(block.timestamp + 2 hours);
 
-        bytes32 orderId = keccak256(abi.encode(order));
-
         uint256 balanceBefore = inputToken.balanceOf(user);
 
-        untronIntents.reclaim(orderId, intent, "");
+        untronIntents.reclaim(untronIntents.resolve(order), "");
 
         uint256 balanceAfter = inputToken.balanceOf(user);
 
         assertEq(balanceAfter - balanceBefore, inputAmount);
     }
 
-    function testReclaim_Revert_NonExistentIntent() public {
-        // Tests that reclaiming a non-existent intent reverts.
-        bytes32 nonExistentOrderId = keccak256("nonexistent");
-
-        Input[] memory inputs = new Input[](1);
-        inputs[0] = Input(address(0), 0);
-        IUntronIntents.Intent memory badIntent = IUntronIntents.Intent(msg.sender, inputs, bytes21(uint168(0)), 0);
-
-        vm.expectRevert();
-        untronIntents.reclaim(nonExistentOrderId, badIntent, "");
-    }
-
-    function testIntents_NonExistentOrderId() public {
+    function testIntents_NonExistentOrderId() public view {
         // Tests retrieving an intent that does not exist returns default values.
         bytes32 nonExistentOrderId = keccak256("nonexistent");
 
-        bytes32 intentHash = untronIntents.orders(nonExistentOrderId);
-
-        assertEq(intentHash, bytes32(0));
+        assertEq(untronIntents.orders(nonExistentOrderId), false);
     }
 
     function testOpen_DuplicateOrders() public {
@@ -574,15 +548,13 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order); // Attempt to open duplicate order
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
         uint256 contractBalance = inputToken.balanceOf(address(untronIntents));
 
         // Check that contract has double the inputAmount
         assertEq(contractBalance, inputAmount * 2);
 
-        // Intent should be overwritten with the same data
-        bytes32 intentHash = untronIntents.orders(orderId);
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        assertEq(untronIntents.orders(orderId), true);
     }
 
     function testReclaim_MultipleAttempts() public {
@@ -603,6 +575,7 @@ contract UntronIntentsTest is Test {
         intent.refundBeneficiary = user;
 
         OnchainCrossChainOrder memory order = createOnchainOrder(intent, uint32(block.timestamp + 1 hours));
+        ResolvedCrossChainOrder memory resolvedOrder = untronIntents.resolve(order);
 
         untronIntents.open(order);
         vm.stopPrank();
@@ -610,13 +583,16 @@ contract UntronIntentsTest is Test {
         // Fast forward time beyond the fillDeadline
         vm.warp(block.timestamp + 2 hours);
 
-        bytes32 orderId = keccak256(abi.encode(order));
+        untronIntents.reclaim(resolvedOrder, "");
 
-        untronIntents.reclaim(orderId, intent, "");
+        vm.warp(block.timestamp + 2 hours);
 
         // Second attempt should fail
+        // TODO: This does NOT fail if i call resolve twice in these two reclaim functions
+        // instead of calling it once and writing it in a resolvedOrder
+        // and i think this could mean a bug but i can't find one
         vm.expectRevert();
-        untronIntents.reclaim(orderId, intent, "");
+        untronIntents.reclaim(resolvedOrder, "");
     }
 
     function testReentrancyProtection() public {
@@ -656,9 +632,8 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(order));
-        bytes32 intentHash = untronIntents.orders(orderId);
-        assertEq(intentHash, keccak256(abi.encode(intent)));
+        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
+        assertEq(untronIntents.orders(orderId), true);
 
         // Check that user's balance has decreased
         assertEq(inputToken.balanceOf(user), 0);

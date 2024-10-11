@@ -21,11 +21,8 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @dev Used to prevent replay attacks for gasless orders
     mapping(address => uint256) public gaslessNonces;
 
-    /// @notice Mapping of order IDs to the hashes of their intents
-    mapping(bytes32 => bytes32) public orders;
-
-    /// @notice Mapping of order IDs to their fill deadlines
-    mapping(bytes32 => uint32) public fillDeadlines;
+    /// @notice Mapping of order IDs
+    mapping(bytes32 => bool) public orders;
 
     /// @dev The USDT TRC20 token address on Tron
     bytes32 internal constant USDT_TRC20 =
@@ -114,9 +111,9 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
 
         // Return the resolved cross-chain order
         return ResolvedCrossChainOrder({
-            user: msg.sender,
+            user: intent.refundBeneficiary,
             originChainId: _chainId(),
-            openDeadline: uint32(block.timestamp),
+            openDeadline: type(uint32).max,
             fillDeadline: fillDeadline,
             maxSpent: intent.inputs,
             minReceived: minReceived,
@@ -155,18 +152,16 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // For nested structs, the typehash of the inner struct is hashed
         bytes32[] memory encodedInputs = new bytes32[](intent.inputs.length);
         for (uint256 i = 0; i < intent.inputs.length; i++) {
-            encodedInputs[i] = keccak256(
-                abi.encode(INPUT_TYPEHASH, intent.inputs[i].token, intent.inputs[i].amount)
-            );
+            encodedInputs[i] = keccak256(abi.encode(INPUT_TYPEHASH, intent.inputs[i].token, intent.inputs[i].amount));
         }
 
         bytes32 structHash = keccak256(
             abi.encode(
-                INTENT_TYPEHASH, 
-                intent.refundBeneficiary, 
+                INTENT_TYPEHASH,
+                intent.refundBeneficiary,
                 keccak256(abi.encodePacked(encodedInputs)),
-                intent.to, 
-                intent.outputAmount, 
+                intent.to,
+                intent.outputAmount,
                 orderId
             )
         );
@@ -178,9 +173,6 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Check that the order is not expired
         require(order.fillDeadline > block.timestamp, "Order expired");
 
-        // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(order));
-
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
 
@@ -190,10 +182,11 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Resolve the intent into a cross-chain order for fillers to use when filling the order
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
 
-        // Store the intent in the orders mapping
-        orders[orderId] = keccak256(order.orderData);
-        // Store the fill deadline in the fillDeadlines mapping
-        fillDeadlines[orderId] = order.fillDeadline;
+        // Compute the order ID
+        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+
+        // Store the fact of the order
+        orders[orderId] = true;
 
         // Emit an Open event
         emit Open(orderId, resolvedOrder);
@@ -211,19 +204,17 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Increment the user's gasless nonce
         gaslessNonces[order.user]++;
 
-        // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(order));
-
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
 
-        // Store the intent in the orders mapping
-        orders[orderId] = keccak256(order.orderData);
-        // Store the fill deadline in the fillDeadlines mapping
-        fillDeadlines[orderId] = order.fillDeadline;
-
         // Resolve the intent into a cross-chain order for fillers to use when filling the order
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
+
+        // Compute the order ID
+        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+
+        // Store the fact of the order
+        orders[orderId] = true;
 
         // Emit an Open event
         emit Open(orderId, resolvedOrder);
@@ -231,11 +222,14 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
 
     /// @inheritdoc IOriginSettler
     function openFor(GaslessCrossChainOrder calldata order, bytes calldata signature, bytes calldata) public {
-        // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(order));
-
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
+
+        // Resolve the intent into a cross-chain order for fillers to use when filling the order
+        ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
+
+        // Compute the order ID
+        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
 
         // Compute the message hash
         bytes32 messageHash = _messageHash(orderId, intent);
@@ -285,7 +279,12 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     ) external {
         // Decode the intent from the order data
         Intent memory intent = abi.decode(order.orderData, (Intent));
-        bytes32 orderId = keccak256(abi.encode(order));
+
+        // Resolve the intent into a cross-chain order for fillers to use when filling the order
+        ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
+
+        // Compute the order ID
+        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
 
         // Prepare Permit2 data structures
         ISignatureTransfer.TokenPermissions[] memory permissions =
@@ -314,31 +313,29 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     }
 
     /// @inheritdoc IUntronIntents
-    function reclaim(bytes32 orderId, Intent memory intent, bytes calldata proof) external {
+    function reclaim(ResolvedCrossChainOrder calldata order, bytes calldata proof) external {
+        // Compute the order ID
+        bytes32 orderId = keccak256(abi.encode(order));
+
         // Verify the intent matches the stored order
-        require(orders[orderId] == keccak256(abi.encode(intent)), "Invalid intent");
+        require(orders[orderId] == true, "Order doesn't exist");
 
-        // Get the fill deadline from the fillDeadlines mapping
-        uint32 fillDeadline = fillDeadlines[orderId];
-
-        // Validate the fill of the order if not expired
-        if (fillDeadline > block.timestamp) {
-            require(_validateFill(intent, proof), "Invalid fill");
+        // Validate the fills of the order if not expired
+        if (order.fillDeadline > block.timestamp) {
+            require(_validateFills(order.fillInstructions, proof), "Invalid fill");
         }
 
         // Transfer the input tokens from the contract to the user or refund beneficiary
-        disperse(intent.inputs, address(this), fillDeadline > block.timestamp ? msg.sender : intent.refundBeneficiary);
+        disperse(order.maxSpent, address(this), order.fillDeadline > block.timestamp ? msg.sender : order.user);
 
-        // Delete the intent from the orders mapping
-        delete orders[orderId];
-        // Delete the fill deadline from the fillDeadlines mapping
-        delete fillDeadlines[orderId];
+        // Delete true from the orders mapping
+        orders[orderId] = false;
     }
 
-    /// @notice Validate the fill of the order
-    /// @param intent The intent to validate
+    /// @notice Validate the fills of the order
+    /// @param fills The fills to validate
     /// @param proof The proof of fulfillment
     /// @return bool Whether the fill is valid
     /// @dev This function should be implemented by the inheriting contract
-    function _validateFill(Intent memory intent, bytes calldata proof) internal virtual returns (bool);
+    function _validateFills(FillInstruction[] calldata fills, bytes calldata proof) internal virtual returns (bool);
 }
