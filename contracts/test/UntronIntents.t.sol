@@ -634,7 +634,8 @@ contract UntronIntentsTest is Test {
         untronIntents.open(order);
         vm.stopPrank();
 
-        bytes32 orderId = keccak256(abi.encode(untronIntents.resolve(order)));
+        ResolvedCrossChainOrder memory resolvedOrder = untronIntents.resolve(order);
+        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
         assertEq(untronIntents.orders(orderId), true);
 
         // Check that user's balance has decreased
