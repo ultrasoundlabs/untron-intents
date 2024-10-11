@@ -511,7 +511,8 @@ contract UntronIntentsTest is Test {
 
         uint256 balanceBefore = inputToken.balanceOf(user);
 
-        untronIntents.reclaim(untronIntents.resolve(order), "");
+        ResolvedCrossChainOrder memory resolvedOrder = untronIntents.resolve(order);
+        untronIntents.reclaim(resolvedOrder, "");
 
         uint256 balanceAfter = inputToken.balanceOf(user);
 
