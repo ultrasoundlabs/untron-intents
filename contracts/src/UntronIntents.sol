@@ -42,9 +42,12 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
+    /// @dev EIP-712 input type hash
+    bytes32 internal constant INPUT_TYPEHASH = keccak256("Input(address token,uint256 amount)");
+
     /// @dev EIP-712 intent type hash
     bytes32 public constant INTENT_TYPEHASH = keccak256(
-        "Intent(address refundBeneficiary,(address,uint256)[] inputs,bytes21 to,uint256 outputAmount,bytes32 orderId)"
+        "Intent(address refundBeneficiary,Input[] inputs,bytes21 to,uint256 outputAmount,bytes32 orderId)Input(address token,uint256 amount)"
     );
 
     /// @dev EIP-712 witness type string
@@ -149,9 +152,22 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @return bytes32 The computed message hash
     function _messageHash(bytes32 orderId, Intent memory intent) public view returns (bytes32) {
         // Reconstruct the message that was signed using EIP-712
+        // For nested structs, the typehash of the inner struct is hashed
+        bytes32[] memory encodedInputs = new bytes32[](intent.inputs.length);
+        for (uint256 i = 0; i < intent.inputs.length; i++) {
+            encodedInputs[i] = keccak256(
+                abi.encode(INPUT_TYPEHASH, intent.inputs[i].token, intent.inputs[i].amount)
+            );
+        }
+
         bytes32 structHash = keccak256(
             abi.encode(
-                INTENT_TYPEHASH, intent.refundBeneficiary, intent.inputs, intent.to, intent.outputAmount, orderId
+                INTENT_TYPEHASH, 
+                intent.refundBeneficiary, 
+                keccak256(abi.encodePacked(encodedInputs)),
+                intent.to, 
+                intent.outputAmount, 
+                orderId
             )
         );
         return keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
