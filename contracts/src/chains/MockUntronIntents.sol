@@ -25,7 +25,7 @@ contract MockUntronIntents is Initializable, OwnableUpgradeable, UntronIntents {
     }
 
     /// @inheritdoc UntronIntents
-    function _validateFill(Intent memory, bytes calldata) internal view override returns (bool) {
+    function _validateFills(FillInstruction[] calldata, bytes calldata) internal view override returns (bool) {
         return msg.sender == owner();
     }
 }
