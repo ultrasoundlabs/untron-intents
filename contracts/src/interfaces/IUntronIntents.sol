@@ -32,7 +32,7 @@ interface IUntronIntents is IOriginSettler {
 
     /// @notice Get if an order was created and not yet reclaimed
     /// @param orderId The ID of the order
-    /// @return bool if it's created and not yet reclaimed
+    /// @return True if the order exists and has not been reclaimed, false otherwise
     function orders(bytes32 orderId) external view returns (bool);
 
     /// @notice Reclaim the locked funds for a filled order
