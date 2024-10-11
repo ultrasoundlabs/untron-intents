@@ -1,0 +1,8 @@
+aiohttp==3.10.9
+base58==2.1.1
+eth_abi==5.1.0
+eth_account==0.13.4
+Flask==3.0.3
+Requests==2.32.3
+tronpy==0.5.0
+web3==7.3.0
