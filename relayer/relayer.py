@@ -42,8 +42,9 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    # TODO: Implement actual profitability check
-    return True
+    # the swap is profitable only if the input is in USDC and USDT output is at least -0.2 from USDC amount
+    # this will be replaced with better rate approximation in the production relayer
+    return spent["token"].lower() == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".lower() and spent["amount"] - 200_000 >= received["amount"]
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
