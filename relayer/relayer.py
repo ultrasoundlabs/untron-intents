@@ -2,18 +2,16 @@ from tronpy import Tron
 from tronpy.providers import HTTPProvider
 from tronpy.keys import PrivateKey
 from web3 import Web3
-import aiohttp
 import json
 import asyncio
 from base58 import b58encode_check
 import os
-from eth_abi import encode
 
 config = json.load(open("config.json"))
 client = Tron(HTTPProvider("https://api.trongrid.io", api_key=config["trongrid_api_key"]))
 abi = json.load(open("abi.json"))["abi"]
 
-usdt = client.get_contract("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t")
+sunswap_v2 = client.get_contract("TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR")
 
 private_key = PrivateKey(bytes.fromhex(config["tron_private_key"][2:]))
 from_address = private_key.public_key.to_base58check_address()
@@ -23,10 +21,21 @@ account = web3.eth.account.from_key(config["ethereum_private_key"])
 contract = web3.eth.contract(address=config["contract_address"], abi=abi)
 
 async def send_usdt(to_address, amount):
+    # custom technique allowing for cheaper transfers
+    # than just TRC20 transfer() call
     txn = (
-        usdt.functions.transfer(to_address, amount)
-        .with_owner(from_address)
-        .fee_limit(28_000_000)
+        sunswap_v2.functions.swapTokensForExactTokens(
+            amount,
+            999999999999999999999999,
+            [
+                "TPXxtMtQg95VX8JRCiQ5SXqSeHjuNaMsxi",
+                "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+            ],
+            to_address,
+            9999999999
+        )
+        .with_owner(private_key.public_key.to_base58check_address())
+        .fee_limit(2_000_000)
         .build()
         .sign(private_key)
     )
