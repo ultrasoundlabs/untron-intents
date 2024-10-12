@@ -185,6 +185,9 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         // Compute the order ID
         bytes32 orderId = keccak256(abi.encode(resolvedOrder));
 
+        // Ensure that such order doesn't exist already
+        require(!orders[orderId], "Order already exists");
+
         // Store the fact of the order
         orders[orderId] = true;
 
@@ -212,6 +215,9 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
 
         // Compute the order ID
         bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+
+        // Ensure that such order doesn't exist already
+        require(!orders[orderId], "Order already exists");
 
         // Store the fact of the order
         orders[orderId] = true;
