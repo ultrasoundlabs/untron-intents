@@ -5,5 +5,6 @@
     "tron_private_key": "",
     "ethereum_private_key": "",
     "contract_address": "",
-    "rpc": ""
+    "rpc": "",
+    "api_url": ""
 }

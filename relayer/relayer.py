@@ -6,6 +6,7 @@ import json
 import asyncio
 from base58 import b58encode_check
 import os
+import requests
 
 config = json.load(open("config.json"))
 client = Tron(HTTPProvider("https://api.trongrid.io", api_key=config["trongrid_api_key"]))
@@ -42,9 +43,31 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    # the swap is profitable only if the input is in USDC and USDT output is at least -0.2 from USDC amount
-    # this will be replaced with better rate approximation in the production relayer
-    return spent["token"].lower() == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".lower() and spent["amount"] - 200_000 >= received["amount"]
+    response = requests.get(config["api_url"] + "/assets")
+    assets = response.json()
+
+    spent_asset = next((asset for asset in assets if asset["contract"] == spent["token"]), None)
+
+    if not spent_asset:
+        print("Asset not found in assets")
+        return False
+    decimals = spent_asset["decimals"]
+
+    response = requests.get(config["api_url"] + "/rates", params={"token": spent["token"], "chainId": 8453})
+    usd_rate = response.json()["rate"]
+
+    response = requests.get(config["api_url"] + "/intents/fees")
+    flat_fee = response.json()["flatFee"]
+    percent_fee = response.json()["percentFee"]
+
+    # Convert spent amount to its actual value considering decimals
+    spent_amount = spent["amount"] / (10 ** decimals)
+    
+    # Calculate minimum receive amount in USDT (6 decimals)
+    min_receive = (spent_amount * usd_rate * (1 - percent_fee)) * (10 ** 6)
+
+    # Compare with received amount (already in USDT decimals)
+    return received["amount"] + (flat_fee * (10 ** 6)) >= min_receive
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
