@@ -6,6 +6,7 @@ import json
 import asyncio
 from base58 import b58encode_check
 import os
+import requests
 
 config = json.load(open("config.json"))
 client = Tron(HTTPProvider("https://api.trongrid.io", api_key=config["trongrid_api_key"]))
@@ -16,7 +17,7 @@ sunswap_v2 = client.get_contract("TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR")
 private_key = PrivateKey(bytes.fromhex(config["tron_private_key"][2:]))
 from_address = private_key.public_key.to_base58check_address()
 
-web3 = Web3(Web3.WebsocketProvider(config["rpc"]))
+web3 = Web3(Web3.HTTPProvider(config["rpc"]))
 account = web3.eth.account.from_key(config["ethereum_private_key"])
 contract = web3.eth.contract(address=config["contract_address"], abi=abi)
 
@@ -42,9 +43,35 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    # the swap is profitable only if the input is in USDC and USDT output is at least -0.2 from USDC amount
-    # this will be replaced with better rate approximation in the production relayer
-    return spent["token"].lower() == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".lower() and spent["amount"] - 200_000 >= received["amount"]
+    response = requests.get("https://untron.finance/intents/assets")
+    assets = response.json()
+
+    spent_asset = next((asset for asset in assets if asset["contractAddress"] == spent["token"]), None)
+
+    if not spent_asset:
+        print("Asset not found in assets")
+        return False
+    decimals = spent_asset["decimals"]
+
+    usd_rate = 1 # TODO: fix this
+
+    response = requests.get("https://untron.finance/intents/fees")
+    flat_fee = response.json()["fees"]["flatFee"]
+    percent_fee = response.json()["fees"]["pctFee"]
+    max_output_amount = response.json()["maxOutputAmount"]
+
+    if received["amount"] > max_output_amount * 3: # max_output_amount is 1/3 of the liquidity
+        print("Received amount is greater than max output amount")
+        return False
+
+    # Convert spent amount to its actual value considering decimals
+    spent_amount = spent["amount"] / (10 ** decimals)
+    
+    # Calculate minimum receive amount in USDT (6 decimals)
+    min_receive = (spent_amount * usd_rate * (1 - percent_fee)) * (10 ** 6)
+
+    # Compare with received amount (already in USDT decimals)
+    return received["amount"] + (flat_fee * (10 ** 6)) >= min_receive
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
