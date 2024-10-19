@@ -17,7 +17,7 @@ sunswap_v2 = client.get_contract("TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR")
 private_key = PrivateKey(bytes.fromhex(config["tron_private_key"][2:]))
 from_address = private_key.public_key.to_base58check_address()
 
-web3 = Web3(Web3.WebsocketProvider(config["rpc"]))
+web3 = Web3(Web3.HTTPProvider(config["rpc"]))
 account = web3.eth.account.from_key(config["ethereum_private_key"])
 contract = web3.eth.contract(address=config["contract_address"], abi=abi)
 
@@ -43,22 +43,26 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    response = requests.get(config["api_url"] + "/assets")
+    response = requests.get("https://untron.finance/intents/assets")
     assets = response.json()
 
-    spent_asset = next((asset for asset in assets if asset["contract"] == spent["token"]), None)
+    spent_asset = next((asset for asset in assets if asset["contractAddress"] == spent["token"]), None)
 
     if not spent_asset:
         print("Asset not found in assets")
         return False
     decimals = spent_asset["decimals"]
 
-    response = requests.get(config["api_url"] + "/rates", params={"token": spent["token"], "chainId": 8453})
-    usd_rate = response.json()["rate"]
+    usd_rate = 1 # TODO: fix this
 
-    response = requests.get(config["api_url"] + "/intents/fees")
-    flat_fee = response.json()["flatFee"]
-    percent_fee = response.json()["percentFee"]
+    response = requests.get("https://untron.finance/intents/fees")
+    flat_fee = response.json()["fees"]["flatFee"]
+    percent_fee = response.json()["fees"]["pctFee"]
+    max_output_amount = response.json()["maxOutputAmount"]
+
+    if received["amount"] > max_output_amount * 3: # max_output_amount is 1/3 of the liquidity
+        print("Received amount is greater than max output amount")
+        return False
 
     # Convert spent amount to its actual value considering decimals
     spent_amount = spent["amount"] / (10 ** decimals)
