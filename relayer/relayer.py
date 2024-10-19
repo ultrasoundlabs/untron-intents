@@ -7,6 +7,10 @@ import asyncio
 from base58 import b58encode_check
 import os
 import requests
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Disable the warning that appears when making unverified HTTPS requests
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 config = json.load(open("config.json"))
 client = Tron(HTTPProvider("https://api.trongrid.io", api_key=config["trongrid_api_key"]))
@@ -43,7 +47,7 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    response = requests.get("https://untron.finance/intents/assets")
+    response = requests.get("https://untron.finance/intents/assets", verify=False)
     assets = response.json()
 
     spent_asset = next((asset for asset in assets if asset["contractAddress"] == spent["token"]), None)
@@ -55,12 +59,13 @@ async def is_profitable(spent, received):
 
     usd_rate = 1 # TODO: fix this
 
-    response = requests.get("https://untron.finance/intents/fees")
-    flat_fee = response.json()["fees"]["flatFee"]
-    percent_fee = response.json()["fees"]["pctFee"]
-    max_output_amount = response.json()["maxOutputAmount"]
+    response = requests.get("https://untron.finance/intents/information", verify=False)
+    flat_fee = float(response.json()["fees"]["flatFee"])
+    percent_fee = float(response.json()["fees"]["pctFee"])
+    max_output_amount = float(response.json()["maxOutputAmount"])
+    print(flat_fee, percent_fee, max_output_amount)
 
-    if received["amount"] > max_output_amount * 3: # max_output_amount is 1/3 of the liquidity
+    if received["amount"]/1e6 > max_output_amount * 3: # max_output_amount is 1/3 of the liquidity
         print("Received amount is greater than max output amount")
         return False
 
@@ -68,10 +73,12 @@ async def is_profitable(spent, received):
     spent_amount = spent["amount"] / (10 ** decimals)
     
     # Calculate minimum receive amount in USDT (6 decimals)
-    min_receive = (spent_amount * usd_rate * (1 - percent_fee)) * (10 ** 6)
+    min_receive = (spent_amount * usd_rate * (1 - percent_fee)) * 1e6
+
+    print(received["amount"] + (flat_fee * 1e6), min_receive)
 
     # Compare with received amount (already in USDT decimals)
-    return received["amount"] + (flat_fee * (10 ** 6)) >= min_receive
+    return received["amount"] + (flat_fee * 1e6) <= min_receive
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
@@ -99,7 +106,7 @@ async def reclaim(web3, order_id, resolved_order, contract, account):
         'nonce': web3.eth.get_transaction_count(account.address),
     })
     signed_tx = account.sign_transaction(tx)
-    tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+    tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
     print(f"Reclaim transaction sent. Transaction hash: {receipt['transactionHash'].hex()}")
 
