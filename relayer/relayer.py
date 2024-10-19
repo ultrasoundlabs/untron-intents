@@ -74,7 +74,7 @@ async def is_profitable(spent, received):
     spent_amount = Decimal(spent["amount"]) / (Decimal(10) ** decimals)
     
     # Calculate receive amount in USDT (6 decimals) at which the swap is profitable
-    max_receive = (spent_amount * Decimal(usd_rate) * (Decimal('1') - percent_fee)) * Decimal('1e6')
+    max_receive = (spent_amount * Decimal(usd_rate) * (Decimal('1') - percent_fee)).quantize(Decimal('0.01')) * Decimal('1e6')
 
     print(spent_amount, max_receive)
 
