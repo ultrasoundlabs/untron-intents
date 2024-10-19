@@ -2,6 +2,7 @@ from tronpy import Tron
 from tronpy.providers import HTTPProvider
 from tronpy.keys import PrivateKey
 from web3 import Web3
+from decimal import Decimal
 import json
 import asyncio
 from base58 import b58encode_check
@@ -55,30 +56,30 @@ async def is_profitable(spent, received):
     if not spent_asset:
         print("Asset not found in assets")
         return False
-    decimals = spent_asset["decimals"]
+    decimals = int(spent_asset["decimals"])
 
-    usd_rate = 1 # TODO: fix this
+    usd_rate = 1  # TODO: fix this
 
     response = requests.get("https://untron.finance/intents/information", verify=False)
-    flat_fee = float(response.json()["fees"]["flatFee"])
-    percent_fee = float(response.json()["fees"]["pctFee"])
-    max_output_amount = float(response.json()["maxOutputAmount"])
+    flat_fee = Decimal(response.json()["fees"]["flatFee"])
+    percent_fee = Decimal(response.json()["fees"]["pctFee"])
+    max_output_amount = Decimal(response.json()["maxOutputAmount"])
     print(flat_fee, percent_fee, max_output_amount)
 
-    if received["amount"]/1e6 > max_output_amount * 3: # max_output_amount is 1/3 of the liquidity
+    if Decimal(received["amount"]) / Decimal('1e6') > max_output_amount * 3:  # max_output_amount is 1/3 of the liquidity
         print("Received amount is greater than max output amount")
         return False
 
     # Convert spent amount to its actual value considering decimals
-    spent_amount = spent["amount"] / (10 ** decimals)
+    spent_amount = Decimal(spent["amount"]) / (Decimal(10) ** decimals)
     
-    # Calculate minimum receive amount in USDT (6 decimals)
-    min_receive = (spent_amount * usd_rate * (1 - percent_fee)) * 1e6
+    # Calculate receive amount in USDT (6 decimals) at which the swap is profitable
+    max_receive = (spent_amount * Decimal(usd_rate) * (Decimal('1') - percent_fee)) * Decimal('1e6')
 
-    print(received["amount"] + (flat_fee * 1e6), min_receive)
+    print(spent_amount, max_receive)
 
     # Compare with received amount (already in USDT decimals)
-    return received["amount"] + (flat_fee * 1e6) <= min_receive
+    return Decimal(received["amount"]) <= max_receive - (flat_fee * Decimal('1e6'))
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
