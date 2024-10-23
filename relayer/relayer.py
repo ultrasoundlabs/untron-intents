@@ -44,38 +44,7 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    response = requests.get("https://untron.finance/intents/assets", verify=False)
-    assets = response.json()
-
-    spent_asset = next((asset for asset in assets if asset["contractAddress"] == spent["token"]), None)
-
-    if not spent_asset:
-        print("Asset not found in assets")
-        return False
-    decimals = int(spent_asset["decimals"])
-
-    usd_rate = 1  # TODO: fix this
-
-    response = requests.get("https://untron.finance/intents/information", verify=False)
-    flat_fee = Decimal(response.json()["fees"]["flatFee"])
-    percent_fee = Decimal(response.json()["fees"]["pctFee"])
-    max_output_amount = Decimal(response.json()["maxOutputAmount"])
-    print(flat_fee, percent_fee, max_output_amount)
-
-    if Decimal(received["amount"]) / Decimal('1e6') > max_output_amount * 3:  # max_output_amount is 1/3 of the liquidity
-        print("Received amount is greater than max output amount")
-        return False
-
-    # Convert spent amount to its actual value considering decimals
-    spent_amount = Decimal(spent["amount"]) / (Decimal(10) ** decimals)
-    
-    # Calculate receive amount in USDT (6 decimals) at which the swap is profitable
-    max_receive = (spent_amount * Decimal(usd_rate) * (Decimal('1') - percent_fee)).quantize(Decimal('0.01')) * Decimal('1e6')
-
-    print(spent_amount, max_receive)
-
-    # Compare with received amount (already in USDT decimals)
-    return Decimal(received["amount"]) <= max_receive - (flat_fee * Decimal('1e6'))
+    return True # TODO: use backend API
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
@@ -101,6 +70,8 @@ async def reclaim(web3, order_id, resolved_order, contract, account):
     tx = contract.functions.reclaim(resolved_order, b'').build_transaction({
         'from': account.address,
         'nonce': web3.eth.get_transaction_count(account.address),
+        'gas': 3000000,
+        'gasPrice': web3.eth.gas_price,
     })
     signed_tx = account.sign_transaction(tx)
     tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
