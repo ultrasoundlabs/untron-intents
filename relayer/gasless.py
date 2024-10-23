@@ -4,9 +4,7 @@ from eth_account import Account
 from web3 import Web3
 from base58 import b58decode_check
 from eth_abi import encode
-from eth_account.messages import encode_typed_data, encode_defunct
-from web3.auto import w3
-import requests
+from eth_account.messages import encode_typed_data
 
 def encode_order(order):
     return encode(["(address,address,uint256,uint64,uint32,uint32,bytes)"], [order])
@@ -19,10 +17,6 @@ def sign_gasless_order(account, domain_separator, intent_typehash, intent, order
     message = b"\x19\x01" + domain_separator + struct_hash
     message_hash = Web3.keccak(message)
     signature = account.unsafe_sign_hash(message_hash)
-
-    recovered_address = w3.eth.account._recover_hash(message_hash, signature=signature.signature)
-    print(recovered_address, account.address)
-    assert recovered_address == account.address
 
     return signature
 
