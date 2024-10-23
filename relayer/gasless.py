@@ -182,7 +182,9 @@ def main():
 
     deadline, v, r, s = permit(web3, account, args.input_token, args.input_amount, args.origin_settler)
 
-    contract = web3.eth.contract(args.origin_settler, abi=json.load(open("abi.json"))["abi"])
+    with open("abi.json") as f:
+        abi = json.load(f)["abi"]
+    contract = web3.eth.contract(args.origin_settler, abi=abi)
     domain_separator = contract.functions.DOMAIN_SEPARATOR().call()
     intent_typehash = contract.functions.INTENT_TYPEHASH().call()
     nonce = contract.functions.gaslessNonces(account.address).call()
