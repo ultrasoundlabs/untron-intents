@@ -143,11 +143,16 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         return _resolve(intent, order.fillDeadline);
     }
 
+    /// @inheritdoc IUntronIntents
+    function generateOrderId(ResolvedCrossChainOrder memory order) public pure returns (bytes32) {
+        return keccak256(abi.encode(order));
+    }
+
     /// @notice Compute the message hash for EIP-712 signing
     /// @param orderId The ID of the order
     /// @param intent The intent to hash
     /// @return bytes32 The computed message hash
-    function _messageHash(bytes32 orderId, Intent memory intent) public view returns (bytes32) {
+    function _messageHash(bytes32 orderId, Intent memory intent) internal view returns (bytes32) {
         // Reconstruct the message that was signed using EIP-712
         // For nested structs, the typehash of the inner struct is hashed
         bytes32[] memory encodedInputs = new bytes32[](intent.inputs.length);
@@ -183,7 +188,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
 
         // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+        bytes32 orderId = generateOrderId(resolvedOrder);
 
         // Ensure that such order doesn't exist already
         require(!orders[orderId], "Order already exists");
@@ -214,7 +219,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
 
         // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+        bytes32 orderId = generateOrderId(resolvedOrder);
 
         // Ensure that such order doesn't exist already
         require(!orders[orderId], "Order already exists");
@@ -235,7 +240,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
 
         // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+        bytes32 orderId = generateOrderId(resolvedOrder);
 
         // Compute the message hash
         bytes32 messageHash = _messageHash(orderId, intent);
@@ -290,7 +295,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
         ResolvedCrossChainOrder memory resolvedOrder = _resolve(intent, order.fillDeadline);
 
         // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(resolvedOrder));
+        bytes32 orderId = generateOrderId(resolvedOrder);
 
         // Prepare Permit2 data structures
         ISignatureTransfer.TokenPermissions[] memory permissions =
@@ -321,7 +326,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @inheritdoc IUntronIntents
     function reclaim(ResolvedCrossChainOrder calldata order, bytes calldata proof) external {
         // Compute the order ID
-        bytes32 orderId = keccak256(abi.encode(order));
+        bytes32 orderId = generateOrderId(order);
 
         // Verify the intent matches the stored order
         require(orders[orderId] == true, "Order doesn't exist");
