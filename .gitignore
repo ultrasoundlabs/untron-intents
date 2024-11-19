@@ -1,3 +1,4 @@
 relayer/config.json
 relayer/last_block.txt
 relayer/backups/
+.DS_Store
