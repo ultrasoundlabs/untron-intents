@@ -22,10 +22,6 @@ sunswap_v2 = client.get_contract("TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR")
 private_key = PrivateKey(bytes.fromhex(config["tron_private_key"][2:]))
 from_address = private_key.public_key.to_base58check_address()
 
-web3 = Web3(Web3.HTTPProvider(config["rpc"]))
-account = web3.eth.account.from_key(config["ethereum_private_key"])
-contract = web3.eth.contract(address=config["contract_address"], abi=abi)
-
 async def send_usdt(to_address, amount):
     # custom technique allowing for cheaper transfers
     # than just TRC20 transfer() call
@@ -48,38 +44,7 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    response = requests.get("https://untron.finance/intents/assets", verify=False)
-    assets = response.json()
-
-    spent_asset = next((asset for asset in assets if asset["contractAddress"] == spent["token"]), None)
-
-    if not spent_asset:
-        print("Asset not found in assets")
-        return False
-    decimals = int(spent_asset["decimals"])
-
-    usd_rate = 1  # TODO: fix this
-
-    response = requests.get("https://untron.finance/intents/information", verify=False)
-    flat_fee = Decimal(response.json()["fees"]["flatFee"])
-    percent_fee = Decimal(response.json()["fees"]["pctFee"])
-    max_output_amount = Decimal(response.json()["maxOutputAmount"])
-    print(flat_fee, percent_fee, max_output_amount)
-
-    if Decimal(received["amount"]) / Decimal('1e6') > max_output_amount * 3:  # max_output_amount is 1/3 of the liquidity
-        print("Received amount is greater than max output amount")
-        return False
-
-    # Convert spent amount to its actual value considering decimals
-    spent_amount = Decimal(spent["amount"]) / (Decimal(10) ** decimals)
-    
-    # Calculate receive amount in USDT (6 decimals) at which the swap is profitable
-    max_receive = (spent_amount * Decimal(usd_rate) * (Decimal('1') - percent_fee)).quantize(Decimal('0.01')) * Decimal('1e6')
-
-    print(spent_amount, max_receive)
-
-    # Compare with received amount (already in USDT decimals)
-    return Decimal(received["amount"]) <= max_receive - (flat_fee * Decimal('1e6'))
+    return True # TODO: use backend API
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
@@ -105,25 +70,29 @@ async def reclaim(web3, order_id, resolved_order, contract, account):
     tx = contract.functions.reclaim(resolved_order, b'').build_transaction({
         'from': account.address,
         'nonce': web3.eth.get_transaction_count(account.address),
+        'gas': 3000000,
+        'gasPrice': web3.eth.gas_price,
     })
     signed_tx = account.sign_transaction(tx)
     tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
     print(f"Reclaim transaction sent. Transaction hash: {receipt['transactionHash'].hex()}")
 
-LAST_BLOCK_FILE = 'last_block.txt'
+LAST_BLOCK_FILE_TEMPLATE = 'backups/last_block_{}.txt'
 
-def save_last_block(block_number):
-    with open(LAST_BLOCK_FILE, 'w') as f:
+def save_last_block(chain_name, block_number):
+    os.makedirs(os.path.dirname(LAST_BLOCK_FILE_TEMPLATE.format(chain_name)), exist_ok=True)
+    with open(LAST_BLOCK_FILE_TEMPLATE.format(chain_name), 'w') as f:
         f.write(str(block_number))
 
-def load_last_block():
-    if os.path.exists(LAST_BLOCK_FILE):
-        with open(LAST_BLOCK_FILE, 'r') as f:
+def load_last_block(chain_name):
+    file_path = LAST_BLOCK_FILE_TEMPLATE.format(chain_name)
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
             return int(f.read().strip())
     return None
 
-async def process_open_event(event):
+async def process_open_event(event, web3, contract, account):
     order_id = event['args']['orderId']
     resolved_order = event['args']['resolvedOrder']
     
@@ -139,11 +108,15 @@ async def process_open_event(event):
     except Exception as e:
         print(f"Error processing order {order_id.hex()}: {e}")
 
-async def listen_for_deposits():
-    print(f"Listening for Open events on contract {config['contract_address']}")
+async def listen_for_deposits(chain):
+    web3 = Web3(Web3.HTTPProvider(chain["rpc"]))
+    contract = web3.eth.contract(address=chain["contract_address"], abi=abi)
+    account = web3.eth.account.from_key(config["ethereum_private_key"])
 
-    last_block = load_last_block() or web3.eth.get_block_number()
-    print(f"Starting from block {last_block}")
+    print(f"Listening for Open events on contract {chain['contract_address']}")
+
+    last_block = load_last_block(chain["name"]) or web3.eth.get_block_number()
+    print(f"Starting from block {last_block} for chain {chain['name']}")
 
     while True:
         current_block = web3.eth.get_block_number()
@@ -151,21 +124,26 @@ async def listen_for_deposits():
             for block_number in range(last_block + 1, current_block + 1):
                 block = web3.eth.get_block(block_number, full_transactions=True)
                 for tx in block.transactions:
-                    if tx['to'] == config['contract_address']:
+                    if tx['to'] == chain['contract_address']:
                         receipt = web3.eth.get_transaction_receipt(tx.hash)
                         for log in receipt.logs:
                             if log['topics'][0] == web3.keccak(text="Open(bytes32,(address,uint64,uint32,uint32,(address,uint256)[],(bytes32,uint256,bytes32,uint32)[],(uint32,bytes32,bytes)[]))"):
                                 event = contract.events.Open().process_log(log)
-                                await process_open_event(event)
+                                await process_open_event(event, web3, contract, account)
 
             last_block = current_block
-            save_last_block(last_block)
+            save_last_block(chain["name"], last_block)
 
         await asyncio.sleep(1)  # Check for new blocks every second
 
 async def main():
     print("Initializing relayer")
-    await listen_for_deposits()
+    tasks = []
+    for chain in config["chains"]:
+        print(f"Launching on {chain['name']}")
+        tasks.append(asyncio.create_task(listen_for_deposits(chain)))
+    print("All tasks launched")
+    await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     asyncio.run(main())
