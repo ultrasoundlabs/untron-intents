@@ -1,9 +1,13 @@
 {
     "trongrid_api_key": "",
     "coingecko_api_key": "",
-    "feee_api_key": "",
     "tron_private_key": "",
     "ethereum_private_key": "",
-    "contract_address": "",
-    "rpc": ""
+    "chains": [
+        {
+            "name": "base",
+            "contract_address": "",
+            "rpc": ""
+        }
+    ]
 }
