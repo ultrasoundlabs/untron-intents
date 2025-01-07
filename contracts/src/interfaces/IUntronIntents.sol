@@ -23,8 +23,6 @@ interface IUntronIntents is IOriginSettler {
     /// @notice EIP-712 domain separator
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 
-    function _messageHash(bytes32 orderId, Intent memory intent) external view returns (bytes32);
-
     /// @notice Get the gasless nonce for a user
     /// @param user The user to get the nonce for
     /// @return The gasless nonce for the user

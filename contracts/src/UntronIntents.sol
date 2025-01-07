@@ -11,7 +11,7 @@ import "permit2/libraries/SignatureVerification.sol";
 
 /// @title Basic ERC-7683 logic for Untron Intents
 /// @author Ultrasound Labs
-/// @dev This contracts implements basic logic for EVM->TRON intent-based transfers.
+/// @dev This contract implements basic logic for EVM->TRON intent-based transfers.
 ///      It does not implement fill verification logic, which must be implemented by the inheriting contract.
 abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @dev Library for signature verification
@@ -150,7 +150,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
     /// @param orderId The ID of the order
     /// @param intent The intent to hash
     /// @return bytes32 The computed message hash
-    function _messageHash(bytes32 orderId, Intent memory intent) public view returns (bytes32) {
+    function _messageHash(bytes32 orderId, Intent memory intent) internal view returns (bytes32) {
         // Reconstruct the message that was signed using EIP-712
         // For nested structs, the typehash of the inner struct is hashed
         bytes32[] memory encodedInputs = new bytes32[](intent.inputs.length);
@@ -201,7 +201,7 @@ abstract contract UntronIntents is IUntronIntents, Initializable {
 
     /// @notice Internal function to open a gasless order
     /// @param order The gasless cross-chain order to open
-    function _openFor(GaslessCrossChainOrder calldata order) public {
+    function _openFor(GaslessCrossChainOrder calldata order) internal {
         // Validate the order
         require(order.originSettler == address(this), "Invalid origin settler");
         require(order.openDeadline > block.timestamp, "Open deadline expired");
