@@ -35,9 +35,9 @@ interface IUntronIntents is IOriginSettler {
 
     /// @notice Reclaim the locked funds for a filled order
     /// @param orderId The ID of the order
-    /// @param intent The intent of the order
+    /// @param resolvedOrder The resolved cross-chain order to validate
     /// @param proof The proof of fulfillment of the order
-    function reclaim(bytes32 orderId, Intent memory intent, bytes calldata proof) external;
+    function reclaim(bytes32 orderId, ResolvedCrossChainOrder calldata resolvedOrder, bytes calldata proof) external;
 
     /// @notice Multicall helper function to multi-permit and openFor in one call
     /// @param order The order to open

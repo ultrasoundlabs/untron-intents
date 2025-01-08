@@ -61,7 +61,7 @@ async def run_fill(spent, received, instruction):
 async def reclaim(web3, order_id, resolved_order, contract, account):
     print(f"Reclaiming order {order_id.hex()}")
     
-    tx = contract.functions.reclaim(resolved_order, b'').build_transaction({
+    tx = contract.functions.reclaim(order_id, resolved_order, b'').build_transaction({
         'from': account.address,
         'nonce': web3.eth.get_transaction_count(account.address),
         'gas': 3000000,
@@ -140,4 +140,8 @@ async def main():
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    while True:
+        try:
+            asyncio.run(main())
+        except Exception as e:
+            print(f"Error: {e}")
