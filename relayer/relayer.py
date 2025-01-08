@@ -38,7 +38,7 @@ async def send_usdt(to_address, amount):
     return txn.broadcast().wait()
 
 async def is_profitable(spent, received):
-    return True # TODO: use backend API
+    return spent["amount"] >= received["amount"] + 200000
 
 async def run_fill(spent, received, instruction):
     if not await is_profitable(spent, received):
