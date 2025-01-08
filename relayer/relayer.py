@@ -9,7 +9,7 @@ import os
 
 config = json.load(open("config.json"))
 client = Tron(HTTPProvider("https://api.trongrid.io", api_key=config["trongrid_api_key"]))
-abi = json.load(open("abi.json"))["abi"]
+abi = json.load(open("../contracts/out/MockUntronIntents.sol/MockUntronIntents.json"))["abi"]
 
 sunswap_v2 = client.get_contract("TXF1xDbVGdxFGbovmmmXvBGu8ZiE3Lq4mR")
 
