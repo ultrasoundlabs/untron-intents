@@ -50,10 +50,10 @@ event OrderCreated:
     # Details of the created order
     order: Order
 
-# Event for when an order is filled
-# Listened to by the relayers to track filled orders
-event OrderFilled:
-    # ID of the filled order
+# Event for when an order is filled or cancelled
+# Listened to by the relayers to track orders that are no longer active
+event OrderCleared:
+    # ID of the order that is no longer active
     orderId: bytes32
 
 # Addresses of USDT and USDC tokens on the deployed chain.
@@ -165,11 +165,15 @@ def cancel(orderId: bytes32):
     # and to save storage space
     self.orders[orderId] = empty(Order)
 
+    # Log the order as cleared
+    # This is used by the relayers to track orders that are no longer active
+    log OrderCleared(orderId)
+
 @external
 def claim(orderId: bytes32):
     """
     @notice Claims funds for a filled order.
-    @param orderId The ID of the filled order.
+    @param orderId The ID of the order to claim.
     @dev This function is used by the trusted relayer.
     """
     # Verify the caller is the trusted relayer
@@ -191,9 +195,9 @@ def claim(orderId: bytes32):
     # Claimed orders must be removed to prevent double-spending
     self.orders[orderId] = empty(Order)
 
-    # Log the order as filled
-    # This is used by the relayers to track filled orders
-    log OrderFilled(orderId)
+    # Log the order as cleared
+    # This is used by the relayers to track orders that are no longer active
+    log OrderCleared(orderId)
 
 @external
 def setTrustedRelayer(newRelayer: address):
@@ -233,10 +237,10 @@ def _compactSwap(token: address, swapData: bytes32):
     inputAmount: uint256 = convert(slice(swapData, 0, 6), uint256)
     # Extract the output amount from the next 6 bytes
     # Output amount is in Tron USDT, so it's limited to ~281m USDT, which is reasonable
-    outputAmount: uint256 = convert(slice(swapData, 6, 12), uint256)
+    outputAmount: uint256 = convert(slice(swapData, 6, 6), uint256)
     # Extract the Tron address from the remaining 20 bytes
     # Recipient address must be decoded from the compact format to create the order
-    to: bytes20 = convert(swapData, bytes20)
+    to: bytes20 = convert(slice(swapData, 12, 20), bytes20)
     # Create an order struct with a 1-day deadline
     # It is created from the decoded compact data for data-efficient processing
     order: Order = Order(refundBeneficiary=msg.sender, token=token, inputAmount=inputAmount, to=to, outputAmount=outputAmount, deadline=block.timestamp + 86400)
