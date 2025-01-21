@@ -23,4 +23,7 @@ chain_id = 300
 is_zksync = true
 prompt_live = true
 
+[networks.contracts]
+UntronTransfers = {  deployer_script = "deploy_untron_transfers.py" }
+
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html

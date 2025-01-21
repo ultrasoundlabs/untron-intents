@@ -168,6 +168,7 @@ cython_debug/
 .env
 .env.unsafe
 .env*
+!.env.example
 out/
 build/
 lib/
@@ -179,3 +180,7 @@ lib/
 era_test_node.log
 anvil-zksync.log
 .DS_Store
+
+config.json
+
+relayer/backups
