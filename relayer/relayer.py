@@ -44,7 +44,7 @@ untron_abi = untron_transfers_artifact["abi"]
 async def send_usdt(to_address: str, amount: int):
     """
     Example function that performs a Tron-based token transfer or swap.
-    Here, we do a “swapTokensForExactTokens” on SunSwap as a demonstration.
+    Here, we do a "swapTokensForExactTokens" on SunSwap as a demonstration.
     Adjust to your real logic for transferring USDT, USDC, or other tokens.
     """
     print(f"[Tron] Swapping into USDT => to: {to_address} amount: {amount}")
@@ -72,18 +72,35 @@ async def send_usdt(to_address: str, amount: int):
         print(f"[Tron] Error sending USDT: {e}")
         return False
 
-def is_profitable(order):
+def is_profitable(chain, order):
     """
-    Example placeholder logic. Suppose you only proceed if:
-        inputAmount >= (outputAmount + some_fee_margin).
-    Adjust or remove as needed.
+    Check if an order is profitable based on configured fees for the token on the specific chain.
+    Uses basis points (1/10000) for percentage calculations to avoid floats.
+    Returns False if token is not in allowed list for the chain.
     """
-    if order["inputAmount"] < order["outputAmount"] + 200000:
+    token = order["token"].lower()
+    if token not in chain["tokens"]:
+        print(f"Token {token} not in allowed tokens list for chain {chain['name']}")
         return False
-    return True
+
+    token_config = chain["tokens"][token]
+    input_amount = order["inputAmount"]
+    output_amount = order["outputAmount"]
+    
+    # Calculate total fee (static + percentage)
+    percentage_fee = (output_amount * token_config["percentage_fee_bps"]) // 10000
+    total_fee = token_config["static_fee"] + percentage_fee
+    
+    # Order is profitable if input covers output plus fees
+    is_profitable = input_amount >= (output_amount + total_fee)
+    
+    if not is_profitable:
+        print(f"[{chain['name']}] Order not profitable - Input: {input_amount}, Output: {output_amount}, Fee: {total_fee}")
+    
+    return is_profitable
 
 # ------------------------------------------------------------------------------
-# Reclaim or claim on UntronTransfers (in the new contract, it’s named 'claim')
+# Reclaim or claim on UntronTransfers (in the new contract, it's named 'claim')
 # ------------------------------------------------------------------------------
 def claim_order(web3, contract, account, order_id):
     """
@@ -108,7 +125,7 @@ def claim_order(web3, contract, account, order_id):
 # ------------------------------------------------------------------------------
 # Process the OrderCreated event
 # ------------------------------------------------------------------------------
-async def process_order_created_event(web3, contract, account, event):
+async def process_order_created_event(web3, contract, account, event, chain):
     """
     Called when we see an OrderCreated log. 
     'event' includes orderId + order struct:
@@ -122,21 +139,11 @@ async def process_order_created_event(web3, contract, account, event):
     print("Order struct:", order)
 
     # Basic check (optional)
-    if not is_profitable(order):
+    if not is_profitable(chain, order):
         print("Order not considered profitable; skipping.")
         return
 
     # Convert `bytes20 to` to a Tron base58 address
-    #
-    #   Typically Tron addresses in hex start with 0x41 + 20 bytes
-    #   If your `order.to` is raw 20 bytes (no 0x41 prefix),
-    #   you might need to add that first, e.g.:
-    #       raw_addr = b'\x41' + order["to"]
-    #   Then base58-check it:
-    #       to_address = b58encode_check(raw_addr).decode()
-    #
-    # For demonstration, we will try as if `order["to"]` is exactly 21 bytes
-    # or we do 0x41 + 20. Adjust to your actual contract usage.
     raw_addr = b"\x41" + order["to"]
     to_address = b58encode_check(raw_addr).decode()
     print(f"Tron recipient: {to_address}")
@@ -200,12 +207,12 @@ async def listen_for_orders(chain):
                         receipt = web3.eth.get_transaction_receipt(tx.hash)
                         # Check logs for OrderCreated
                         for log in receipt.logs:
-                            # Safest is to decode via the contract’s event signature
+                            # Safest is to decode via the contract's event signature
                             if log.address.lower() == chain["contract_address"].lower():
                                 # Try to decode as OrderCreated
                                 try:
                                     event = contract.events.OrderCreated().processLog(log)
-                                    await process_order_created_event(web3, contract, account, event)
+                                    await process_order_created_event(web3, contract, account, event, chain)
                                 except Exception:
                                     # The log might not match OrderCreated or decode might fail
                                     pass
