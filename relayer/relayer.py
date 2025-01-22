@@ -78,7 +78,7 @@ def is_profitable(chain, order):
     Uses basis points (1/10000) for percentage calculations to avoid floats.
     Returns False if token is not in allowed list for the chain.
     """
-    token = order["token"].lower()
+    token = order["token"]
     if token not in chain["tokens"]:
         print(f"Token {token} not in allowed tokens list for chain {chain['name']}")
         return False
@@ -116,7 +116,7 @@ def claim_order(web3, contract, account, order_id):
             "gasPrice": web3.eth.gas_price,
         })
         signed_tx = account.sign_transaction(tx)
-        tx_hash = web3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        tx_hash = web3.eth.send_raw_transaction(signed_tx.raw_transaction)
         receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
         print(f"[EVM] claim() success. Tx hash: {receipt['transactionHash'].hex()}")
     except Exception as e:
@@ -217,10 +217,11 @@ async def listen_for_orders(chain):
                             if log.address.lower() == chain["contract_address"].lower():
                                 # Try to decode as OrderCreated
                                 try:
-                                    event = contract.events.OrderCreated().processLog(log)
+                                    event = contract.events.OrderCreated().process_log(log)
+                                    print(event)
                                     await process_order_created_event(web3, contract, account, event, chain)
                                 except Exception:
-                                    # The log might not match OrderCreated or decode might fail
+                                    # The log might not match OrderCreated
                                     pass
 
             last_block = current_block
