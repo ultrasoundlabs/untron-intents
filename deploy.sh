@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# DEPLOYMENT SCRIPT FOR UNTRON TRANSFERS
+
 # Build the contract
 mox build
 
@@ -20,4 +22,4 @@ else
 fi
 
 # Deploy contract
-cast send --rpc-url $RPC_URL --private-key $PRIVATE_KEY --create $BYTECODE
+cast send --rpc-url $RPC_URL --private-key $PRIVATE_KEY --create $CONSTRUCTOR_PARAMS $BYTECODE

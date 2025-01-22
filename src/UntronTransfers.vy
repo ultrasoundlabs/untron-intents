@@ -75,12 +75,11 @@ nonces: public(HashMap[address, uint256])
 trustedRelayer: public(address)
 
 @deploy
-def __init__(_usdt: address, _usdc: address, trustedRelayer: address):
+def __init__(_usdt: address, _usdc: address):
     """
     @notice Initializes the contract with USDT and USDC addresses and the trusted relayer.
     @param _usdt Address of the USDT token.
     @param _usdc Address of the USDC token.
-    @param trustedRelayer Address of the trusted relayer.
     """
     # Store the USDT token address as an immutable
     # USDT address needs to be stored immutably to enable data-efficient compact swaps from USDT
@@ -90,7 +89,7 @@ def __init__(_usdt: address, _usdc: address, trustedRelayer: address):
     usdc = _usdc
     # Set the initial trusted relayer address
     # A trusted relayer is required to process cross-chain swaps until ZK proofs are implemented
-    self.trustedRelayer = trustedRelayer
+    self.trustedRelayer = msg.sender
 
 @internal
 def _orderId(order: Order, nonce: uint256) -> bytes32:
