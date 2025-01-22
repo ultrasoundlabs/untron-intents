@@ -187,6 +187,12 @@ async def listen_for_orders(chain):
     # The local EVM account used to sign claims
     account = web3.eth.account.from_key(config["ethereum_private_key"])
 
+    # Verify this account is the trusted relayer
+    trusted_relayer = contract.functions.trustedRelayer().call()
+    if trusted_relayer.lower() != account.address.lower():
+        print(f"[{chain['name']}] Account {account.address} is not the trusted relayer {trusted_relayer}")
+        exit(1)
+
     chain_name = chain["name"]
     print(f"[{chain_name}] Listening for OrderCreated events at {chain['contract_address']}")
 
