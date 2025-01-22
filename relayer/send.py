@@ -6,6 +6,7 @@ import time
 from web3 import Web3
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
+from base58 import b58decode_check
 
 # -----------------------------------------------------------------------
 # Replace with your actual UntronTransfers contract address here:
@@ -41,9 +42,8 @@ def main():
     parser.add_argument("--input-amount", required=True, help="Amount of token to swap (uint256).")
     parser.add_argument("--output-amount", required=True, help="Amount of Tron USDT to receive (uint256).")
 
-    # Optionally accept Tron recipient, or just hardcode for demonstration:
-    parser.add_argument("--tron-bytes20", default="0x11223344556677889900AABBCCDDEEFF00112233",
-                        help="Tron recipient address in bytes20 hex form.")
+    # Accept Tron address in Tron format
+    parser.add_argument("--tron-address", required=True, help="Tron recipient address in Tron format")
     args = parser.parse_args()
 
     # 1) Connect to RPC via web3
@@ -90,16 +90,21 @@ def main():
     #   refundBeneficiary = the same account that created the transaction
     #   token = args.token_address
     #   inputAmount = input_amount
-    #   to = bytes20 Tron address (passed in from args)
+    #   to = bytes20 Tron address (decoded from Tron format)
     #   outputAmount = output_amount
     #   deadline = now + 1 day (arbitrary example)
     DEADLINE = int(time.time()) + 24 * 3600
+
+    # Convert Tron address from Tron format to bytes20
+    tron_bytes = b58decode_check(args.tron_address)
+    # Remove the first byte (network identifier)
+    tron_bytes20 = "0x" + tron_bytes[1:].hex()
 
     order = (
         account.address,                   # refundBeneficiary
         w3.to_checksum_address(args.token_address),  # token
         input_amount,                      # inputAmount
-        args.tron_bytes20,                 # to (bytes20)
+        tron_bytes20,                      # to (bytes20)
         output_amount,                     # outputAmount
         DEADLINE                           # deadline
     )

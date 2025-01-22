@@ -5,6 +5,7 @@ import json
 from web3 import Web3
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
+from base58 import b58decode_check
 
 # -----------------------------------------------------------------------
 # Replace with your actual UntronTransfers contract address here:
@@ -39,8 +40,7 @@ def main():
     parser.add_argument("--input-amount", required=True, help="Amount of USDT to swap (uint256).")
     parser.add_argument("--output-amount", required=True, help="Amount of Tron USDT to receive (uint256).")
     parser.add_argument("--token-address", required=True, help="Address of the ERC20 token to swap.")
-    parser.add_argument("--tron-bytes20", default="0x11223344556677889900AABBCCDDEEFF00112233",
-                        help="Tron recipient address in bytes20 hex form.")
+    parser.add_argument("--tron-address", required=True, help="Tron recipient address in Tron format (base58).")
     args = parser.parse_args()
 
     # 1) Connect to RPC via web3
@@ -86,14 +86,17 @@ def main():
     # - First 6 bytes: input amount
     # - Next 6 bytes: output amount
     # - Last 20 bytes: Tron address
-    tron_address = bytes.fromhex(args.tron_bytes20[2:] if args.tron_bytes20.startswith("0x") else args.tron_bytes20)
+    
+    # Convert Tron address from base58 format and remove network byte
+    tron_bytes = b58decode_check(args.tron_address)
+    tron_bytes20 = tron_bytes[1:]  # Remove first byte (network identifier)
     
     # Convert amounts to 6-byte representations
     input_bytes = input_amount.to_bytes(6, 'big')
     output_bytes = output_amount.to_bytes(6, 'big')
     
     # Concatenate all parts into 32 bytes
-    swap_data = input_bytes + output_bytes + tron_address
+    swap_data = input_bytes + output_bytes + tron_bytes20
     print(f"swap_data: {swap_data.hex()}")
 
     compact_tx = untron_contract.functions.compactUsdt(swap_data).build_transaction({
