@@ -233,13 +233,17 @@ def _compactSwap(token: address, swapData: bytes32):
     # This would only work good for token amounts which would fit into 6 bytes.
     # This is not a problem for 6-decimal USDT, but might be for 18-decimal tokens.
     # In this case, consider using intron() instead.
-    inputAmount: uint256 = convert(slice(swapData, 0, 6), uint256)
+    inputAmount: uint256 = convert(swapData, uint256) >> 208
     # Extract the output amount from the next 6 bytes
     # Output amount is in Tron USDT, so it's limited to ~281m USDT, which is reasonable
-    outputAmount: uint256 = convert(slice(swapData, 6, 6), uint256)
+    outputAmount: uint256 = convert(swapData, uint256) >> 160
+    # Ridiculous shit
+    # Vyper is crazy and doesn't support bitwise AND with literals
+    # So we need to do this manually
+    outputAmount &= convert(0x0000000000000000000000000000000000000000000000000000FFFFFFFFFFFF, uint256)
     # Extract the Tron address from the remaining 20 bytes
     # Recipient address must be decoded from the compact format to create the order
-    to: bytes20 = convert(slice(swapData, 12, 20), bytes20)
+    to: bytes20 = convert(convert(convert(swapData, uint256) << 96, bytes32), bytes20)
     # Create an order struct with a 1-day deadline
     # It is created from the decoded compact data for data-efficient processing
     order: Order = Order(refundBeneficiary=msg.sender, token=token, inputAmount=inputAmount, to=to, outputAmount=outputAmount, deadline=block.timestamp + 86400)
