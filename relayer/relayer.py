@@ -207,9 +207,10 @@ async def listen_for_orders(chain):
             for block_number in range(last_block + 1, current_block + 1):
                 block = web3.eth.get_block(block_number, full_transactions=True)
 
-                # For every tx, if to == untron contract, parse logs
+                # For every tx, parse logs
+                # TODO: i think we can do that with bloom filter or smth
                 for tx in block.transactions:
-                    if tx["to"] and tx["to"].lower() == chain["contract_address"].lower():
+                    if tx["to"]:
                         receipt = web3.eth.get_transaction_receipt(tx.hash)
                         # Check logs for OrderCreated
                         for log in receipt.logs:
