@@ -1,3 +1,0 @@
-@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
-permit2/=lib/permit2/src/

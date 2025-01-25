@@ -1,13 +1,41 @@
 {
-    "trongrid_api_key": "",
-    "coingecko_api_key": "",
-    "tron_private_key": "",
-    "ethereum_private_key": "",
+    "trongrid_api_key": "your-trongrid-api-key-here",
+    "tron_private_key": "0xyour-tron-private-key-here",
+    "ethereum_private_key": "0xyour-ethereum-private-key-here",
     "chains": [
         {
-            "name": "base",
-            "contract_address": "",
-            "rpc": ""
+            "name": "bsc",
+            "rpc": "https://bsc-dataseed.binance.org",
+            "contract_address": "0xYourUntronTransfersContractAddress",
+            "tokens": {
+                "0xUSDTContractAddressOnBSC": {
+                    "name": "USDT",
+                    "static_fee": 200000,
+                    "percentage_fee_bps": 100
+                },
+                "0xUSDCContractAddressOnBSC": {
+                    "name": "USDC",
+                    "static_fee": 200000,
+                    "percentage_fee_bps": 100
+                }
+            }
+        },
+        {
+            "name": "polygon",
+            "rpc": "https://polygon-rpc.com",
+            "contract_address": "0xYourUntronTransfersContractAddress",
+            "tokens": {
+                "0xUSDTContractAddressOnPolygon": {
+                    "name": "USDT",
+                    "static_fee": 200000,
+                    "percentage_fee_bps": 100
+                },
+                "0xUSDCContractAddressOnPolygon": {
+                    "name": "USDC",
+                    "static_fee": 200000,
+                    "percentage_fee_bps": 100
+                }
+            }
         }
     ]
 }

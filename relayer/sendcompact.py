@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import time
 from web3 import Web3
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
@@ -34,16 +33,14 @@ UNTRON_ABI = json.load(open("../out/UntronTransfers.json"))["abi"]
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Approve ERC20 token and submit intron() to UntronTransfers contract."
+        description="Approve ERC20 token and submit compactUsdt() to UntronTransfers contract."
     )
     parser.add_argument("--rpc", required=True, help="HTTP RPC endpoint URL")
     parser.add_argument("--private-key", required=True, help="Hex-encoded private key (no 0x prefix required).")
-    parser.add_argument("--token-address", required=True, help="ERC20 token address.")
-    parser.add_argument("--input-amount", required=True, help="Amount of token to swap (uint256).")
+    parser.add_argument("--input-amount", required=True, help="Amount of USDT to swap (uint256).")
     parser.add_argument("--output-amount", required=True, help="Amount of Tron USDT to receive (uint256).")
-
-    # Accept Tron address in Tron format
-    parser.add_argument("--tron-address", required=True, help="Tron recipient address in Tron format")
+    parser.add_argument("--token-address", required=True, help="Address of the ERC20 token to swap.")
+    parser.add_argument("--tron-address", required=True, help="Tron recipient address in Tron format (base58).")
     args = parser.parse_args()
 
     # 1) Connect to RPC via web3
@@ -84,46 +81,38 @@ def main():
     tx_approve_receipt = w3.eth.wait_for_transaction_receipt(tx_approve_hash)
     print(f"Approve transaction confirmed in block {tx_approve_receipt.blockNumber}")
 
-    # 5) Call intron(...) on UntronTransfers
-    # The order needs: refundBeneficiary, token, inputAmount, to, outputAmount, deadline
-    # We'll set:
-    #   refundBeneficiary = the same account that created the transaction
-    #   token = args.token_address
-    #   inputAmount = input_amount
-    #   to = bytes20 Tron address (decoded from Tron format)
-    #   outputAmount = output_amount
-    #   deadline = now + 1 day (arbitrary example)
-    DEADLINE = int(time.time()) + 24 * 3600
-
-    # Convert Tron address from Tron format to bytes20
+    # 5) Call compactUsdt(...) on UntronTransfers
+    # Pack the data into bytes32:
+    # - First 6 bytes: input amount
+    # - Next 6 bytes: output amount
+    # - Last 20 bytes: Tron address
+    
+    # Convert Tron address from base58 format and remove network byte
     tron_bytes = b58decode_check(args.tron_address)
-    # Remove the first byte (network identifier)
-    tron_bytes20 = "0x" + tron_bytes[1:].hex()
+    tron_bytes20 = tron_bytes[1:]  # Remove first byte (network identifier)
+    
+    # Convert amounts to 6-byte representations
+    input_bytes = input_amount.to_bytes(6, 'big')
+    output_bytes = output_amount.to_bytes(6, 'big')
+    
+    # Concatenate all parts into 32 bytes
+    swap_data = input_bytes + output_bytes + tron_bytes20
+    print(f"swap_data: {swap_data.hex()}")
 
-    order = (
-        account.address,                   # refundBeneficiary
-        w3.to_checksum_address(args.token_address),  # token
-        input_amount,                      # inputAmount
-        tron_bytes20,                      # to (bytes20)
-        output_amount,                     # outputAmount
-        DEADLINE                           # deadline
-    )
-
-    intron_tx = untron_contract.functions.intron(order).build_transaction({
+    compact_tx = untron_contract.functions.compactUsdt(swap_data).build_transaction({
         "chainId": w3.eth.chain_id,
         "nonce": w3.eth.get_transaction_count(account.address),
         "from": account.address,
         "gasPrice": w3.eth.gas_price,
     })
 
-    signed_intron_tx = account.sign_transaction(intron_tx)
-    tx_intron_hash = w3.eth.send_raw_transaction(signed_intron_tx.raw_transaction)
-    print(f"intron() transaction sent, hash: {tx_intron_hash.hex()}")
-    tx_intron_receipt = w3.eth.wait_for_transaction_receipt(tx_intron_hash)
-    print(f"intron() transaction confirmed in block {tx_intron_receipt.blockNumber}")
+    signed_compact_tx = account.sign_transaction(compact_tx)
+    tx_compact_hash = w3.eth.send_raw_transaction(signed_compact_tx.raw_transaction)
+    print(f"compactUsdt() transaction sent, hash: {tx_compact_hash.hex()}")
+    tx_compact_receipt = w3.eth.wait_for_transaction_receipt(tx_compact_hash)
+    print(f"compactUsdt() transaction confirmed in block {tx_compact_receipt.blockNumber}")
 
     print("Done!")
-
 
 if __name__ == "__main__":
     main()
