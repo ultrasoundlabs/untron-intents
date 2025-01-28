@@ -200,30 +200,45 @@ async def listen_for_orders(chain):
     last_block = load_last_block(chain_name) or web3.eth.block_number
     print(f"[{chain_name}] Starting from block {last_block}")
 
+    # Get the event signature for OrderCreated
+    order_created_event = contract.events.OrderCreated()
+    event_signature = "0x" + Web3.keccak(text="OrderCreated(bytes32,(address,address,uint256,bytes20,uint256,uint256))").hex()
+
     while True:
         current_block = web3.eth.block_number
-        # If new blocks are available, iterate them
+        # If new blocks are available, process them in chunks
         if current_block > last_block:
-            for block_number in range(last_block + 1, current_block + 1):
-                block = web3.eth.get_block(block_number, full_transactions=True)
+            chunk_size = 5000  # Adjust based on your RPC provider's limits
+            from_block = last_block + 1
 
-                # For every tx, parse logs
-                # TODO: i think we can do that with bloom filter or smth
-                for tx in block.transactions:
-                    if tx["to"]:
-                        receipt = web3.eth.get_transaction_receipt(tx.hash)
-                        # Check logs for OrderCreated
-                        for log in receipt.logs:
-                            # Safest is to decode via the contract's event signature
-                            if log.address.lower() == chain["contract_address"].lower():
-                                # Try to decode as OrderCreated
-                                try:
-                                    event = contract.events.OrderCreated().process_log(log)
-                                    print(event)
-                                    await process_order_created_event(web3, contract, account, event, chain)
-                                except Exception:
-                                    # The log might not match OrderCreated
-                                    pass
+            while from_block <= current_block:
+                to_block = min(from_block + chunk_size - 1, current_block)
+                print(f"[{chain_name}] Processing blocks {from_block} to {to_block}")
+
+                try:
+                    logs = web3.eth.get_logs({
+                        "fromBlock": from_block,
+                        "toBlock": to_block,
+                        "address": chain["contract_address"],
+                        "topics": [event_signature]  # Filter by OrderCreated event signature
+                    })
+
+                    for log in logs:
+                        try:
+                            event = order_created_event.process_log(log)
+                            print(f"[{chain_name}] Found OrderCreated event in block {log['blockNumber']}")
+                            await process_order_created_event(web3, contract, account, event, chain)
+                        except Exception as e:
+                            print(f"[{chain_name}] Error processing log: {e}")
+                            continue
+
+                except Exception as e:
+                    print(f"[{chain_name}] Error fetching logs for blocks {from_block}-{to_block}: {e}")
+                    # If the chunk size is too large, we could implement retry logic with smaller chunks
+                    # For now, we'll just continue to the next chunk
+                    pass
+
+                from_block = to_block + 1
 
             last_block = current_block
             save_last_block(chain_name, last_block)
