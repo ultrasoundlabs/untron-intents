@@ -17,6 +17,11 @@ interface IERC20:
     # Required to send tokens to relayers or refund users
     def transfer(to: address, amount: uint256) -> bool: nonpayable
 
+# Interface for ERC20 tokens with permit (EIP-2612)
+interface IERC20Permit:
+    def permit(owner: address, spender: address, amount: uint256, deadline: uint256, v: uint8, r: bytes32, s: bytes32): nonpayable
+
+
 # Order struct for tracking yet unfilled swap orders
 struct Order:
     # Address of the refund beneficiary.
@@ -283,4 +288,32 @@ def compactUsdc(swapData: bytes32):
     """
     # Call the internal compact swap function with the USDC token address
     # Provides a data-efficient public interface specifically for USDC swaps
+    self._compactSwap(usdc, swapData)
+
+@external
+def permitAndCompactUsdc(permitData: Bytes[204], swapData: bytes32):
+    """
+    @notice An entry-point function for "compact" swaps from USDC with permit.
+    @param permitData The permit data for USDC approval.
+    @param swapData The compressed 32-byte data for the swap.
+    @dev This function combines permit and swap in a single transaction.
+    """
+    # Declare the variables
+    spender: address = empty(address)
+    amount: uint256 = empty(uint256)
+    deadline: uint256 = empty(uint256)
+    v: uint8 = empty(uint8)
+    r: bytes32 = empty(bytes32)
+    s: bytes32 = empty(bytes32)
+
+    # Decode the permit data to extract the token, spender, value, deadline, and signature
+    # Permit data must be decoded to approve the contract to spend USDC on behalf of the sender
+    spender, amount, deadline, v, r, s = abi_decode(permitData, (address, uint256, uint256, uint8, bytes32, bytes32))
+    
+    # Approve the contract to spend USDC on behalf of the sender
+    # USDC approval is required to allow the contract to spend USDC for the swap
+    extcall IERC20Permit(usdc).permit(msg.sender, spender, amount, deadline, v, r, s)
+    
+    # Call the internal compact swap function with the USDC token address and swap data
+    # Provides a data-efficient public interface for USDC swaps with permit
     self._compactSwap(usdc, swapData)
