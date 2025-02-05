@@ -93,7 +93,12 @@ def is_profitable(chain, order):
     
     # Order is profitable if input covers output plus fees
     is_profitable = input_amount >= (output_amount + total_fee)
-    
+
+    print("input_amount", input_amount)
+    print("output_amount", output_amount)
+    print("total_fee", total_fee)
+    print("is_profitable", is_profitable)
+
     if not is_profitable:
         print(f"[{chain['name']}] Order not profitable - Input: {input_amount}, Output: {output_amount}, Fee: {total_fee}")
     
@@ -208,12 +213,11 @@ async def listen_for_orders(chain):
         current_block = web3.eth.block_number
         # If new blocks are available, process them in chunks
         if current_block > last_block:
-            chunk_size = 5000  # Adjust based on your RPC provider's limits
+            chunk_size = 1000  # Adjust based on your RPC provider's limits
             from_block = last_block + 1
 
             while from_block <= current_block:
                 to_block = min(from_block + chunk_size - 1, current_block)
-                print(f"[{chain_name}] Processing blocks {from_block} to {to_block}")
 
                 try:
                     logs = web3.eth.get_logs({
