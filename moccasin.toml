@@ -17,6 +17,10 @@ chain_id = 31337
 url = "https://ethereum-sepolia-rpc.publicnode.com"
 chain_id = 11155111
 
+[networks.base]
+url = "https://mainnet.base.org"
+chain_id = 8453
+
 [networks.base-sepolia]
 url = "https://sepolia.base.org"
 chain_id = 84532

@@ -9,7 +9,7 @@ from base58 import b58decode_check
 
 # -----------------------------------------------------------------------
 # Replace with your actual UntronTransfers contract address here:
-UNTRON_TRANSFERS_ADDRESS = "0x071Bf5fA8fD25FD9656D282966c11D5237bd36d7"
+UNTRON_TRANSFERS_ADDRESS = "0xeD6ABc392D9B38747F5CE11f451df592D591565b"
 
 # Standard ERC20 ABI (truncated to just 'approve', 'transferFrom', etc.)
 ERC20_ABI = [
