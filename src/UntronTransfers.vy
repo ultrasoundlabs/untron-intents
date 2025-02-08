@@ -74,6 +74,40 @@ nonces: public(HashMap[address, uint256])
 # Only this address can call claim() to fill orders.
 trustedRelayer: public(address)
 
+recommendedFixedFee: uint256
+recommendedPercentFee: uint256
+
+@external
+def setRecommendedFee(fixedFee: uint256, percentFee: uint256):
+    """
+    @notice Sets the recommended fee for the contract.
+    @param fixedFee The fixed fee.
+    @param percentFee The percent fee.
+    """
+    assert msg.sender == self.trustedRelayer
+    self.recommendedFixedFee = fixedFee
+    self.recommendedPercentFee = percentFee
+
+@internal
+@view
+def _recommendedOutputAmount(inputAmount: uint256) -> uint256:
+    """
+    @notice Calculates the recommended output amount for a given input amount.
+    @param inputAmount The input amount.
+    @return The recommended output amount.
+    """
+    return inputAmount * (10000 - self.recommendedPercentFee) // 10000 - self.recommendedFixedFee
+
+@external
+@view
+def recommendedOutputAmount(inputAmount: uint256) -> uint256:
+    """
+    @notice Calculates the recommended output amount for a given input amount.
+    @param inputAmount The input amount.
+    @return The recommended output amount.
+    """
+    return self._recommendedOutputAmount(inputAmount)
+
 @deploy
 def __init__(_usdt: address, _usdc: address):
     """
@@ -237,10 +271,11 @@ def _compactSwap(token: address, swapData: bytes32):
     # Extract the output amount from the next 6 bytes
     # Output amount is in Tron USDT, so it's limited to ~281m USDT, which is reasonable
     outputAmount: uint256 = convert(swapData, uint256) >> 160
-    # Ridiculous shit
-    # Vyper is crazy and doesn't support bitwise AND with literals
-    # So we need to do this manually
-    outputAmount &= convert(0x0000000000000000000000000000000000000000000000000000FFFFFFFFFFFF, uint256)
+    # if output amount is 0, use recommended output amount
+    if outputAmount == 0:
+        outputAmount = self._recommendedOutputAmount(inputAmount)
+    # Extract the output amount from the other data
+    outputAmount &= convert(max_value(uint48), uint256)
     # Extract the Tron address from the remaining 20 bytes
     # Recipient address must be decoded from the compact format to create the order
     to: bytes20 = convert(convert(convert(swapData, uint256) << 96, bytes32), bytes20)
