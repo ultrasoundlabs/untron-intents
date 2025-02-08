@@ -1,0 +1,27 @@
+[project]
+name = "untron-intents"
+version = "0.1.0"
+description = "Intent-based platform for L2->Tron swaps based on Untron codebase"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { text = "MIT License" }
+keywords = [
+  "security",
+  "library",
+  "ethereum",
+  "smart-contracts",
+  "evm",
+  "vyper",
+  "vyper-contracts",
+]
+authors = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+maintainers = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+
+[project.urls]
+Homepage = "https://github.com/ultrasoundlabs/untron-intents#readme"
+GitHub = "https://github.com/ultrasoundlabs/untron-intents"
+Changelog = "https://github.com/ultrasoundlabs/untron-intents/blob/main/CHANGELOG.md"
