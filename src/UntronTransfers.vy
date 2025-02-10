@@ -271,11 +271,11 @@ def _compactSwap(token: address, swapData: bytes32):
     # Extract the output amount from the next 6 bytes
     # Output amount is in Tron USDT, so it's limited to ~281m USDT, which is reasonable
     outputAmount: uint256 = convert(swapData, uint256) >> 160
+    # Extract the output amount from the other data
+    outputAmount &= convert(max_value(uint48), uint256)
     # if output amount is 0, use recommended output amount
     if outputAmount == 0:
         outputAmount = self._recommendedOutputAmount(inputAmount)
-    # Extract the output amount from the other data
-    outputAmount &= convert(max_value(uint48), uint256)
     # Extract the Tron address from the remaining 20 bytes
     # Recipient address must be decoded from the compact format to create the order
     to: bytes20 = convert(convert(convert(swapData, uint256) << 96, bytes32), bytes20)
