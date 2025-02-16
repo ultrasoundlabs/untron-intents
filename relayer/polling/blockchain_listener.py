@@ -216,10 +216,9 @@ async def poll_blockchain_events(chain_name: str) -> None:
                                     "toBlock": to_block,
                                     "address": transfers_contract.address,
                                     "topics": [
-                                        "0x" + web3.keccak(text="OrderCreated(bytes32,(address,address,uint256,bytes20,uint256))").hex()
+                                        web3.keccak(text="OrderCreated(bytes32,(address,address,uint256,bytes20,uint256))").hex()
                                     ]
                                 }
-                                print(props)
                                 order_logs = await web3.eth.get_logs(props)
                                 
                             except Exception as e:
@@ -234,12 +233,11 @@ async def poll_blockchain_events(chain_name: str) -> None:
                                         "toBlock": to_block,
                                         "address": token_addresses,
                                         "topics": [
-                                            "0x" + web3.keccak(text="Transfer(address,address,uint256)").hex(),
+                                            web3.keccak(text="Transfer(address,address,uint256)").hex(),
                                             None,  # from address (any)
                                             [address_to_topic(addr) for addr in receiver_addresses]  # to addresses (our receivers)
                                         ]
                                     }
-                                    print(props)
                                     transfer_logs = await web3.eth.get_logs(props)
                                 else:
                                     transfer_logs = []
