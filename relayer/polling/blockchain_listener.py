@@ -80,7 +80,7 @@ async def process_transfer_event(
     
     # Record the processed intent only after both Tron transfer and intron() succeed
     processed = ProcessedIntent(
-        eth_tx_hash=receipt["transactionHash"].hex(),
+        eth_tx_hash=event_data["transactionHash"].hex(),
         tron_tx_hash=tx_hash,
         amount=str(input_amount),  # Store as string to avoid precision loss
         token=token_address,
