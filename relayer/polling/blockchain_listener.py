@@ -22,7 +22,7 @@ async def process_transfer_event(
     Returns True if the transfer was successfully processed.
     """
     # Extract transfer details
-    to_address = event_data["topics"][2][12:].hex()  # Third topic is 'to' address
+    to_address = "0x" + event_data["topics"][2][12:].hex()  # Third topic is 'to' address
     input_amount = int.from_bytes(event_data["data"])  # Data field contains amount
     token_address = event_data["address"]
     
