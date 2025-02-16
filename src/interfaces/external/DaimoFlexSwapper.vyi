@@ -1,0 +1,7 @@
+# pragma version 0.4.0
+# @license MIT
+
+@external
+@payable
+def swapToCoin(tokenIn: address, amountIn: uint256, tokenOut: address, extraData: Bytes[16384]) -> uint256:
+    ...

@@ -1,0 +1,20 @@
+{
+    "ethereum_private_key": "your_eth_private_key",
+    "tron_private_key": "your_tron_private_key",
+    "trongrid_api_key": "your_trongrid_api_key",
+    "chains": [
+        {
+            "name": "chain_name",
+            "rpc": "chain_rpc_url",
+            "transfers_contract_address": "deployed_contract_address",
+            "receiver_factory_address": "contract_address",
+            "tokens": {
+                "USDT": {
+                    "address": "token_contract_address",
+                    "static_fee": "static_fee_amount",
+                    "percentage_fee_bps": "fee_in_basis_points"
+                }
+            }
+        }
+    ]
+}
