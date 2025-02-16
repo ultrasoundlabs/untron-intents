@@ -216,7 +216,7 @@ async def poll_blockchain_events(chain_name: str) -> None:
                                     "toBlock": to_block,
                                     "address": transfers_contract.address,
                                     "topics": [
-                                        "0x" + web3.keccak(text="OrderCreated(bytes32,(address,address,uint256,bytes20,uint256))").hex()
+                                        "0x" + web3.keccak(text="OrderCreated(bytes32,(address,address,uint256,bytes20,uint256,uint256))").hex()
                                     ]
                                 }
                                 order_logs = await web3.eth.get_logs(props)
