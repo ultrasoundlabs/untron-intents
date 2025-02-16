@@ -70,6 +70,14 @@ async def run_case_fix_binary(address: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)  # 30 seconds timeout
+        except asyncio.TimeoutError:
+            process.kill()
+            logger.error("Case fix binary timed out")
+            return ""
+            stderr=asyncio.subprocess.PIPE,
+        )
         stdout, stderr = await process.communicate()
         if stdout:
             return stdout.decode().strip()
