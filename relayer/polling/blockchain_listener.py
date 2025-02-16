@@ -21,6 +21,15 @@ async def process_transfer_event(
     Process a token transfer event to a receiver contract.
     Returns True if the transfer was successfully processed.
     """
+    # Generate a unique intent ID from the transaction hash
+    intent_id = event_data["transactionHash"].hex()
+    
+    # Check if this transfer was already processed using eth_tx_hash as primary key
+    existing = await session.get(ProcessedIntent, intent_id)
+    if existing is not None:
+        logger.info(f"Transfer {intent_id} was already processed (source: {existing.source})")
+        return True
+
     # Extract transfer details
     to_address = "0x" + event_data["topics"][2][12:].hex()  # Third topic is 'to' address
     input_amount = int.from_bytes(event_data["data"])  # Data field contains amount
@@ -40,15 +49,6 @@ async def process_transfer_event(
         f"Processing transfer to receiver {to_address} "
         f"of {input_amount} from token {token_address}"
     )
-    
-    # Generate a unique intent ID from the transaction hash
-    intent_id = event_data["transactionHash"].hex()
-    
-    # Check if this transfer was already processed using eth_tx_hash as primary key
-    existing = await session.get(ProcessedIntent, intent_id)
-    if existing is not None:
-        logger.info(f"Transfer {intent_id} was already processed (source: {existing.source})")
-        return True
     
     # Call the smart contract to determine the recommended output amount
     recommended_output = await ethereum.recommended_output_amount(chain_name, input_amount)
