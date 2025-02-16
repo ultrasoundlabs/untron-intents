@@ -13,6 +13,10 @@ prompt_live = false
 save_to_db = false
 chain_id = 31337
 
+[networks.mainnet]
+url = "https://rpc.ankr.com/eth"
+chain_id = 1
+
 [networks.sepolia]
 url = "https://ethereum-sepolia-rpc.publicnode.com"
 chain_id = 11155111
@@ -32,6 +36,8 @@ is_zksync = true
 prompt_live = true
 
 [networks.contracts]
-UntronTransfers = {  deployer_script = "deploy_untron_transfers.py" }
+UntronResolver = {  deployer_script = "deploy_resolver.py" }
+UntronReceiverFactory = { deployer_script = "deploy_receiver_factory.py" }
+UntronTransfers = {  deployer_script = "deploy_transfers.py" }
 
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html

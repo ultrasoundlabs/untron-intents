@@ -184,3 +184,5 @@ anvil-zksync.log
 config.json
 
 relayer/backups
+receivers.db
+backups

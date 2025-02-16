@@ -1,0 +1,32 @@
+# pragma version 0.4.0
+# @license MIT
+
+urls: public(DynArray[String[1024], 16])
+
+@external
+def popUrl() -> String[1024]:
+    ...
+
+@external
+def pushUrl(url: String[1024]):
+    ...
+
+@external
+@view
+def supportsInterface(interfaceID: bytes4) -> bool:
+    ...
+
+# @external
+# @view
+# def addr(node: bytes32) -> address:
+#     ...
+
+@external
+@view
+def resolve(name: Bytes[64], data: Bytes[1024]) -> Bytes[32]:
+    ...
+
+@external
+@view
+def untronSubdomain(serverResponse: Bytes[64], originalDomain: Bytes[64]) -> Bytes[32]:
+    ...
