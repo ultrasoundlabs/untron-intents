@@ -73,7 +73,23 @@ async def process_transfer_event(
             logger.error(f"Failed to call factory intron() for receiver {to_address}")
             return False
             
-        logger.info(f"Successfully called factory intron() for receiver {to_address}, tx: {receipt['transactionHash'].hex()}")
+        # Find and decode the OrderCreated event from the receipt
+        contract = ethereum.get_contract(chain_name)
+        order_created_event = None
+        for log in receipt["logs"]:
+            try:
+                decoded = contract.events.OrderCreated().process_log(log)
+                order_created_event = decoded
+                break
+            except:
+                continue
+                
+        if not order_created_event:
+            logger.error(f"Failed to find OrderCreated event in receipt for {to_address}")
+            return False
+            
+        order_id = order_created_event.args.orderId
+        logger.info(f"Successfully called factory intron() for receiver {to_address}, tx: {receipt['transactionHash'].hex()}, orderId: {order_id.hex()}")
     except Exception as e:
         logger.error(f"Error calling factory intron() for receiver {to_address}: {e}")
         return False
@@ -85,7 +101,8 @@ async def process_transfer_event(
         amount=str(input_amount),  # Store as string to avoid precision loss
         token=token_address,
         source="receiver",
-        is_claimed=False  # New transfers start as unclaimed
+        is_claimed=False,  # New transfers start as unclaimed
+        order_id=order_id.hex()  # Store the orderId for later matching
     )
     session.add(processed)
     await session.commit()
@@ -108,7 +125,7 @@ async def process_order_created_event(
     
     logger.info(f"Processing OrderCreated event. orderId = {order_id_hex}")
     
-    # Check if this order was already processed using eth_tx_hash as primary key
+    # First check by transaction hash
     existing = await session.get(ProcessedIntent, event_data["transactionHash"].hex())
     if existing is not None:
         if existing.source == "receiver":
@@ -128,6 +145,18 @@ async def process_order_created_event(
             # Order was processed directly, no need to do anything
             logger.info(f"Order {order_id_hex} was already processed directly")
             return True
+            
+    # Check for a matching Transfer that created this order by orderId
+    existing = await session.execute(
+        select(ProcessedIntent).where(
+            ProcessedIntent.source == "receiver",
+            ProcessedIntent.order_id == order_id_hex
+        )
+    )
+    existing = existing.scalar_one_or_none()
+    if existing is not None:
+        logger.info(f"Order {order_id_hex} was already processed via transfer")
+        return True
     
     # Get chain configuration
     chain_config = next(c for c in CONFIG["chains"] if c["name"] == chain_name)
@@ -152,7 +181,8 @@ async def process_order_created_event(
         amount=str(order.order.inputAmount),  # Store as string to avoid precision loss
         token=order.order.token,  # Use the token from the order
         source="order",
-        is_claimed=False  # New orders start as unclaimed
+        is_claimed=False,  # New orders start as unclaimed
+        order_id=order_id_hex  # Store the orderId for consistency
     )
     session.add(processed)
     await session.commit()

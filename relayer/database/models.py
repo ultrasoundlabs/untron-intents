@@ -35,5 +35,6 @@ class ProcessedIntent(Base):
     token = Column(String, nullable=False)  # Token contract address or symbol
     source = Column(String, nullable=False)  # Either "receiver" or "order"
     is_claimed = Column(Boolean, default=False)  # Whether claim() was called on Ethereum
+    order_id = Column(String, nullable=True)  # The orderId from the OrderCreated event, if this was created through a receiver
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
