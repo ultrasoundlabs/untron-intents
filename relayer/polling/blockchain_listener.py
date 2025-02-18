@@ -125,8 +125,17 @@ async def process_order_created_event(
     
     logger.info(f"Processing OrderCreated event. orderId = {order_id_hex}")
     
-    # First check by transaction hash
-    existing = await session.get(ProcessedIntent, event_data["transactionHash"].hex())
+    # Check if this order was already processed, either by tx hash or orderId
+    existing = await session.execute(
+        select(ProcessedIntent).where(
+            (ProcessedIntent.eth_tx_hash == event_data["transactionHash"].hex()) |
+            (
+                (ProcessedIntent.source == "receiver") &
+                (ProcessedIntent.order_id == order_id_hex)
+            )
+        )
+    )
+    existing = existing.scalar_one_or_none()
     if existing is not None:
         if existing.source == "receiver":
             # Order was filled by a receiver, we need to claim it
@@ -145,18 +154,6 @@ async def process_order_created_event(
             # Order was processed directly, no need to do anything
             logger.info(f"Order {order_id_hex} was already processed directly")
             return True
-            
-    # Check for a matching Transfer that created this order by orderId
-    existing = await session.execute(
-        select(ProcessedIntent).where(
-            ProcessedIntent.source == "receiver",
-            ProcessedIntent.order_id == order_id_hex
-        )
-    )
-    existing = existing.scalar_one_or_none()
-    if existing is not None:
-        logger.info(f"Order {order_id_hex} was already processed via transfer")
-        return True
     
     # Get chain configuration
     chain_config = next(c for c in CONFIG["chains"] if c["name"] == chain_name)
