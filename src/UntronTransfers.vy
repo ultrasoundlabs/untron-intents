@@ -8,14 +8,12 @@
      In the future versions, Untron's ZK engine will be used for permissionless solving.
 """
 
-# Interface for ERC20 tokens
-interface IERC20:
-    # Function to transfer tokens from one address to another with approval
-    # Required to accept tokens from users who want to swap them
-    def transferFrom(_from: address, to: address, amount: uint256) -> bool: nonpayable
-    # Function to transfer tokens from the contract to another address
-    # Required to send tokens to relayers or refund users
-    def transfer(to: address, amount: uint256) -> bool: nonpayable
+from ethereum.ercs import IERC20
+from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
+
+initializes: ownable
+exports: ownable.transfer_ownership
+exports: ownable.owner
 
 # Order struct for tracking yet unfilled swap orders
 struct Order:
@@ -84,7 +82,7 @@ def setRecommendedFee(fixedFee: uint256, percentFee: uint256):
     @param fixedFee The fixed fee.
     @param percentFee The percent fee.
     """
-    assert msg.sender == self.trustedRelayer
+    assert msg.sender == ownable.owner
     self.recommendedFixedFee = fixedFee
     self.recommendedPercentFee = percentFee
 
@@ -109,11 +107,12 @@ def recommendedOutputAmount(inputAmount: uint256) -> uint256:
     return self._recommendedOutputAmount(inputAmount)
 
 @deploy
-def __init__(_usdt: address, _usdc: address):
+def __init__(_usdt: address, _usdc: address, _trustedRelayer: address):
     """
     @notice Initializes the contract with USDT and USDC addresses and the trusted relayer.
     @param _usdt Address of the USDT token.
     @param _usdc Address of the USDC token.
+    @param _trustedRelayer Address of the trusted relayer.
     """
     # Store the USDT token address as an immutable
     # USDT address needs to be stored immutably to enable data-efficient compact swaps from USDT
@@ -121,10 +120,12 @@ def __init__(_usdt: address, _usdc: address):
     # Store the USDC token address as an immutable
     # USDC address needs to be stored immutably to enable data-efficient compact swaps from USDC
     usdc = _usdc
+    # Initialize the ownable contract
+    # This sets the initial owner to the deployer
+    ownable.__init__()
     # Set the initial trusted relayer address
-    # A trusted relayer is required to process cross-chain swaps until ZK proofs are implemented
-    self.trustedRelayer = msg.sender
-
+    # A trusted relayer is the resolver of orders
+    self.trustedRelayer = _trustedRelayer
 @internal
 def _orderId(order: Order, nonce: uint256) -> bytes32:
     """
@@ -211,7 +212,7 @@ def claim(orderId: bytes32):
     """
     # Verify the caller is the trusted relayer
     # Only the trusted relayer can claim funds for cross-chain swaps
-    assert msg.sender == self.trustedRelayer
+    assert msg.sender == ownable.owner
 
     # Retrieve the order from storage
     # Need to access order details to process the claim
@@ -240,9 +241,9 @@ def setTrustedRelayer(newRelayer: address):
     @dev This function is used to set a new relayer.
          Only the current relayer can set a new one.
     """
-    # Verify the caller is the current trusted relayer
-    # Only the current relayer should be able to transfer their role
-    assert msg.sender == self.trustedRelayer
+    # Verify the caller is the current owner
+    # Only the current owner should be able to transfer ownership
+    assert msg.sender == ownable.owner
     # Update the trusted relayer address
     # New relayer address must be stored to enable future claims
     self.trustedRelayer = newRelayer

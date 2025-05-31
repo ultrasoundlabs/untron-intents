@@ -1,14 +1,15 @@
 # pragma version 0.4.0
 # @license MIT
 
-from pcaversaccio.snekmate.src.snekmate.auth import ownable
-from pcaversaccio.snekmate.src.snekmate.utils import create2_address
-from interfaces import ReceiverFactory
-from interfaces import UntronReceiver
+from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
+from lib.github.pcaversaccio.snekmate.src.snekmate.utils import create2_address
+from src.interfaces import ReceiverFactory
+from src.interfaces import UntronReceiver
 
 initializes: ownable
 implements: ReceiverFactory
 exports: ownable.transfer_ownership
+exports: ownable.owner
 
 receiverImplementation: public(address)
 flexSwapper: public(address)

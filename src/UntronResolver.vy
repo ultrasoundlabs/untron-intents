@@ -1,13 +1,14 @@
 # pragma version 0.4.0
 # @license MIT
 
-from pcaversaccio.snekmate.src.snekmate.auth import ownable
-from interfaces import UntronResolver
-from interfaces import ReceiverFactory
+from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
+from src.interfaces import UntronResolver
+from src.interfaces import ReceiverFactory
 
 initializes: ownable
 implements: UntronResolver
 exports: ownable.transfer_ownership
+exports: ownable.owner
 
 urls: public(DynArray[String[1024], 16])
 receiverFactory: public(ReceiverFactory)

@@ -2,9 +2,9 @@
 # @license MIT
 
 from ethereum.ercs import IERC20
-from interfaces import UntronReceiver
-from interfaces.external import UntronTransfers
-from interfaces.external import DaimoFlexSwapper
+from src.interfaces import UntronReceiver
+from src.interfaces import UntronTransfers
+from src.interfaces.external import DaimoFlexSwapper
 
 implements: UntronReceiver
 
