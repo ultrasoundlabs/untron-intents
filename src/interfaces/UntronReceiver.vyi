@@ -2,13 +2,9 @@
 # @license MIT
 
 @external
-def initialize(destinationTronAddress: bytes20):
+def initialize():
     ...
 
 @external
-def swapIntoUsdc(flexSwapper: address, _token: address, usdc: address, extraData: Bytes[16384]):
-    ...
-
-@external
-def intron(usdt: address, usdc: address, untronTransfers: address):
+def withdraw(_token: address) -> uint256:
     ...

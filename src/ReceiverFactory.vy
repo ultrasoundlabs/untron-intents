@@ -1,10 +1,12 @@
 # pragma version 0.4.0
 # @license MIT
 
+from ethereum.ercs import IERC20
 from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
 from lib.github.pcaversaccio.snekmate.src.snekmate.utils import create2_address
 from src.interfaces import ReceiverFactory
 from src.interfaces import UntronReceiver
+from src.interfaces import UntronTransfers
 
 initializes: ownable
 implements: ReceiverFactory
@@ -12,8 +14,8 @@ exports: ownable.transfer_ownership
 exports: ownable.owner
 
 receiverImplementation: public(address)
-flexSwapper: public(address)
 untronTransfers: public(address)
+trustedSwapper: public(address)
 
 usdt: public(address)
 usdc: public(address)
@@ -27,48 +29,47 @@ def __init__():
     ownable.__init__()
 
 @external
-def setReceiverImplementation(receiverImplementation: address):
+def configure(receiverImplementation: address, untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
     ownable._check_owner()
     self.receiverImplementation = receiverImplementation
-
-@external
-def setFlexSwapper(flexSwapper: address):
-    ownable._check_owner()
-    self.flexSwapper = flexSwapper
-
-@external
-def setUntronTransfers(untronTransfers: address):
-    ownable._check_owner()
     self.untronTransfers = untronTransfers
-
-@external
-def setUsdt(usdt: address):
-    ownable._check_owner()
+    self.trustedSwapper = trustedSwapper
     self.usdt = usdt
-
-@external
-def setUsdc(usdc: address):
-    ownable._check_owner()
     self.usdc = usdc
 
 @internal
-def deploy(destinationTronAddress: bytes20) -> address:
-    contract: address = create_minimal_proxy_to(self.receiverImplementation, salt=convert(destinationTronAddress, bytes32))
-    receiver: UntronReceiver = UntronReceiver(contract)
-    extcall receiver.initialize(destinationTronAddress)
+@view
+def _constructSwapData(amount: uint256, destinationTronAddress: bytes20) -> bytes32:
+    # output amount (6-12th bytes) is 0 so that Untron Transfers contract uses the recommended one
+    return convert((amount << 208) | convert(convert(destinationTronAddress, uint160), uint256), bytes32)
 
-    log ReceiverDeployed(destinationTronAddress, contract)
+@internal
+def _intron(destinationTronAddress: bytes20, receiverAddress: address):
+    receiver: UntronReceiver = UntronReceiver(receiverAddress)
+    usdtAmount: uint256 = extcall receiver.withdraw(self.usdt)
+    usdcAmount: uint256 = extcall receiver.withdraw(self.usdc)
 
-    return contract
+    if usdtAmount > 0:
+        extcall UntronTransfers(self.untronTransfers).compactUsdt(self._constructSwapData(usdtAmount, destinationTronAddress))
+    if usdcAmount > 0:
+        extcall UntronTransfers(self.untronTransfers).compactUsdc(self._constructSwapData(usdcAmount, destinationTronAddress))
 
 @external
-def swapIntoUsdc(destinationTronAddress: bytes20, _token: address, extraData: Bytes[16384]):
+def swapForReceiver(destinationTronAddress: bytes20, inputToken: address, forUsdc: bool, outputAmount: uint256, intronAfter: bool):
+    assert msg.sender == self.trustedSwapper, "unauthorized"
+    
     contract: address = self._generateReceiverAddress(destinationTronAddress)
     if contract.codesize == 0:
         self.deploy(destinationTronAddress)
 
     receiver: UntronReceiver = UntronReceiver(contract)
-    extcall receiver.swapIntoUsdc(self.flexSwapper, _token, self.usdc, extraData)
+    extcall receiver.withdraw(inputToken)
+
+    outputToken: address = self.usdc if forUsdc else self.usdt
+    extcall IERC20(outputToken).transferFrom(msg.sender, contract, outputAmount)
+
+    if intronAfter:
+        self._intron(destinationTronAddress, contract)
 
 @external
 def intron(destinationTronAddress: bytes20):
@@ -76,8 +77,16 @@ def intron(destinationTronAddress: bytes20):
     if contract.codesize == 0:
         self.deploy(destinationTronAddress)
 
+    self._intron(destinationTronAddress, contract)
+
+@internal
+def deploy(destinationTronAddress: bytes20) -> address:
+    contract: address = create_minimal_proxy_to(self.receiverImplementation, salt=convert(destinationTronAddress, bytes32))
     receiver: UntronReceiver = UntronReceiver(contract)
-    extcall receiver.intron(self.usdt, self.usdc, self.untronTransfers)
+    extcall receiver.initialize()
+    log ReceiverDeployed(destinationTronAddress, contract)
+
+    return contract
 
 @internal
 @view
