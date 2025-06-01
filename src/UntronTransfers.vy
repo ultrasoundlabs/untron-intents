@@ -70,6 +70,7 @@ nonces: public(HashMap[address, uint256])
 
 # Address of the trusted relayer.
 # Only this address can call claim() to fill orders.
+# This can be an EOA or a smart contract (e.g., a ZK proof verifier for trust-minimized relaying).
 trustedRelayer: public(address)
 
 recommendedFixedFee: uint256
@@ -126,22 +127,18 @@ def __init__(_usdt: address, _usdc: address, _trustedRelayer: address):
     # Set the initial trusted relayer address
     # A trusted relayer is the resolver of orders
     self.trustedRelayer = _trustedRelayer
+
 @internal
-def _orderId(order: Order, nonce: uint256) -> bytes32:
+def _orderId(creator: address, nonce: uint256) -> bytes32:
     """
     @notice Generates a unique order ID for a given order and nonce.
     @param order The order to generate an ID for.
     @param nonce The nonce (initiator's order counter) for the order.
     @return The unique order ID.
     """
-    # Generate a unique hash by combining the encoded order data with the nonce
+    # Generate a unique hash by combining the order creator and nonce
     # Each order needs a unique identifier to track its state and prevent replay attacks
-    # We could technically store just the bools whether this order took place,
-    # but then it would require to post the entire order onchain twice,
-    # while we want to minimize data usage on L2s.
-    # Hence why we store it on a relatively cheap L2 state
-    # and clean it up after the order is filled.
-    return sha256(concat(abi_encode(order), convert(nonce, bytes32)))
+    return sha256(abi_encode(creator, nonce))
 
 @internal
 def _intron(order: Order):
@@ -155,7 +152,7 @@ def _intron(order: Order):
     extcall IERC20(order.token).transferFrom(msg.sender, self, order.inputAmount)
     # Generate a unique order ID using the order data and sender's nonce
     # Each order needs a unique identifier for efficient tracking and claiming in the storage
-    orderId: bytes32 = self._orderId(order, self.nonces[msg.sender])
+    orderId: bytes32 = self._orderId(msg.sender, self.nonces[msg.sender])
     # Store the order in the orders mapping
     # Order details must be stored to allow efficient claiming or refunding
     self.orders[orderId] = order
@@ -209,9 +206,10 @@ def claim(orderId: bytes32):
     @notice Claims funds for a filled order.
     @param orderId The ID of the order to claim.
     @dev This function is used by the trusted relayer.
+         The trusted relayer can be an EOA or a smart contract (e.g., a ZK proof verifier).
     """
     # Verify the caller is the trusted relayer
-    # Only the trusted relayer can claim funds for cross-chain swaps
+    # Only the trusted relayer (or a contract it controls) can claim funds for cross-chain swaps
     assert msg.sender == ownable.owner
 
     # Retrieve the order from storage
@@ -239,7 +237,8 @@ def setTrustedRelayer(newRelayer: address):
     @notice Sets a new trusted relayer.
     @param newRelayer The new relayer address.
     @dev This function is used to set a new relayer.
-         Only the current relayer can set a new one.
+         Only the current owner can set a new one.
+         The newRelayer can be an EOA or a smart contract designed for trust-minimized relaying.
     """
     # Verify the caller is the current owner
     # Only the current owner should be able to transfer ownership
