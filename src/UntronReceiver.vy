@@ -14,14 +14,14 @@ def initialize():
     self.deployer = msg.sender
 
 # this function sends a specific token to the deployer contract (or ETH if no token is specified)
-# so that the deployer contract can swap it for USDT and send to Untron Transfers contract
+# so that the deployer contract can swap it for USDT or USDC and send to Untron Transfers contract
 @external
 def withdraw(_token: address) -> uint256:
     assert msg.sender == self.deployer, "unauthorized"
-    token: IERC20 = IERC20(_token)
     
     _balance: uint256 = 0
     if _token != empty(address):
+        token: IERC20 = IERC20(_token)
         _balance = staticcall token.balanceOf(self)
         extcall token.transfer(self.deployer, _balance)
     else:
