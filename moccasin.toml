@@ -29,6 +29,10 @@ chain_id = 8453
 url = "https://sepolia.base.org"
 chain_id = 84532
 
+[networks.optimism]
+url = "https://mainnet.optimism.io"
+chain_id = 10
+
 [networks.zksync-sepolia]
 url = "https://sepolia.era.zksync.dev"
 chain_id = 300
