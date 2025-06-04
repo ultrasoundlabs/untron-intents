@@ -43,5 +43,6 @@ prompt_live = true
 UntronResolver = {  deployer_script = "deploy_resolver.py" }
 UntronReceiverFactory = { deployer_script = "deploy_receiver_factory.py" }
 UntronTransfers = {  deployer_script = "deploy_transfers.py" }
+UntronReceiver = {  deployer_script = "deploy_receiver.py"  }
 
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html

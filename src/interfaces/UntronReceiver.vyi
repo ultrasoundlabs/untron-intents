@@ -1,5 +1,4 @@
-# pragma version 0.4.0
-# @license MIT
+# Functions
 
 @external
 def initialize():
@@ -7,4 +6,9 @@ def initialize():
 
 @external
 def withdraw(_token: address) -> uint256:
+    ...
+
+@view
+@external
+def deployer() -> address:
     ...

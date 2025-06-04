@@ -186,3 +186,4 @@ config.json
 relayer/backups
 receivers.db
 backups
+Cargo.lock

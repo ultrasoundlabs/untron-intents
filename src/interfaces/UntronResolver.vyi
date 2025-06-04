@@ -1,7 +1,19 @@
-# pragma version 0.4.0
-# @license MIT
+# Events
 
-urls: public(DynArray[String[1024], 16])
+event OwnershipTransferred:
+    previous_owner: address
+    new_owner: address
+
+# Functions
+
+@external
+def transfer_ownership(new_owner: address):
+    ...
+
+@view
+@external
+def owner() -> address:
+    ...
 
 @external
 def popUrl() -> String[1024]:
@@ -11,22 +23,22 @@ def popUrl() -> String[1024]:
 def pushUrl(url: String[1024]):
     ...
 
-@external
 @view
+@external
 def supportsInterface(interfaceID: bytes4) -> bool:
     ...
 
-# @external
-# @view
-# def addr(node: bytes32) -> address:
-#     ...
-
-@external
 @view
+@external
 def resolve(name: Bytes[64], data: Bytes[1024]) -> Bytes[32]:
     ...
 
-@external
 @view
+@external
 def untronSubdomain(serverResponse: Bytes[64], originalDomain: Bytes[64]) -> Bytes[32]:
+    ...
+
+@view
+@external
+def urls(arg0: uint256) -> String[1024]:
     ...
