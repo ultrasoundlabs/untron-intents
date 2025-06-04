@@ -1,6 +1,12 @@
 # pragma version 0.4.0
 # @license MIT
 
+"""
+@title Untron Resolver
+@notice A resolver contract for Untron ENS subdomains.
+@dev This contract resolves ENS subdomains to UntronReceiver addresses for Tron addresses.
+"""
+
 from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
 from src.interfaces import UntronResolver
 from src.interfaces import ReceiverFactory
@@ -10,31 +16,56 @@ implements: UntronResolver
 exports: ownable.transfer_ownership
 exports: ownable.owner
 
+# Array of URLs for off-chain lookup
 urls: public(DynArray[String[1024], 16])
+# Address of the ReceiverFactory contract
 receiverFactory: public(ReceiverFactory)
 
 @deploy
 def __init__():
+    """
+    @notice Contract constructor, called once at deployment.
+    """
     ownable.__init__()
 
 @external
 def popUrl() -> String[1024]:
+    """
+    @notice Removes and returns the last URL from the urls array.
+    @dev Only callable by the contract owner.
+    @return The removed URL.
+    """
     ownable._check_owner()
     return self.urls.pop()
 
 @external
 def pushUrl(url: String[1024]):
+    """
+    @notice Adds a new URL to the urls array.
+    @dev Only callable by the contract owner.
+    @param url The URL to add.
+    """
     ownable._check_owner()
     self.urls.append(url)
 
 @external
 def setReceiverFactory(receiverFactory: ReceiverFactory):
+    """
+    @notice Sets the address of the ReceiverFactory contract.
+    @dev Only callable by the contract owner.
+    @param receiverFactory The address of the ReceiverFactory contract.
+    """
     ownable._check_owner()
     self.receiverFactory = receiverFactory
 
 @external
 @view
 def supportsInterface(interfaceID: bytes4) -> bool:
+    """
+    @notice Checks if the contract supports a given interface.
+    @param interfaceID The interface identifier, as specified in ERC-165.
+    @return bool True if the contract supports the interface, false otherwise.
+    """
     if interfaceID == method_id("supportsInterface(bytes4)", output_type=bytes4):
         return True
     if interfaceID == method_id("resolve(bytes,bytes)", output_type=bytes4):
@@ -44,6 +75,11 @@ def supportsInterface(interfaceID: bytes4) -> bool:
 @internal
 @pure
 def base58IndexOf(char: uint256) -> uint256:
+    """
+    @notice Converts a base58 character to its corresponding index.
+    @param char The ASCII value of the character.
+    @return The index of the character in the base58 alphabet.
+    """
     if char >= 49 and char <= 57:
         return char - 49
     if char >= 65 and char <= 72:
@@ -61,29 +97,39 @@ def base58IndexOf(char: uint256) -> uint256:
 @internal
 @pure
 def base58CheckIntoRawTronAddress(name: Bytes[64], length: uint256) -> bytes20:
+    """
+    @notice Converts a base58check-encoded Tron address to its raw 20-byte form.
+    @param name The base58check-encoded Tron address.
+    @param length The length of the address string.
+    @return The raw 20-byte Tron address.
+    """
     num: uint256 = 0
 
-    # max 35 chars length of a Tron address
-    # we turn it into a 32-byte big endian decoded value
+    # Decode the base58 string into a number
     for i: uint256 in range(length, bound=35):
         num = num * 58 + self.base58IndexOf(convert(slice(name, i, 1), uint256))
 
-    # verify the checksum
+    # Verify the checksum
     value: Bytes[21] = slice(convert((num >> 32) << 88, bytes32), 0, 21)
     checksum: Bytes[4] = slice(convert(num << 224, bytes32), 0, 4)
 
     if slice(sha256(sha256(value)), 0, 4) != checksum:
         raise "Invalid base58check checksum"
 
-    # strip the 0x41 prefix and get the last 20 bytes of the address
+    # Return the raw 20-byte address (excluding the 0x41 prefix)
     return convert(slice(value, 1, 20), bytes20)
 
 @external
 @view
 def resolve(name: Bytes[64], data: Bytes[1024]) -> Bytes[32]:
-
-    # ask to ping the relayer to bruteforce the case of the lowercased Tron address
-    # (ENS normalizes all names to lowercase but we need the proper case to decode the Tron address)
+    """
+    @notice Resolves an ENS name to a UntronReceiver address.
+    @dev This function triggers an off-chain lookup to handle case-sensitivity of Tron addresses.
+    @param name The ENS name to resolve.
+    @param data Additional data (unused in this implementation).
+    @return The resolved address or an off-chain lookup request.
+    """
+    # Trigger off-chain lookup to handle case-sensitivity of Tron addresses
     raw_revert(
         concat(
             method_id("OffchainLookup(address,string[],bytes,bytes4,bytes)", output_type=bytes4),
@@ -100,17 +146,24 @@ def resolve(name: Bytes[64], data: Bytes[1024]) -> Bytes[32]:
 @internal
 @view
 def extractSubdomain(fullDomain: Bytes[64]) -> (Bytes[64], uint256):
-    # ENS encodes the domains in DNS wire format, which is a set of length-prefixed strings
+    """
+    @notice Extracts the subdomain from a full ENS domain.
+    @param fullDomain The full ENS domain in DNS wire format.
+    @return The extracted subdomain and its length.
+    """
     subdomainLength: uint256 = convert(slice(fullDomain, 0, 1), uint256)
-
-    # extract the subdomain from the full domain
     subdomain: Bytes[64] = slice(fullDomain, 1, subdomainLength)
-
     return subdomain, subdomainLength
 
 @internal
 @view
 def isThisJustLowercase(string: Bytes[64], lowercasedString: Bytes[64]) -> bool:
+    """
+    @notice Checks if a string is just the lowercase version of another string.
+    @param string The original string.
+    @param lowercasedString The potentially lowercased string.
+    @return True if lowercasedString is the lowercase version of string, false otherwise.
+    """
     for i: uint256 in range(len(string), bound=64):
         leftLetter: uint256 = convert(slice(string, i, 1), uint256)
         rightLetter: uint256 = convert(slice(lowercasedString, i, 1), uint256)
@@ -121,7 +174,12 @@ def isThisJustLowercase(string: Bytes[64], lowercasedString: Bytes[64]) -> bool:
 @external
 @view
 def untronSubdomain(serverResponse: Bytes[64], originalDomain: Bytes[64]) -> Bytes[32]:
-    
+    """
+    @notice Processes the server response to resolve a Tron address to a UntronReceiver address.
+    @param serverResponse The response from the off-chain lookup server.
+    @param originalDomain The original ENS domain.
+    @return The ABI-encoded UntronReceiver address.
+    """
     serverTronAddress: Bytes[64] = b""
     serverTronAddressLength: uint256 = 0
     assert len(serverResponse) == len(originalDomain) and self.isThisJustLowercase(serverResponse, originalDomain), "server response is invalid"
