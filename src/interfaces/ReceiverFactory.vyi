@@ -1,7 +1,61 @@
-# pragma version 0.4.0
-# @license MIT
+# Events
+
+event ReceiverDeployed:
+    destinationTronAddress: bytes20
+    receiver: address
+event OwnershipTransferred:
+    previous_owner: address
+    new_owner: address
+
+# Functions
 
 @external
+def transfer_ownership(new_owner: address):
+    ...
+
 @view
+@external
+def owner() -> address:
+    ...
+
+@external
+def configure(receiverImplementation: address, untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
+    ...
+
+@external
+def withdraw(destinationTronAddress: bytes20, tokens: DynArray[address, 8]):
+    ...
+
+@external
+def intron(destinationTronAddress: bytes20):
+    ...
+
+@view
+@external
 def generateReceiverAddress(destinationTronAddress: bytes20) -> address:
+    ...
+
+@view
+@external
+def receiverImplementation() -> address:
+    ...
+
+@view
+@external
+def untronTransfers() -> address:
+    ...
+
+@view
+@external
+def trustedSwapper() -> address:
+    ...
+
+@view
+@external
+def usdt() -> address:
+    ...
+
+@view
+@external
+def usdc() -> address:
     ...

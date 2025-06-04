@@ -1,6 +1,13 @@
 # pragma version 0.4.0
 # @license MIT
 
+"""
+@title Untron Intents Receiver Factory
+@notice A factory for deploying UntronReceiver contracts for Tron addresses.
+@dev This contract is used to deploy UntronReceiver contracts for Tron addresses.
+     These contracts then automatically bridge the tokens to the designated Tron addresses.
+"""
+
 from ethereum.ercs import IERC20
 from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
 from lib.github.pcaversaccio.snekmate.src.snekmate.utils import create2_address
@@ -34,15 +41,25 @@ event ReceiverDeployed:
     # The EVM address of the deployed UntronReceiver contract.
     receiver: address
 
-# Contract constructor, called once at deployment.
 @deploy
 def __init__():
+    """
+    @notice Contract constructor, called once at deployment.
+    """
     # Initialize the Ownable component, setting the deployer as the initial owner.
     ownable.__init__()
 
-# External function to configure critical addresses, callable only by the owner.
+
 @external
 def configure(receiverImplementation: address, untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
+    """
+    @notice External function to configure critical addresses, callable only by the owner.
+    @param receiverImplementation Address of the UntronReceiver implementation contract
+    @param untronTransfers Address of the UntronTransfers contract
+    @param trustedSwapper Address of the trusted swapper
+    @param usdt Address of the USDT token
+    @param usdc Address of the USDC token
+    """
     # Ensure only the owner can call this function.
     ownable._check_owner()
     # Set the address of the UntronReceiver implementation contract.
@@ -56,10 +73,16 @@ def configure(receiverImplementation: address, untronTransfers: address, trusted
     # Set the address of the USDC token.
     self.usdc = usdc
 
-# Internal view function to construct the compact swap data for UntronTransfers.
+
 @internal
 @view
 def _constructSwapData(amount: uint256, destinationTronAddress: bytes20) -> bytes32:
+    """
+    @notice Internal view function to construct the compact swap data for UntronTransfers.
+    @param amount The amount of tokens to swap
+    @param destinationTronAddress The Tron address to receive the swapped tokens
+    @return bytes32 The constructed swap data
+    """
     # Constructs a bytes32 payload for UntronTransfers compact swap functions.
     # Format: amount (first 6 bytes for input) | 0 (next 6 bytes for output, so UntronTransfers uses recommended) | destinationTronAddress (last 20 bytes).
     # Left-shift amount by 208 bits (26 bytes) to place it in the most significant part of the bytes32.
@@ -68,9 +91,14 @@ def _constructSwapData(amount: uint256, destinationTronAddress: bytes20) -> byte
     # This signals the UntronTransfers contract to use its recommended output amount.
     return convert((amount << 208) | convert(convert(destinationTronAddress, uint160), uint256), bytes32)
 
-# Internal function to process funds held by a receiver and initiate bridging via UntronTransfers.
+
 @internal
 def _intron(destinationTronAddress: bytes20, receiverAddress: address):
+    """
+    @notice Internal function to process funds held by a receiver and initiate bridging via UntronTransfers.
+    @param destinationTronAddress The Tron address to receive the bridged tokens
+    @param receiverAddress The address of the UntronReceiver contract
+    """
     # Create an UntronReceiver instance for the given receiverAddress.
     receiver: UntronReceiver = UntronReceiver(receiverAddress)
     # Call the receiver's withdraw function to get its entire USDT balance, transferring it to this factory contract.
@@ -81,16 +109,24 @@ def _intron(destinationTronAddress: bytes20, receiverAddress: address):
     # If there's a USDT balance withdrawn from the receiver:
     if usdtAmount > 0:
         # Call compactUsdt on the UntronTransfers contract to create a bridging order for the USDT.
+        extcall IERC20(self.usdt).approve(self.untronTransfers, usdtAmount)
         extcall UntronTransfers(self.untronTransfers).compactUsdt(self._constructSwapData(usdtAmount, destinationTronAddress))
     # If there's a USDC balance withdrawn from the receiver:
     if usdcAmount > 0:
         # Call compactUsdc on the UntronTransfers contract to create a bridging order for the USDC.
+        extcall IERC20(self.usdc).approve(self.untronTransfers, usdcAmount)
         extcall UntronTransfers(self.untronTransfers).compactUsdc(self._constructSwapData(usdcAmount, destinationTronAddress))
 
-# External function allowing a trustedSwapper to swap tokens on a receiver contract
-# into USDT or USDC which can be used to initiate swaps to Tron.
+
 @external
-def swapForReceiver(destinationTronAddress: bytes20, inputToken: address, forUsdc: bool, outputAmount: uint256, intronAfter: bool):
+def withdraw(destinationTronAddress: bytes20, tokens: DynArray[address, 8]):
+    """
+    @notice External function allowing a trustedSwapper to withdraw tokens from a receiver contract.
+    @dev A trustedSwapper is supposed to be a smart contract at some point, and it will use this function to
+         swap all tokens received into USDT or USDC which can then be used to initiate swaps to Tron
+    @param destinationTronAddress The Tron address associated with the receiver contract
+    @param tokens An array of token addresses to withdraw
+    """
     # Asserts that the caller is the trustedSwapper.
     # The trustedSwapper can be an EOA or a smart contract that handles swaps in a trust-minimized way.
     assert msg.sender == self.trustedSwapper, "unauthorized"
@@ -104,23 +140,19 @@ def swapForReceiver(destinationTronAddress: bytes20, inputToken: address, forUsd
 
     # Create an UntronReceiver instance for the (now deployed) receiver contract.
     receiver: UntronReceiver = UntronReceiver(contract)
-    # Call the receiver's withdraw function to pull any `inputToken` it might already hold (normally from a user's direct deposit).
-    # This ensures the swapper receives the tokens they swap into USDT or USDC for the receiver.
-    extcall receiver.withdraw(inputToken)
+    # Call the receiver's withdraw function to pull any `tokens` it might already hold (normally from a user's direct deposit).
+    # We will then send the tokens to the relayer.
+    for token: address in tokens:
+        inputAmount: uint256 = extcall receiver.withdraw(token)
+        if inputAmount > 0:
+            extcall IERC20(token).transfer(msg.sender, inputAmount)
 
-    # Determine the target output token (USDC or USDT) based on the forUsdc flag.
-    outputToken: address = self.usdc if forUsdc else self.usdt
-    # The trustedSwapper transfers `outputAmount` of `outputToken` from their address to the receiver contract.
-    extcall IERC20(outputToken).transferFrom(msg.sender, contract, outputAmount)
-
-    # If intronAfter flag is true:
-    if intronAfter:
-        # Call the internal _intron function to process the newly deposited tokens in the bridge contract.
-        self._intron(destinationTronAddress, contract)
-
-# External function to initiate the bridging process for funds already in a receiver, or deploy and then bridge.
 @external
 def intron(destinationTronAddress: bytes20):
+    """
+    @notice External function to initiate the bridging process for funds already in a receiver, or deploy and then bridge.
+    @param destinationTronAddress The Tron address to receive the bridged tokens
+    """
     # Calculate the deterministic address for the receiver contract.
     contract: address = self._generateReceiverAddress(destinationTronAddress)
     # If the receiver contract hasn't been deployed yet:
@@ -131,9 +163,13 @@ def intron(destinationTronAddress: bytes20):
     # Call the internal _intron function to process funds in the receiver and bridge them.
     self._intron(destinationTronAddress, contract)
 
-# Internal function to deploy a new UntronReceiver minimal proxy contract.
 @internal
 def deploy(destinationTronAddress: bytes20) -> address:
+    """
+    @notice Internal function to deploy a new UntronReceiver minimal proxy contract.
+    @param destinationTronAddress The Tron address associated with the new receiver
+    @return address The address of the newly deployed receiver contract
+    """
     # Deploy an EIP-1167 minimal proxy pointing to self.receiverImplementation.
     # The salt is derived from the destinationTronAddress to ensure deterministic deployment unique to that Tron address.
     contract: address = create_minimal_proxy_to(self.receiverImplementation, salt=convert(destinationTronAddress, bytes32))
@@ -147,10 +183,14 @@ def deploy(destinationTronAddress: bytes20) -> address:
     # Return the address of the newly deployed receiver contract.
     return contract
 
-# Internal view function to calculate the deterministic address of an UntronReceiver contract using CREATE2.
 @internal
 @view
 def _generateReceiverAddress(destinationTronAddress: bytes20) -> address:
+    """
+    @notice Internal view function to calculate the deterministic address of an UntronReceiver contract using CREATE2.
+    @param destinationTronAddress The Tron address associated with the receiver
+    @return address The calculated address where the UntronReceiver will be deployed
+    """
     # This function computes the address where a new UntronReceiver will be deployed
     # using CREATE2, based on the destinationTronAddress and the receiverImplementation.
     # This allows anyone to predict the receiver's address before deployment.
@@ -183,10 +223,14 @@ def _generateReceiverAddress(destinationTronAddress: bytes20) -> address:
     # The salt is derived from the destinationTronAddress.
     return create2_address._compute_address_self(convert(destinationTronAddress, bytes32), init_code_hash)
 
-# External view function to publicly expose the receiver address generation logic.
 @external
 @view
 def generateReceiverAddress(destinationTronAddress: bytes20) -> address:
+    """
+    @notice External view function to publicly expose the receiver address generation logic.
+    @param destinationTronAddress The Tron address for which to generate the receiver address
+    @return address The deterministically
+    """
     # Returns the deterministically calculated EVM address for an UntronReceiver
     # corresponding to the given destinationTronAddress.
     return self._generateReceiverAddress(destinationTronAddress)
