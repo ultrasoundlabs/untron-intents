@@ -1,14 +1,14 @@
 from src import ReceiverFactory
 
 def deploy():
-    receiver = "0xF455a36B6a937e78844a9bB5D0E7C021EEBFfFBA"
-    untronTransfers = "0x8d2Db6153188b002fc2E662538948Be3C5aE65F7"
+    receiverImplementation = "0xB83176EFAc1D2df0B747F14417a79aF8820ebd48"
+    untronTransfers = "0x82aBD2f283529A8Fd95Af96b38664a3Cd1970e80"
     trustedSwapper = "0xa37Cd86db8CE83C842EEAbAFE016aeC920914F25"
     usdt = "0x01bFF41798a0BcF287b996046Ca68b395DbC1071"
     usdc = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"
 
     receiverFactory = ReceiverFactory.deploy()
-    receiverFactory.configure(receiver, untronTransfers, trustedSwapper, usdt, usdc)
+    receiverFactory.configure(receiverImplementation, untronTransfers, trustedSwapper, usdt, usdc)
     # receiverFactory.transfer_ownership("0xf178905915f55dd34Ba1980942354dc64109118F")
     
     # resolver = UntronResolver.deploy()
