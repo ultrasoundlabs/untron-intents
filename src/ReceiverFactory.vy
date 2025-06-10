@@ -21,7 +21,7 @@ exports: ownable.transfer_ownership
 exports: ownable.owner
 
 # Address of the blueprint implementation for UntronReceiver contracts.
-receiverImplementation: public(address)
+_receiverImplementation: immutable(address)
 # Address of the UntronTransfers contract, which handles the bridging orders.
 untronTransfers: public(address)
 # Address of the trusted swapper.
@@ -42,19 +42,30 @@ event ReceiverDeployed:
     receiver: address
 
 @deploy
-def __init__():
+def __init__(__receiverImplementation: address):
     """
     @notice Contract constructor, called once at deployment.
     """
     # Initialize the Ownable component, setting the deployer as the initial owner.
     ownable.__init__()
+    # Set the address of the UntronReceiver implementation contract.
+    _receiverImplementation = __receiverImplementation
 
 
 @external
-def configure(receiverImplementation: address, untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
+@view
+def receiverImplementation() -> address:
+    """
+    @notice External view function to return the address of the UntronReceiver implementation contract.
+    @return address The address of the UntronReceiver implementation contract.
+    """
+    return _receiverImplementation
+
+
+@external
+def configure(untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
     """
     @notice External function to configure critical addresses, callable only by the owner.
-    @param receiverImplementation Address of the UntronReceiver implementation contract
     @param untronTransfers Address of the UntronTransfers contract
     @param trustedSwapper Address of the trusted swapper
     @param usdt Address of the USDT token
@@ -62,8 +73,6 @@ def configure(receiverImplementation: address, untronTransfers: address, trusted
     """
     # Ensure only the owner can call this function.
     ownable._check_owner()
-    # Set the address of the UntronReceiver implementation contract.
-    self.receiverImplementation = receiverImplementation
     # Set the address of the UntronTransfers contract.
     self.untronTransfers = untronTransfers
     # Set the address of the trusted swapper.
@@ -172,7 +181,7 @@ def deploy(destinationTronAddress: bytes20) -> address:
     """
     # Deploy an EIP-1167 minimal proxy pointing to self.receiverImplementation.
     # The salt is derived from the destinationTronAddress to ensure deterministic deployment unique to that Tron address.
-    contract: address = create_minimal_proxy_to(self.receiverImplementation, salt=convert(destinationTronAddress, bytes32))
+    contract: address = create_minimal_proxy_to(_receiverImplementation, salt=convert(destinationTronAddress, bytes32))
     # Create an UntronReceiver instance for the newly deployed contract.
     receiver: UntronReceiver = UntronReceiver(contract)
     # Call the initialize function on the new receiver contract (likely to set its deployer/owner).
@@ -195,21 +204,20 @@ def _generateReceiverAddress(destinationTronAddress: bytes20) -> address:
     # using CREATE2, based on the destinationTronAddress and the receiverImplementation.
     # This allows anyone to predict the receiver's address before deployment.
 
-    # Construct the exact EIP-1167 minimal proxy bytecode that `create_minimal_proxy_to` would use.
+    # Construct the exact ERC-1167 minimal proxy bytecode that `create_minimal_proxy_to` would use.
     # This bytecode includes the address of `self.receiverImplementation`.
-    # The EIP-1167 standard specifies a lean proxy contract that delegates all calls to a fixed implementation.
+    # The ERC-1167 standard specifies a lean proxy contract that delegates all calls to a fixed implementation.
     # Bytecode structure:
     # Prefix (opcodes for setup and returning code)
     # + self.receiverImplementation (the address of the logic contract)
     # + Suffix (opcodes for delegation and revert)
+    # Source: https://ercs.ethereum.org/ERCS/erc-1167
     init_code: Bytes[54] = concat(
-        # 9-byte initialization opcode set + first 10 bytes of EIP-1167 standard proxy bytecode.
-        # PUSH1 0x2d PUSH0 DUP2 PUSH1 0x09 PUSH0 CODECOPY PUSH0 RETURN PUSH29 0x363d3d373d3d3d363d73...
+        # 9-byte initialization opcode set + first 10 bytes of ERC-1167 standard proxy bytecode.
         b"\x60\x2d\x3d\x81\x60\x09\x3d\x39\xf3\x36\x3d\x3d\x37\x3d\x3d\x3d\x36\x3d\x73",
         # The 20-byte address of the receiverImplementation contract is embedded here.
-        convert(self.receiverImplementation, bytes20),
-        # Last 15 bytes of the EIP-1167 standard proxy bytecode.
-        # ...ADDRESS PUSH20 0x5af43d82803e903d91602b57fd5bf3 (actual opcodes: PUSH1 0x5a PUSH1 0xf4 CALLVALUE ...)
+        convert(_receiverImplementation, bytes20),
+        # Last 15 bytes of the ERC-1167 standard proxy bytecode.
         b"\x5a\xf4\x3d\x82\x80\x3e\x90\x3d\x91\x60\x2b\x57\xfd\x5b\xf3"
     )
 

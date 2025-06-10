@@ -19,7 +19,7 @@ def owner() -> address:
     ...
 
 @external
-def configure(receiverImplementation: address, untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
+def configure(untronTransfers: address, trustedSwapper: address, usdt: address, usdc: address):
     ...
 
 @external
