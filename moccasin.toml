@@ -33,6 +33,58 @@ chain_id = 84532
 url = "https://mainnet.optimism.io"
 chain_id = 10
 
+[networks.arbitrum]
+url = "https://arb1.arbitrum.io/rpc"
+chain_id = 42161
+
+[networks.ink]
+url = "https://rpc-gel.inkonchain.com"
+chain_id = 57073
+
+[networks.linea]
+url = "https://rpc.linea.build"
+chain_id = 59144
+
+[networks.polygon]
+url = "https://polygon-rpc.com"
+chain_id = 137
+
+[networks.soneium]
+url = "https://rpc.soneium.org"
+chain_id = 1868
+
+[networks.unichain]
+url = "https://mainnet.unichain.org"
+chain_id = 130
+
+[networks.taiko]
+url = "https://rpc.taiko.xyz"
+chain_id = 167000
+
+[networks.celo]
+url = "https://forno.celo.org"
+chain_id = 42220
+
+[networks.lisk]
+url = "https://rpc.api.lisk.com"
+chain_id = 1135
+
+[networks.mode]
+url = "https://mainnet.mode.network"
+chain_id = 34443
+
+[networks.scroll]
+url = "https://rpc.scroll.io"
+chain_id = 534352
+
+[networks.swellchain]
+url = "https://rpc.ankr.com/swell"
+chain_id = 1923
+
+[networks.worldchain]
+url = "https://worldchain-mainnet.g.alchemy.com/public"
+chain_id = 480
+
 [networks.zksync-sepolia]
 url = "https://sepolia.era.zksync.dev"
 chain_id = 300
