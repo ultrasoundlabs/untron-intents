@@ -11,12 +11,12 @@
 from ethereum.ercs import IERC20
 from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
 from lib.github.pcaversaccio.snekmate.src.snekmate.utils import create2_address
-from src.interfaces import ReceiverFactory
+# from src.interfaces import ReceiverFactory
 from src.interfaces import UntronReceiver
 from src.interfaces import UntronTransfers
 
 initializes: ownable
-implements: ReceiverFactory
+# implements: ReceiverFactory
 exports: ownable.transfer_ownership
 exports: ownable.owner
 

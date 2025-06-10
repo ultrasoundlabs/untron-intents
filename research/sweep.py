@@ -25,7 +25,7 @@ def sweep_balance(w3, from_account, to_address):
     print(f"Balance: {w3.from_wei(balance, 'ether')} ETH")
 
     # Get the current recommended gas price from the network.
-    gas_price = w3.eth.gas_price
+    gas_price = w3.eth.gas_price * 3
 
     # try:
     #     # On L2s like Base, we estimate gas to account for L1 data fees.
@@ -42,10 +42,10 @@ def sweep_balance(w3, from_account, to_address):
     #     gas_limit = 21000
     gas_limit = 21000
 
-    amount_to_send = int(balance * 0.8)
+    amount_to_send = int(balance * 0.9)
 
     # If the balance is less than or equal to the transaction fee, we can't send anything.
-    if amount_to_send <= 0 or gas_limit * gas_price > amount_to_send * 100:
+    if amount_to_send <= 0 or gas_limit * gas_price * 20 > amount_to_send:
         print("Balance is too low to cover transaction fees. No transaction will be sent.")
         return False, "Balance too low."
 

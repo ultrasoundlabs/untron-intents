@@ -22,18 +22,18 @@
 API_KEY="NMS7C8JPHC9UTRFKTNK93CSYS72UBHG9JX"
 
 # The chain ID where the contract is deployed.
-CHAIN_ID="1"
+CHAIN_ID="480"
 
 # The contract address you want to verify.
-CONTRACT_ADDRESS="0xB856407c9A91Bfe7f1de87B9a7E2A1Fa33335806"
+CONTRACT_ADDRESS="0x4B3445ad15b39954Aa0fdE07DaC56ECBD63172fe"
 
 # The contract name in "path/to/contract.vy:ContractName" format.
 # This must match the path and name inside your vyper_input.json file.
-CONTRACT_NAME="src/UntronReceiver.vy:UntronReceiver"
+CONTRACT_NAME="src/UntronTransfers.vy:UntronTransfers"
 
 # The path to the Vyper compiler JSON input file.
 # This JSON should contain language, sources, and settings.
-SOURCE_CODE_JSON_FILE="receiver.json"
+SOURCE_CODE_JSON_FILE="transfers.json"
 
 # The Vyper compiler version used.
 # Format: "vyper:x.y.z"
@@ -44,7 +44,7 @@ OPTIMIZATION_USED="1"
 
 # ABI-encoded constructor arguments, if any. Leave empty if none.
 # DO NOT prefix with 0x.
-CONSTRUCTOR_ARGS=""
+CONSTRUCTOR_ARGS="000000000000000000000000102d758f688a4c1c5a80b116bd945d445546028200000000000000000000000079a02482a880bce3f13e09da970dc34db4cd24d1"
 
 
 # ==============================================================================
@@ -52,7 +52,7 @@ CONSTRUCTOR_ARGS=""
 # ==============================================================================
 
 # Etherscan API endpoint
-API_URL="https://api.etherscan.io/v2/api"
+API_URL="https://api.etherscan.io/v2/api?chainid=$CHAIN_ID"
 
 # Check if the source code file exists
 if [ ! -f "$SOURCE_CODE_JSON_FILE" ]; then

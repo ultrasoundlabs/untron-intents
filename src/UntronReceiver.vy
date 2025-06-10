@@ -8,10 +8,10 @@
 """
 
 from ethereum.ercs import IERC20
-from src.interfaces import UntronReceiver
+# from src.interfaces import UntronReceiver
 from src.interfaces import UntronTransfers
 
-implements: UntronReceiver
+# implements: UntronReceiver
 
 # Address of the deployer contract (ReceiverFactory).
 # Not using Ownable for a cleaner implementation.
