@@ -196,18 +196,17 @@ def __init__(_usdt: address, _usdc: address):
     # Set the initial trusted relayer address
     # A trusted relayer is the resolver of orders
     self.trustedRelayer = ownable.owner
-
 @internal
 def _orderId(creator: address, nonce: uint256) -> bytes32:
     """
-    @notice Generates a unique order ID for a given order and nonce.
-    @param order The order to generate an ID for.
-    @param nonce The nonce (initiator's order counter) for the order.
-    @return The unique order ID.
+    @notice Generates a unique order ID for a given creator and nonce.
+    @param creator The address of the order creator.
+    @param nonce The nonce (creator's order counter) for uniqueness.
+    @return The unique order ID as a bytes32 hash.
     """
-    # Generate a unique hash by combining the order creator and nonce
-    # Each order needs a unique identifier to track its state and prevent replay attacks
-    return sha256(abi_encode(creator, nonce))
+    # Combine chain ID, contract address, creator address and nonce into a unique hash
+    # This prevents order ID collisions across different chains and spoke pools
+    return sha256(abi_encode(chain.id, self, creator, nonce))
 
 @external
 def cancel(orderId: bytes32):
