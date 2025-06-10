@@ -54,7 +54,7 @@ url = "https://rpc.soneium.org"
 chain_id = 1868
 
 [networks.unichain]
-url = "https://mainnet.unichain.org"
+url = "https://unichain.drpc.org"
 chain_id = 130
 
 [networks.taiko]
