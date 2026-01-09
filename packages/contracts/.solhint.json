@@ -1,0 +1,23 @@
+{
+  "extends": "solhint:recommended",
+  "rules": {
+    "compiler-version": ["error", "^0.8.26"],
+    "func-visibility": ["error", { "ignoreConstructors": true }],
+    "state-visibility": "error",
+
+    "avoid-tx-origin": "error",
+    "no-empty-blocks": "error",
+    "no-unused-vars": "error",
+
+    "imports-on-top": "error",
+    "no-global-import": "error",
+
+    "reason-string": ["error", { "maxLength": 32 }],
+
+    "func-name-mixedcase": "error",
+    "var-name-mixedcase": "error",
+    "private-vars-leading-underscore": "error",
+    "import-path-check": "off",
+    "gas-indexed-events": "off"
+  }
+}

@@ -4,4 +4,3 @@ pnpm verify || exit 1
 # Ensure wagmi types are up-to-date before pushing
 pnpm codegen || exit 1
 # Stage in case generated differs (won't affect push but keeps local tree clean)
-git add -u packages/contracts/abi/generated.ts

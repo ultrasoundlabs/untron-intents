@@ -1,0 +1,41 @@
+[profile.default]
+src  = "src"
+test = "test"
+libs = ["lib", "node_modules"]
+remappings = [
+  "solady/=lib/solady/src/",
+  "@layerzerolabs/oft-evm/=lib/devtools/packages/oft-evm/",
+  "@layerzerolabs/oapp-evm/=lib/devtools/packages/oapp-evm/",
+  "@layerzerolabs/lz-evm-protocol-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/protocol",
+  "@layerzerolabs/lz-evm-messagelib-v2/=lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib",
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts",
+  "@untron/zktron/=node_modules/@untron/zktron/solidity/"
+]
+
+solc               = "0.8.27"
+auto_detect_solc   = false
+evm_version        = "cancun"
+optimizer          = true
+optimizer_runs     = 200
+extra_output       = ["storageLayout"]
+revert_strings     = "strip"
+bytecode_hash      = "none"
+deny               = "warnings"
+
+ffi = false
+fs_permissions = [
+  { access = "read-write", path = "./" }
+]
+
+build_info = true
+
+[profile.production]
+optimizer_runs  = 2000
+bytecode_hash   = "none"
+revert_strings  = "strip"
+deny            = "warnings"
+
+[profile.ci]
+optimizer_runs = 200
+deny           = "warnings"
+gas_reports = ["*"]

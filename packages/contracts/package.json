@@ -1,0 +1,55 @@
+{
+  "name": "@untron/intents-contracts",
+  "version": "0.1.0",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "files": [
+    "abi",
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rimraf dist abi/generated.ts",
+    "build": "pnpm run build:forge && pnpm run codegen && pnpm run build:ts",
+    "build:forge": "forge build",
+    "build:ts": "tsc -p tsconfig.build.json",
+    "test": "forge test",
+    "lint:sol": "solhint 'src/**/*.sol'",
+    "natspec": "solhint 'src/**/*.sol' -c .natspec.solhint.json",
+    "slither": "slither . --filter-paths 'lib|node_modules|test'",
+    "fmt:sol": "forge fmt --check src test script",
+    "format:sol": "forge fmt src test script",
+    "test:ci": "FOUNDRY_PROFILE=ci forge build && FOUNDRY_PROFILE=ci forge test --gas-report",
+    "build:prod": "FOUNDRY_PROFILE=production forge build",
+    "codegen": "pnpm -w wagmi generate",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "verify": "pnpm run fmt:sol && pnpm run test:ci && pnpm run build:prod && pnpm run codegen && pnpm run build:ts && pnpm run typecheck",
+    "export": "pnpm run clean && pnpm run build"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/generated.d.ts",
+      "default": "./dist/generated.js"
+    },
+    "./abi/*": "./abi/*"
+  },
+  "devDependencies": {
+    "@cyfrin/aderyn": "^0.6.5",
+    "dotenv": "^17.2.3",
+    "effect": "^3.19.12",
+    "long": "^5.3.2",
+    "rimraf": "^5",
+    "solhint": "^6.0.1",
+    "tronweb": "^6.1.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2",
+    "zod": "^4.1.12"
+  }
+}
