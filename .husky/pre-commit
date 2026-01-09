@@ -1,0 +1,8 @@
+# Format Solidity and TypeScript files
+pnpm fmt:sol || exit 1
+pnpm fmt:ts || exit 1
+
+# Generate wagmi types if contract artifacts or config have changed
+pnpm codegen || exit 1
+# Ensure the generated file is included in the commit
+git add packages/contracts/abi/generated.ts

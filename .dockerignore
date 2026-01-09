@@ -1,0 +1,16 @@
+**/.DS_Store
+**/.env
+**/.env.*
+!.env.example
+!.env.*.example
+
+.git
+.github
+.vscode
+
+**/node_modules
+.pnpm-store
+
+**/target
+
+**/*.log

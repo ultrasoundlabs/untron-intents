@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-codegen:
+    runs-on: ubuntu-latest
+    env:
+      FOUNDRY_PROFILE: ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run full verification suite
+        run: pnpm verify
+
+      - name: Upload gas report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report
+          path: packages/contracts/out/ci/gas-report*.txt
+          if-no-files-found: ignore
+
+      - name: Upload ABIs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-abis
+          path: packages/contracts/abi/**
+          if-no-files-found: ignore

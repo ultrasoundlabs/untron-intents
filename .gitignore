@@ -1,0 +1,31 @@
+node_modules
+.DS_Store
+
+# Foundry
+out
+cache
+broadcast
+
+# Build outputs
+**/dist
+!infra/openapi-sidecar/dist
+!infra/openapi-sidecar/dist/**
+
+# Generated ABIs
+# Either track all ABIs…
+# (remove any ignore for abi)
+# …or if you want a narrow allow:
+# **/abi
+!packages/contracts/abi
+
+.env*
+!.env.example
+
+.idea
+
+# Rust
+/target
+**/target
+
+# Debug artifacts
+.tmp/

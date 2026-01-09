@@ -1,0 +1,14 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "style": "markdown",
+    "copyToClipboard": true,
+    "filePath": "repomix-output.md"
+  },
+  "ignore": {
+    "useGitignore": true,
+    "useDotIgnore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": ["**/target/**"]
+  }
+}
