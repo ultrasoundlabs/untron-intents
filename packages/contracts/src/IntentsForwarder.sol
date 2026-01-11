@@ -7,7 +7,7 @@ import {TokenUtils} from "./utils/TokenUtils.sol";
 import {UntronReceiver} from "./UntronReceiver.sol";
 import {SwapExecutor, Call} from "./SwapExecutor.sol";
 
-import {Ownable} from "solady/auth/Ownable.sol";
+import {IntentsForwarderIndexedOwnable} from "./auth/IntentsForwarderIndexedOwnable.sol";
 
 /// @title Intents Forwarder
 /// @notice Cross-chain “sweep + optional swap + bridge” router for Untron Intents.
@@ -32,8 +32,37 @@ import {Ownable} from "solady/auth/Ownable.sol";
 /// - On the destination chain (e.g. the hub), the forwarder at the same address can deploy
 ///   the corresponding receiver contract (if it does not exist yet) and pull the bridged
 ///   funds out, continuing intent execution.
+/// This contract must issue no events. All events must be emitted by the index contract.
 /// @author Ultrasound Labs
-contract IntentsForwarder is Ownable {
+contract IntentsForwarder is IntentsForwarderIndexedOwnable {
+    struct ForwardState {
+        bytes32 forwardId;
+        bytes32 bridgeDataHash;
+    }
+
+    struct ForwardOutcome {
+        uint256 amountPulled;
+        uint256 amountForwarded;
+        uint256 relayerRebate;
+        uint256 msgValueRefunded;
+        bool settledLocally;
+        address bridger;
+        uint256 expectedBridgeOut;
+    }
+
+    struct PullRequest {
+        uint256 targetChain;
+        address payable beneficiary;
+        bool beneficiaryClaimOnly;
+        bytes32 intentHash;
+        bytes32 forwardSalt;
+        uint256 balance;
+        address tokenIn;
+        address tokenOut;
+        Call[] swapData;
+        bytes bridgeData;
+    }
+
     /*//////////////////////////////////////////////////////////////
                                    ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -126,6 +155,7 @@ contract IntentsForwarder is Ownable {
     function setBridgers(IBridger _usdtBridger, IBridger _usdcBridger) external onlyOwner {
         usdtBridger = _usdtBridger;
         usdcBridger = _usdcBridger;
+        _emitBridgersSet(address(_usdtBridger), address(_usdcBridger));
     }
 
     /// @notice Sets the quoter used when swapping from `targetToken` into some `tokenOut`.
@@ -135,6 +165,7 @@ contract IntentsForwarder is Ownable {
     /// @param quoter The quoter contract used for swaps originating from `targetToken`.
     function setQuoter(address targetToken, IQuoter quoter) external onlyOwner {
         quoterByToken[targetToken] = quoter;
+        _emitQuoterSet(targetToken, address(quoter));
     }
 
     // External functions
@@ -169,42 +200,89 @@ contract IntentsForwarder is Ownable {
     /// Notes on `balance`:
     /// - In ephemeral mode (`balance != 0`), `balance` is the amount pulled/forwarded, and also
     ///   contributes to the ephemeral receiver address derivation.
-    /// - In base mode (`balance == 0`), the function attempts to set `balance` to this contract’s
-    ///   current `tokenIn` balance before pulling. Callers typically pass a nonzero `balance` when
+    /// - In base mode (`balance == 0`), the function uses the receiver’s current `tokenIn` balance.
+    ///   Callers typically pass a nonzero `balance` when
     ///   they want to pull a specific amount from a receiver.
     ///
-    /// @param targetChain Destination EVM chainId. If equal to `block.chainid`, funds are paid locally.
-    /// @param beneficiary Final recipient on the local chain, or party authorized to “claim” locally.
-    /// @param beneficiaryClaimOnly If true and `targetChain == block.chainid`, only `beneficiary` may call.
-    /// @param intentHash User-supplied identifier “squashed” into the base receiver salt.
-    ///                  This lets offchain systems/beneficiaries attribute deposits to a specific intent/order.
-    ///                  Use `bytes32(0)` when no attribution is needed.
-    /// @param forwardSalt Extra salt used to create unique ephemeral receivers per forward.
-    /// @param balance Amount to pull and forward. If nonzero, enables ephemeral mode.
-    /// @param tokenIn Token currently held by the receiver and pulled into this contract.
-    /// @param tokenOut Token to deliver/bridge (after optional swap). Must be USDT or USDC for bridging.
-    /// @param swapData Sequence of low-level calls for {SwapExecutor} if `tokenIn != tokenOut`.
-    /// @param bridgeData Extra data forwarded to the selected {IBridger}. Must be safe for permissionless relayers.
-    function pullReceiver(
-        uint256 targetChain,
-        address payable beneficiary,
-        bool beneficiaryClaimOnly,
-        bytes32 intentHash,
-        bytes32 forwardSalt,
-        uint256 balance,
-        address tokenIn,
-        address tokenOut,
-        Call[] calldata swapData,
-        bytes calldata bridgeData
-    ) external payable {
+    /// @param req Pull parameters. See {PullRequest} for field semantics.
+    function pullReceiver(PullRequest calldata req) external payable {
+        uint256 balanceParam = req.balance;
+
         // Base receiver salt: stable per (targetChain, beneficiary, claim policy, intent hash).
         bytes32 baseReceiverSalt =
-            keccak256(abi.encodePacked(targetChain, beneficiary, beneficiaryClaimOnly, intentHash));
+            keccak256(abi.encodePacked(req.targetChain, req.beneficiary, req.beneficiaryClaimOnly, req.intentHash));
 
-        // Ephemeral receiver salt: unique per forward and parameterized by the expected output and amount.
-        UntronReceiver ephemeralReceiver =
-            getReceiver(keccak256(abi.encodePacked(baseReceiverSalt, forwardSalt, tokenOut, balance)));
-        bool ephemeral = balance != 0;
+        bytes32 ephemeralReceiverSalt =
+            keccak256(abi.encodePacked(baseReceiverSalt, req.forwardSalt, req.tokenOut, balanceParam));
+        bool ephemeral = balanceParam != 0;
+
+        bytes32 forwardId = keccak256(
+            abi.encode(
+                address(this),
+                block.chainid,
+                baseReceiverSalt,
+                req.forwardSalt,
+                req.tokenIn,
+                req.tokenOut,
+                balanceParam,
+                req.targetChain,
+                req.beneficiary,
+                req.beneficiaryClaimOnly
+            )
+        );
+
+        ForwardState memory st;
+        st.forwardId = forwardId;
+        st.bridgeDataHash = keccak256(req.bridgeData);
+
+        address receiverUsed = predictReceiverAddress(ephemeral ? ephemeralReceiverSalt : baseReceiverSalt);
+        address ephemeralReceiver = predictReceiverAddress(ephemeralReceiverSalt);
+
+        _emitForwardStarted(
+            forwardId,
+            baseReceiverSalt,
+            req.forwardSalt,
+            req.intentHash,
+            req.targetChain,
+            req.beneficiary,
+            req.beneficiaryClaimOnly,
+            balanceParam,
+            req.tokenIn,
+            req.tokenOut,
+            receiverUsed,
+            ephemeralReceiver
+        );
+
+        ForwardOutcome memory out =
+            _pullReceiverCore(forwardId, baseReceiverSalt, ephemeralReceiverSalt, ephemeral, req);
+
+        _emitForwardCompleted(
+            forwardId,
+            ephemeral,
+            out.amountPulled,
+            out.amountForwarded,
+            out.relayerRebate,
+            out.msgValueRefunded,
+            out.settledLocally,
+            out.bridger,
+            out.expectedBridgeOut,
+            st.bridgeDataHash
+        );
+    }
+
+    function _pullReceiverCore(
+        bytes32 forwardId,
+        bytes32 baseReceiverSalt,
+        bytes32 ephemeralReceiverSalt,
+        bool ephemeral,
+        PullRequest calldata req
+    ) internal returns (ForwardOutcome memory out) {
+        uint256 balance = req.balance;
+        address tokenIn = req.tokenIn;
+        address tokenOut = req.tokenOut;
+
+        // Ensure the ephemeral receiver exists (it is always the bridge destination).
+        UntronReceiver ephemeralReceiver = getReceiver(ephemeralReceiverSalt);
 
         // Pull from the ephemeral receiver in ephemeral mode; otherwise pull from the base receiver.
         UntronReceiver receiver = ephemeral ? ephemeralReceiver : getReceiver(baseReceiverSalt);
@@ -217,6 +295,7 @@ contract IntentsForwarder is Ownable {
 
         // Pull `tokenIn` from the receiver into this contract (only possible because this contract owns receivers).
         receiver.pull(tokenIn, balance);
+        out.amountPulled = balance;
 
         if (tokenIn != tokenOut) {
             if (ephemeral) revert SwapOnEphemeralReceiversNotAllowed();
@@ -226,17 +305,20 @@ contract IntentsForwarder is Ownable {
 
             // Hand the input tokens to the protocol-owned executor and execute the swap call sequence.
             TokenUtils.transfer(tokenIn, payable(address(SWAP_EXECUTOR)), balance);
-            uint256 swapOut = SWAP_EXECUTOR.execute(swapData, tokenOut, amountOut, payable(address(this)));
+            uint256 swapOut = SWAP_EXECUTOR.execute(req.swapData, tokenOut, amountOut, payable(address(this)));
 
             // Keep the quoted minimum `amountOut` as the forwarded balance; rebate any surplus to the relayer.
             balance = amountOut;
-            TokenUtils.transfer(tokenOut, payable(msg.sender), swapOut - amountOut);
+            out.relayerRebate = swapOut - amountOut;
+            TokenUtils.transfer(tokenOut, payable(msg.sender), out.relayerRebate);
+            _emitSwapExecuted(forwardId, tokenIn, tokenOut, amountOut, swapOut);
         }
 
-        if (targetChain == block.chainid) {
+        if (req.targetChain == block.chainid) {
             // Local settlement: optionally enforce that only the beneficiary can “claim”.
-            if (beneficiaryClaimOnly && msg.sender != beneficiary) revert PullerUnauthorized();
-            TokenUtils.transfer(tokenOut, beneficiary, balance);
+            if (req.beneficiaryClaimOnly && msg.sender != req.beneficiary) revert PullerUnauthorized();
+            TokenUtils.transfer(tokenOut, req.beneficiary, balance);
+            out.settledLocally = true;
         } else {
             // Cross-chain settlement: only allow bridging of supported stablecoins to known bridgers.
             IBridger bridger;
@@ -247,9 +329,7 @@ contract IntentsForwarder is Ownable {
             } else {
                 revert UnsupportedOutputToken();
             }
-
-            // Bridge the contract’s full tokenOut balance. The bridger returns the expected destination amount.
-            // The destination address is the ephemeral receiver so the target-chain forwarder can later pull it.
+            out.bridger = address(bridger);
 
             uint256 expectedAmountOut;
             if (tokenOut == USDT) {
@@ -260,30 +340,36 @@ contract IntentsForwarder is Ownable {
                     tokenOut,
                     TokenUtils.getBalanceOf(tokenOut, address(this)),
                     address(ephemeralReceiver),
-                    targetChain,
-                    bridgeData
+                    req.targetChain,
+                    req.bridgeData
                 );
 
                 // If the bridger refunded any unused native fee to this contract, pass it through to the caller.
                 // The bridger is expected to either use some/all of `msg.value` or refund it back to msg.sender.
                 uint256 ethAfterBridge = address(this).balance;
                 uint256 refund = ethAfterBridge + msg.value - ethBeforeBridge;
+                out.msgValueRefunded = refund;
                 if (refund != 0) TokenUtils.transfer(address(0), payable(msg.sender), refund);
             } else {
                 // USDC bridging via CCTP does not require a native fee; refund any accidental msg.value.
+                out.msgValueRefunded = msg.value;
                 if (msg.value != 0) TokenUtils.transfer(address(0), payable(msg.sender), msg.value);
 
                 expectedAmountOut = bridger.bridge(
                     tokenOut,
                     TokenUtils.getBalanceOf(tokenOut, address(this)),
                     address(ephemeralReceiver),
-                    targetChain,
-                    bridgeData
+                    req.targetChain,
+                    req.bridgeData
                 );
             }
 
             if (expectedAmountOut != balance) revert InsufficientOutputAmount();
+            out.expectedBridgeOut = expectedAmountOut;
+            _emitBridgeInitiated(forwardId, out.bridger, tokenOut, balance, req.targetChain);
         }
+
+        out.amountForwarded = balance;
     }
 
     // solhint-enable function-max-lines
@@ -331,6 +417,7 @@ contract IntentsForwarder is Ownable {
                 revert(0, returndatasize())
             }
         }
+        _emitReceiverDeployed(salt, receiver, impl);
     }
 
     /// @notice Accepts native token (e.g. ETH) deposits.

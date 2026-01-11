@@ -4,6 +4,9 @@ pragma solidity ^0.8.27;
 import {IntentsForwarder} from "../src/IntentsForwarder.sol";
 import {Call} from "../src/SwapExecutor.sol";
 
+import {Vm} from "forge-std/Vm.sol";
+import {IntentsForwarderIndex} from "../src/index/IntentsForwarderIndex.sol";
+
 import {ForwarderTestBase} from "./helpers/ForwarderTestBase.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockQuoter} from "./mocks/MockQuoter.sol";
@@ -17,6 +20,8 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         address predicted = forwarder.predictReceiverAddress(salt);
         assertEq(predicted.code.length, 0);
 
+        vm.expectEmit(true, true, true, true, address(forwarder));
+        emit IntentsForwarderIndex.ReceiverDeployed(salt, predicted, forwarder.RECEIVER_IMPLEMENTATION());
         forwarder.getReceiver(salt);
         assertGt(predicted.code.length, 0);
     }
@@ -35,18 +40,51 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         assertEq(usdt.balanceOf(address(forwarder)), 0);
         assertEq(usdt.balanceOf(receiver), receiverFunds);
 
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: beneficiaryClaimOnly,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(1)),
-            balance: 0,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        bytes32 forwardSalt = bytes32(uint256(1));
+        bytes32 forwardId = keccak256(
+            abi.encode(
+                address(forwarder),
+                block.chainid,
+                receiverSalt,
+                forwardSalt,
+                address(usdt),
+                address(usdt),
+                uint256(0),
+                block.chainid,
+                beneficiary,
+                beneficiaryClaimOnly
+            )
+        );
+
+        vm.recordLogs();
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: beneficiaryClaimOnly,
+                intentHash: bytes32(0),
+                forwardSalt: forwardSalt,
+                balance: 0,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 forwardCompletedSig =
+            keccak256("ForwardCompleted(bytes32,bool,uint256,uint256,uint256,uint256,bool,address,uint256,bytes32)");
+        bool sawForwardCompleted = false;
+        for (uint256 i = 0; i < entries.length; ++i) {
+            Vm.Log memory logEntry = entries[i];
+            if (logEntry.emitter != address(forwarder)) continue;
+            if (logEntry.topics.length == 0 || logEntry.topics[0] != forwardCompletedSig) continue;
+            if (logEntry.topics.length < 2 || logEntry.topics[1] != forwardId) continue;
+            sawForwardCompleted = true;
+            break;
+        }
+        assertTrue(sawForwardCompleted);
 
         assertEq(usdt.balanceOf(beneficiary), receiverFunds);
         assertEq(usdt.balanceOf(receiver), 0);
@@ -62,18 +100,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
         usdt.mint(receiver, 1000e6);
 
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: forwardSalt,
-            balance: pullAmount,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: forwardSalt,
+                balance: pullAmount,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
 
         assertEq(usdt.balanceOf(beneficiary), pullAmount);
         assertEq(usdt.balanceOf(receiver), 1000e6 - pullAmount);
@@ -87,32 +127,36 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.PullerUnauthorized.selector);
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: true,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(1)),
-            balance: 0,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: true,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(1)),
+                balance: 0,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
 
         vm.prank(beneficiary);
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: true,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(1)),
-            balance: 0,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: true,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(1)),
+                balance: 0,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
         assertEq(usdt.balanceOf(beneficiary), 1e6);
     }
 
@@ -125,18 +169,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.SwapOnEphemeralReceiversNotAllowed.selector);
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(111)),
-            balance: 1e6,
-            tokenIn: address(usdt),
-            tokenOut: address(usdc),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(111)),
+                balance: 1e6,
+                tokenIn: address(usdt),
+                tokenOut: address(usdc),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
     }
 
     function test_pullReceiver_swap_happyPath_rebatesSurplus() external {
@@ -160,18 +206,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
         address relayer = makeAddr("relayer");
         vm.prank(relayer);
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(222)),
-            balance: 0,
-            tokenIn: address(usdt),
-            tokenOut: address(usdc),
-            swapData: swapData,
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(222)),
+                balance: 0,
+                tokenIn: address(usdt),
+                tokenOut: address(usdc),
+                swapData: swapData,
+                bridgeData: ""
+            })
+        );
 
         assertEq(usdc.balanceOf(beneficiary), 90e6);
         assertEq(usdc.balanceOf(relayer), 10e6);
@@ -196,18 +244,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         });
 
         vm.expectRevert();
-        forwarder.pullReceiver({
-            targetChain: block.chainid,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(1)),
-            balance: 0,
-            tokenIn: address(usdt),
-            tokenOut: address(usdc),
-            swapData: swapData,
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: block.chainid,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(1)),
+                balance: 0,
+                tokenIn: address(usdt),
+                tokenOut: address(usdc),
+                swapData: swapData,
+                bridgeData: ""
+            })
+        );
     }
 
     function test_pullReceiver_bridge_unsupportedOutputToken_reverts() external {
@@ -223,18 +273,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         other.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.UnsupportedOutputToken.selector);
-        forwarder.pullReceiver({
-            targetChain: 999999,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(1)),
-            balance: 0,
-            tokenIn: address(other),
-            tokenOut: address(other),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: 999999,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(1)),
+                balance: 0,
+                tokenIn: address(other),
+                tokenOut: address(other),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
     }
 
     function test_pullReceiver_bridge_usdc_refundsMsgValue() external {
@@ -255,18 +307,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         uint256 relayerEthBefore = relayer.balance;
 
         vm.prank(relayer);
-        forwarder.pullReceiver{value: 0.3 ether}({
-            targetChain: 999999,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(7)),
-            balance: 5e6,
-            tokenIn: address(usdc),
-            tokenOut: address(usdc),
-            swapData: new Call[](0),
-            bridgeData: hex"1234"
-        });
+        forwarder.pullReceiver{value: 0.3 ether}(
+            IntentsForwarder.PullRequest({
+                targetChain: 999999,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(7)),
+                balance: 5e6,
+                tokenIn: address(usdc),
+                tokenOut: address(usdc),
+                swapData: new Call[](0),
+                bridgeData: hex"1234"
+            })
+        );
 
         assertEq(relayer.balance, relayerEthBefore);
         assertEq(usdcBridger.lastMsgValue(), 0);
@@ -293,18 +347,20 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         uint256 relayerEthBefore = relayer.balance;
 
         vm.prank(relayer);
-        forwarder.pullReceiver{value: 0.3 ether}({
-            targetChain: 999999,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(7)),
-            balance: 5e6,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver{value: 0.3 ether}(
+            IntentsForwarder.PullRequest({
+                targetChain: 999999,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(7)),
+                balance: 5e6,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
 
         // Bridger refunded 0.2 ETH back to the forwarder; forwarder passes it through to relayer.
         assertEq(relayer.balance, relayerEthBefore - 0.3 ether + 0.2 ether);
@@ -327,17 +383,19 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 5e6);
 
         vm.expectRevert(IntentsForwarder.InsufficientOutputAmount.selector);
-        forwarder.pullReceiver({
-            targetChain: 999999,
-            beneficiary: beneficiary,
-            beneficiaryClaimOnly: false,
-            intentHash: bytes32(0),
-            forwardSalt: bytes32(uint256(7)),
-            balance: 5e6,
-            tokenIn: address(usdt),
-            tokenOut: address(usdt),
-            swapData: new Call[](0),
-            bridgeData: ""
-        });
+        forwarder.pullReceiver(
+            IntentsForwarder.PullRequest({
+                targetChain: 999999,
+                beneficiary: beneficiary,
+                beneficiaryClaimOnly: false,
+                intentHash: bytes32(0),
+                forwardSalt: bytes32(uint256(7)),
+                balance: 5e6,
+                tokenIn: address(usdt),
+                tokenOut: address(usdt),
+                swapData: new Call[](0),
+                bridgeData: ""
+            })
+        );
     }
 }
