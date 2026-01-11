@@ -3272,6 +3272,7 @@ export const intentsForwarderAbi = [
       { name: 'targetChain', internalType: 'uint256', type: 'uint256' },
       { name: 'beneficiary', internalType: 'address payable', type: 'address' },
       { name: 'beneficiaryClaimOnly', internalType: 'bool', type: 'bool' },
+      { name: 'intentHash', internalType: 'bytes32', type: 'bytes32' },
       { name: 'forwardSalt', internalType: 'bytes32', type: 'bytes32' },
       { name: 'balance', internalType: 'uint256', type: 'uint256' },
       { name: 'tokenIn', internalType: 'address', type: 'address' },

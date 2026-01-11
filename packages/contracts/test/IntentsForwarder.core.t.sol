@@ -12,7 +12,7 @@ import {ExactBridger, FeeBridger} from "./mocks/MockBridgers.sol";
 contract IntentsForwarderCoreTest is ForwarderTestBase {
     function test_receiver_prediction_and_deploy() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 salt = baseSalt(block.chainid, beneficiary, false);
+        bytes32 salt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
 
         address predicted = forwarder.predictReceiverAddress(salt);
         assertEq(predicted.code.length, 0);
@@ -25,7 +25,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bool beneficiaryClaimOnly = false;
 
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, beneficiaryClaimOnly);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, beneficiaryClaimOnly, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
 
         uint256 receiverFunds = 123e6;
@@ -39,6 +39,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: beneficiaryClaimOnly,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(1)),
             balance: 0,
             tokenIn: address(usdt),
@@ -53,7 +54,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
     function test_pullReceiver_baseMode_explicitBalance() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         uint256 pullAmount = 250e6;
         bytes32 forwardSalt = bytes32(uint256(1));
         bytes32 ephemSalt = ephemeralSalt(receiverSalt, forwardSalt, address(usdt), pullAmount);
@@ -65,6 +66,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: forwardSalt,
             balance: pullAmount,
             tokenIn: address(usdt),
@@ -79,7 +81,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
     function test_pullReceiver_beneficiaryClaimOnly_enforced() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, true);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, true, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
 
         usdt.mint(receiver, 1e6);
@@ -89,6 +91,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: true,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(1)),
             balance: 0,
             tokenIn: address(usdt),
@@ -102,6 +105,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: true,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(1)),
             balance: 0,
             tokenIn: address(usdt),
@@ -115,7 +119,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
     function test_pullReceiver_swap_disallowed_onEphemeral() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
 
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         bytes32 ephemSalt = ephemeralSalt(receiverSalt, bytes32(uint256(111)), address(usdc), 1e6);
         address payable receiver = forwarder.predictReceiverAddress(ephemSalt);
         usdt.mint(receiver, 1e6);
@@ -125,6 +129,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(111)),
             balance: 1e6,
             tokenIn: address(usdt),
@@ -136,7 +141,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
     function test_pullReceiver_swap_happyPath_rebatesSurplus() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
 
         uint256 inAmount = 100e6;
@@ -159,6 +164,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(222)),
             balance: 0,
             tokenIn: address(usdt),
@@ -173,7 +179,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
     function test_pullReceiver_swap_reverts_ifInsufficientOutput() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
 
         usdt.mint(receiver, 100e6);
@@ -194,6 +200,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: block.chainid,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(1)),
             balance: 0,
             tokenIn: address(usdt),
@@ -211,7 +218,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         MockERC20 other = new MockERC20("OTHER", "OTHER", 6);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(999999, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(999999, beneficiary, false, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
         other.mint(receiver, 1e6);
 
@@ -220,6 +227,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: 999999,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(1)),
             balance: 0,
             tokenIn: address(other),
@@ -236,7 +244,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         forwarder.setBridgers(usdtBridger, usdcBridger);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(999999, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(999999, beneficiary, false, bytes32(0));
         bytes32 ephemSalt = ephemeralSalt(receiverSalt, bytes32(uint256(7)), address(usdc), 5e6);
         address payable receiver = forwarder.predictReceiverAddress(ephemSalt);
 
@@ -251,6 +259,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: 999999,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(7)),
             balance: 5e6,
             tokenIn: address(usdc),
@@ -273,7 +282,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdtBridger.setRefundToCaller(0.2 ether);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(999999, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(999999, beneficiary, false, bytes32(0));
         bytes32 ephemSalt = ephemeralSalt(receiverSalt, bytes32(uint256(7)), address(usdt), 5e6);
         address payable receiver = forwarder.predictReceiverAddress(ephemSalt);
 
@@ -288,6 +297,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: 999999,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(7)),
             balance: 5e6,
             tokenIn: address(usdt),
@@ -310,7 +320,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         forwarder.setBridgers(usdtBridger, usdcBridger);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 receiverSalt = baseSalt(999999, beneficiary, false);
+        bytes32 receiverSalt = baseSalt(999999, beneficiary, false, bytes32(0));
         bytes32 ephemSalt = ephemeralSalt(receiverSalt, bytes32(uint256(7)), address(usdt), 5e6);
         address payable receiver = forwarder.predictReceiverAddress(ephemSalt);
 
@@ -321,6 +331,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
             targetChain: 999999,
             beneficiary: beneficiary,
             beneficiaryClaimOnly: false,
+            intentHash: bytes32(0),
             forwardSalt: bytes32(uint256(7)),
             balance: 5e6,
             tokenIn: address(usdt),

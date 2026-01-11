@@ -145,7 +145,7 @@ contract IntentsForwarder is Ownable {
     /// @dev This is a permissionless function intended to be called by relayers.
     ///
     /// Receiver model:
-    /// - A “base receiver” address is derived from `(targetChain, beneficiary, beneficiaryClaimOnly)`.
+    /// - A “base receiver” address is derived from `(targetChain, beneficiary, beneficiaryClaimOnly, intentHash)`.
     /// - An “ephemeral receiver” address is further derived from `(base receiver salt, forwardSalt, tokenOut, balance)`.
     /// - If `balance != 0`, the call is treated as “ephemeral mode” and funds are pulled from the
     ///   ephemeral receiver. If `balance == 0`, the call is treated as “base mode” and funds are
@@ -176,6 +176,9 @@ contract IntentsForwarder is Ownable {
     /// @param targetChain Destination EVM chainId. If equal to `block.chainid`, funds are paid locally.
     /// @param beneficiary Final recipient on the local chain, or party authorized to “claim” locally.
     /// @param beneficiaryClaimOnly If true and `targetChain == block.chainid`, only `beneficiary` may call.
+    /// @param intentHash User-supplied identifier “squashed” into the base receiver salt.
+    ///                  This lets offchain systems/beneficiaries attribute deposits to a specific intent/order.
+    ///                  Use `bytes32(0)` when no attribution is needed.
     /// @param forwardSalt Extra salt used to create unique ephemeral receivers per forward.
     /// @param balance Amount to pull and forward. If nonzero, enables ephemeral mode.
     /// @param tokenIn Token currently held by the receiver and pulled into this contract.
@@ -186,6 +189,7 @@ contract IntentsForwarder is Ownable {
         uint256 targetChain,
         address payable beneficiary,
         bool beneficiaryClaimOnly,
+        bytes32 intentHash,
         bytes32 forwardSalt,
         uint256 balance,
         address tokenIn,
@@ -193,16 +197,17 @@ contract IntentsForwarder is Ownable {
         Call[] calldata swapData,
         bytes calldata bridgeData
     ) external payable {
-        // Base receiver salt: stable per (targetChain, beneficiary, claim policy).
-        bytes32 receiverSalt = keccak256(abi.encodePacked(targetChain, beneficiary, beneficiaryClaimOnly));
+        // Base receiver salt: stable per (targetChain, beneficiary, claim policy, intent hash).
+        bytes32 baseReceiverSalt =
+            keccak256(abi.encodePacked(targetChain, beneficiary, beneficiaryClaimOnly, intentHash));
 
         // Ephemeral receiver salt: unique per forward and parameterized by the expected output and amount.
         UntronReceiver ephemeralReceiver =
-            getReceiver(keccak256(abi.encodePacked(receiverSalt, forwardSalt, tokenOut, balance)));
+            getReceiver(keccak256(abi.encodePacked(baseReceiverSalt, forwardSalt, tokenOut, balance)));
         bool ephemeral = balance != 0;
 
         // Pull from the ephemeral receiver in ephemeral mode; otherwise pull from the base receiver.
-        UntronReceiver receiver = ephemeral ? ephemeralReceiver : getReceiver(receiverSalt);
+        UntronReceiver receiver = ephemeral ? ephemeralReceiver : getReceiver(baseReceiverSalt);
 
         if (balance == 0) {
             // NOTE: In base mode, `balance == 0` is treated as “use the receiver’s current balance”.

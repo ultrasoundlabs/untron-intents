@@ -21,12 +21,12 @@ abstract contract ForwarderTestBase is Test {
         forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
     }
 
-    function baseSalt(uint256 targetChain, address beneficiary, bool beneficiaryClaimOnly)
+    function baseSalt(uint256 targetChain, address beneficiary, bool beneficiaryClaimOnly, bytes32 intentHash)
         internal
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encodePacked(targetChain, beneficiary, beneficiaryClaimOnly));
+        return keccak256(abi.encodePacked(targetChain, beneficiary, beneficiaryClaimOnly, intentHash));
     }
 
     function ephemeralSalt(bytes32 receiverSalt, bytes32 forwardSalt, address tokenOut, uint256 balance)
@@ -37,4 +37,3 @@ abstract contract ForwarderTestBase is Test {
         return keccak256(abi.encodePacked(receiverSalt, forwardSalt, tokenOut, balance));
     }
 }
-
