@@ -15,25 +15,73 @@ import {UntronIntentsIndexedOwnable} from "./auth/UntronIntentsIndexedOwnable.so
 /// @title Untron Intents
 /// @notice Intent-based platform that lets people pay for execution of certain transactions
 ///         on Tron blockchain using an escrow on an EVM chain and a light client Tron verifier.
+/// @dev High-level model
+/// Actors:
+/// - Maker / user: posts an intent and (usually) escrows funds on this chain.
+/// - Solver: executes the requested action on Tron and gets paid from escrow.
+/// - Refund beneficiary: receives escrow refunds (and possibly penalty proceeds) if the intent expires.
+///
+/// The contract intentionally does not “execute Tron”:
+/// - Solvers submit a *proof* of a Tron transaction (via {ITronTxReader}) to mark an intent as solved.
+/// - Once solved+funded, settlement on this chain is deterministic: pay solver escrow + return solver deposit.
+///
+/// Two main flows exist:
+/// 1) Maker-funded intent:
+///    - Maker calls {createIntent} and escrows `intent.amount` of `intent.token` on this chain.
+///    - A solver calls {claimIntent} by posting a fixed USDT deposit.
+///    - The solver executes the corresponding action on Tron and calls {proveIntentFill}.
+///    - Contract settles immediately if escrow is present.
+///
+/// 2) Receiver-originated intent (cross-chain / “forwarder receiver” model):
+///    - Funds are sent to a deterministic {UntronReceiver} address owned by an {IntentsForwarder}.
+///    - Anyone can pull those funds into this contract via {IntentsForwarder.pullFromReceiver}.
+///    - {createIntentFromReceiver} creates a USDT-transfer intent using the pulled amount.
+///    - Alternatively, {claimVirtualReceiverIntent} allows the solver to claim+prove *before* funding
+///      (creating a “virtual” intent), then {fundReceiverIntent} later pulls the escrow and triggers settlement.
+///
+/// Invariants / important properties:
+/// - Solvers can only prove fills for intents they currently own (the `solver` address).
+/// - Settlement occurs at most once (`settled` flag).
+/// - If an intent expires without being solved, escrow is refunded and the solver deposit is either refunded
+///   (unfunded intents) or split as a penalty (funded intents).
 /// @author Ultrasound Labs
 contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     using LibBytes for bytes;
 
+    /*//////////////////////////////////////////////////////////////
+                                INTENTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Intent to execute an arbitrary Tron `TriggerSmartContract` call.
+    /// @dev The proof must show a Tron transaction whose:
+    /// - `toTron` address matches `to`, and
+    /// - `data` bytes match exactly.
     struct TriggerSmartContractIntent {
         address to;
         bytes data;
     }
 
+    /// @notice Intent to perform a Tron USDT transfer (or controller-mediated USDT transfer).
+    /// @dev The proof must show a Tron transaction whose decoded `(to, amount)` matches.
     struct USDTTransferIntent {
         address to;
         uint256 amount;
     }
 
+    /// @notice Supported intent variants.
+    /// @dev This contract is intentionally narrow: it only validates “what happened on Tron”
+    /// for these specific patterns, and never attempts to run arbitrary logic itself.
     enum IntentType {
         TRIGGER_SMART_CONTRACT,
         USDT_TRANSFER
     }
 
+    /// @notice Canonical intent parameters.
+    /// @param intentType What the solver must do on Tron.
+    /// @param intentSpecs ABI-encoded payload depending on `intentType`.
+    /// @param refundBeneficiary Receives escrow refunds and, in some cases, penalty proceeds.
+    /// @param token Escrow token on this chain (address(0) = native token).
+    /// @param amount Escrowed amount on this chain.
     struct Intent {
         IntentType intentType;
         bytes intentSpecs;
@@ -42,31 +90,61 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         uint256 amount;
     }
 
+    /// @notice Full onchain state for an intent id.
+    /// @dev The lifecycle is:
+    /// - created -> (optionally claimed) -> solved (via proof) -> funded (if not already) -> settled -> deleted
+    /// Not all transitions are strictly ordered due to “virtual” receiver intents.
     struct IntentState {
         Intent intent;
+        /// @notice Timestamp when the solver last claimed or proved (used for `unclaimIntent` timeout).
         uint256 solverClaimedAt;
+        /// @notice Timestamp after which anyone can close the intent and distribute funds.
         uint256 deadline;
+        /// @notice Current solver that holds the claim (required for proving the Tron fill).
         address solver;
+        /// @notice Whether a valid Tron fill was proven for this intent.
         bool solved;
+        /// @notice Whether escrow funds are currently held by this contract.
         bool funded;
+        /// @notice Whether settlement already occurred (escrow + deposit paid to solver).
         bool settled;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                                 ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts when attempting to create an intent whose id already exists.
     error AlreadyExists();
+    /// @notice Reverts when creating an intent with `deadline == 0`.
     error InvalidDeadline();
+    /// @notice Reverts when claiming an intent that is already claimed.
     error AlreadyClaimed();
+    /// @notice Reverts when attempting to unclaim an intent with no current solver.
     error NotClaimed();
+    /// @notice Reverts when a timeout/expiry has not yet elapsed.
     error NotExpiredYet();
+    /// @notice Reverts when attempting an action that requires the intent to be unsolved.
     error AlreadySolved();
+    /// @notice Reverts when a caller is not the current solver for an intent.
     error NotSolver();
+    /// @notice Reverts when a proven Tron tx does not match the intent specs.
     error WrongTxProps();
+    /// @notice Reverts when TRC-20 calldata length is not the expected ABI-encoded size.
     error TronInvalidTrc20DataLength();
+    /// @notice Reverts when calldata is too short to even contain a function selector.
     error TronInvalidCalldataLength();
+    /// @notice Reverts when a proven Tron tx cannot be interpreted as an allowed USDT transfer.
     error NotATrc20Transfer();
+    /// @notice Reverts when pulled amount from receiver doesn't match `amount` (when specified).
     error IncorrectPullAmount();
+    /// @notice Reverts when an intent id does not exist.
     error IntentNotFound();
+    /// @notice Reverts when attempting to fund a receiver intent that is already funded.
     error AlreadyFunded();
+    /// @notice Reverts when a receiver/virtual intent requires non-zero amount but amount is 0.
     error InvalidReceiverAmount();
+    /// @notice Reverts when calling {settleIntent} but intent is not in a settleable state.
     error NothingToSettle();
 
     /// @notice Recommended intent fee in parts-per-million of the intent amount.
@@ -85,6 +163,7 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     /// @notice Grace period after claim before a solver can be unclaimed.
     uint256 public constant TIME_TO_FILL = 2 minutes;
     /// @notice Amount of USDT deposit required to claim an intent.
+    /// @dev Denominated in this chain's USDT token units (e.g. 6 decimals for typical USDT).
     uint256 public constant INTENT_CLAIM_DEPOSIT = 1_000_000;
     /// @notice Default deadline duration for receiver-originated intents.
     uint256 public constant RECEIVER_INTENT_DURATION = 1 days;
@@ -108,6 +187,8 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     }
 
     /// @notice Computes the receiver-originated intent id used by this contract.
+    /// @dev Receiver-originated ids are derived from forwarder/receiver parameters, so that
+    /// offchain agents can predict them without depending on the caller address.
     /// @param forwarder Forwarder that owns the receiver.
     /// @param toTron Tron recipient address (raw `0x41 || 20 bytes` cast into `address`).
     /// @param forwardSalt Forwarder salt used for the ephemeral receiver.
@@ -139,6 +220,10 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     // external functions
 
     /// @notice Creates a new intent by escrowing `intent.amount` of `intent.token`.
+    /// @dev Maker-funded intent ids are derived from `(creator, intentHash, deadline)`:
+    /// - `intentHash = keccak256(abi.encode(intent))`
+    /// - `id = keccak256(abi.encodePacked(msg.sender, intentHash, deadline))`
+    /// This gives the maker a deterministic id for a given parameterization and deadline.
     /// @param intent Intent parameters.
     /// @param deadline Unix timestamp after which the intent can be closed/refunded.
     function createIntent(Intent calldata intent, uint256 deadline) external payable {
@@ -167,6 +252,14 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     // solhint-disable function-max-lines
 
     /// @notice Creates a receiver-originated intent by pulling funds from an IntentsForwarder receiver.
+    /// @dev This flow assumes the forwarder pulls a dollar stablecoin that matches the Tron USDT
+    /// denomination the solver will pay out on Tron. If the forwarder is misconfigured to pull some
+    /// other token, the intent creator can get rugged (by design, this contract cannot validate it).
+    ///
+    /// Fee model:
+    /// - The contract stores the *escrowed amount* as `intent.amount`.
+    /// - The Tron payment amount is set to `amount - recommendedIntentFee(amount)` and stored in `intentSpecs`.
+    /// - `recommendedIntentFee*` is advisory/suggested; it is up to integrators to decide fee policy.
     /// @param forwarder Forwarder that owns the receiver.
     /// @param toTron Tron recipient address (raw `0x41 || 20 bytes` cast into `address`).
     /// @param forwardSalt Forwarder salt used for the ephemeral receiver.
@@ -312,6 +405,10 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     }
 
     /// @notice Claims an existing intent by posting the solver deposit.
+    /// @dev Claiming does not guarantee the solver can be paid: it only grants the exclusive right
+    /// to submit the Tron proof. The deposit:
+    /// - is returned upon successful settlement, OR
+    /// - can be penalized if the solver stalls on a funded intent (see {unclaimIntent}/{closeIntent}).
     /// @param id Intent id.
     function claimIntent(bytes32 id) external {
         if (intents[id].deadline == 0) revert IntentNotFound();
@@ -325,6 +422,12 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     }
 
     /// @notice Clears the solver claim after a timeout if the intent is still unsolved.
+    /// @dev Deposit handling:
+    /// - If the intent is *unfunded*, the solver deposit is refunded in full (nothing was executable against).
+    /// - If the intent is *funded*, the deposit is split 50/50 between:
+    ///   - `msg.sender` (the unclaim caller), and
+    ///   - `refundBeneficiary` (the maker / protocol recipient)
+    /// This creates a permissionless “keepalive” incentive to clear stale claims.
     /// @param id Intent id.
     function unclaimIntent(bytes32 id) external {
         IntentState storage st = intents[id];
@@ -359,6 +462,14 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     }
 
     /// @notice Proves that the solver executed the intent on Tron and marks it solved.
+    /// @dev Proof verification is delegated to `V3.tronReader()`:
+    /// - This contract assumes the reader correctly verifies block headers, inclusion proofs, and decoding.
+    /// - This contract then enforces intent-specific matching on the parsed `TriggerSmartContract`.
+    ///
+    /// Tron address encoding notes:
+    /// - The reader returns Tron “raw” addresses as `bytes21` (`0x41 || 20 bytes`).
+    /// - Throughout this contract, such addresses are represented as `address` by dropping the leading `0x41`.
+    ///   This is why comparisons use `address(uint160(uint168(bytes21)))`.
     /// @param id Intent id.
     /// @param blocks 20 Tron block headers for the verifier.
     /// @param encodedTx Protobuf-encoded Tron Transaction bytes.
@@ -394,6 +505,7 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         }
 
         intents[id].solved = true;
+        // Refresh the "claimed at" timestamp so `TIME_TO_FILL` remains meaningful for any follow-up actions.
         intents[id].solverClaimedAt = block.timestamp;
 
         _emitIntentSolved(id, msg.sender, tronTx.txId, tronTx.tronBlockNumber);
@@ -401,6 +513,9 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     }
 
     /// @notice Pulls the escrow for an existing receiver intent into this contract (then settles if solved).
+    /// @dev Used for “virtual” receiver intents:
+    /// - A solver can prove the Tron fill first (setting `solved=true` while `funded=false`).
+    /// - Later, anyone can pull the escrow here via the forwarder and trigger settlement.
     /// @param forwarder Forwarder that owns the receiver.
     /// @param toTron Tron recipient address.
     /// @param forwardSalt Forwarder salt used for the ephemeral receiver.
@@ -452,6 +567,17 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     // solhint-disable function-max-lines
 
     /// @notice Closes an expired intent and refunds escrow (and/or releases deposits).
+    /// @dev Anyone can close once `deadline` passes. Closing always deletes the intent state.
+    ///
+    /// Solved intents:
+    /// - If solved+funded but not settled, we settle instead.
+    /// - If solved but unfunded (virtual intent never funded), the solver is refunded their deposit.
+    ///
+    /// Unsolved intents:
+    /// - If funded, escrow is refunded to `refundBeneficiary`.
+    /// - Solver deposit is:
+    ///   - split 50/50 between closer and `refundBeneficiary` if funded, OR
+    ///   - refunded in full to solver if unfunded.
     /// @param id Intent id.
     function closeIntent(bytes32 id) external {
         IntentState storage st = intents[id];
@@ -546,6 +672,10 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
 
     // internal functions
 
+    /// @dev Settles and pays the solver if (and only if) the intent is solved and funded.
+    /// This function is safe to call opportunistically after either:
+    /// - proving the Tron fill (may settle immediately for funded intents), or
+    /// - funding escrow for a previously solved virtual intent.
     function _settleIfPossible(bytes32 id) internal returns (bool settledNow) {
         IntentState storage st = intents[id];
         if (st.settled || !st.solved || !st.funded) return false;
@@ -557,6 +687,14 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         return true;
     }
 
+    /// @dev Interprets the parsed Tron transaction as a USDT transfer.
+    /// Supported patterns:
+    /// - Direct USDT TRC-20 `transfer` and `transferFrom` on `V3.tronUsdt()`.
+    /// - `V3.CONTROLLER_ADDRESS()` helper `transferUsdtFromController`.
+    /// - `V3.CONTROLLER_ADDRESS()` Solady-style `multicall(bytes[])` that contains exactly one
+    ///   `transferUsdtFromController` call (the only call we treat as the “payment”).
+    ///
+    /// Any other call shapes revert with {NotATrc20Transfer}.
     function _dispatchTronTxCall(TriggerSmartContract memory tronTx)
         internal
         view
@@ -604,6 +742,8 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
             } else {
                 revert NotATrc20Transfer();
             }
+        } else {
+            revert NotATrc20Transfer();
         }
     }
 
