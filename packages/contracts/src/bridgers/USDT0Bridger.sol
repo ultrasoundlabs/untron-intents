@@ -26,20 +26,6 @@ import {MessagingFee} from "@layerzerolabs/oapp-evm/contracts/oapp/OAppSender.so
 /// @author Ultrasound Labs
 contract USDT0Bridger is IBridger, Ownable {
     /*//////////////////////////////////////////////////////////////
-                                  ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    error NotAuthorizedCaller();
-    error UnsupportedToken(address token);
-    error UnsupportedChainId(uint256 chainId);
-    error ZeroOutputAddress();
-    error AmountZero();
-    error ZeroAddress();
-    error ArrayLengthMismatch(uint256 a, uint256 b);
-    error DuplicateChainId(uint256 chainId);
-    error InsufficientNativeValue(uint256 have, uint256 need);
-
-    /*//////////////////////////////////////////////////////////////
                                 IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
@@ -58,6 +44,20 @@ contract USDT0Bridger is IBridger, Ownable {
 
     /// @notice EVM chainId -> LayerZero endpoint ID (eid) for USDT0 core mesh destinations.
     mapping(uint256 => uint32) public eidByChainId;
+
+    /*//////////////////////////////////////////////////////////////
+                                  ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    error NotAuthorizedCaller();
+    error UnsupportedToken(address token);
+    error UnsupportedChainId(uint256 chainId);
+    error ZeroOutputAddress();
+    error AmountZero();
+    error ZeroAddress();
+    error ArrayLengthMismatch(uint256 a, uint256 b);
+    error DuplicateChainId(uint256 chainId);
+    error InsufficientNativeValue(uint256 have, uint256 need);
 
     /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
@@ -93,6 +93,10 @@ contract USDT0Bridger is IBridger, Ownable {
             eidByChainId[chainId] = eid;
         }
     }
+
+    /// @notice Accepts native token (e.g. ETH) deposits.
+    /// @dev This contract may temporarily custody ETH used to pay LayerZero message fees.
+    receive() external payable {}
 
     /*//////////////////////////////////////////////////////////////
                               IBRIDGER
@@ -156,8 +160,4 @@ contract USDT0Bridger is IBridger, Ownable {
     function withdraw(address token, uint256 amount) external onlyOwner {
         if (amount != 0) TokenUtils.transfer(token, payable(msg.sender), amount);
     }
-
-    /// @notice Accepts native token (e.g. ETH) deposits.
-    /// @dev This contract may temporarily custody ETH used to pay LayerZero message fees.
-    receive() external payable {}
 }

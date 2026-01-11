@@ -64,22 +64,6 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
     }
 
     /*//////////////////////////////////////////////////////////////
-                                   ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    /// @notice Reverts when `beneficiaryClaimOnly` is enabled and the caller is not the beneficiary.
-    error PullerUnauthorized();
-
-    /// @notice Reverts when attempting to bridge a token other than the configured USDT/USDC outputs.
-    error UnsupportedOutputToken();
-
-    /// @notice Reverts when the bridger reports an amount-out that does not match the expected forwarded `balance`.
-    error InsufficientOutputAmount();
-
-    /// @notice Reverts when attempting to perform a swap while pulling from an ephemeral receiver.
-    error SwapOnEphemeralReceiversNotAllowed();
-
-    /*//////////////////////////////////////////////////////////////
                                  IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
@@ -117,6 +101,22 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
     mapping(address => IQuoter) public quoterByToken;
 
     /*//////////////////////////////////////////////////////////////
+                                   ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Reverts when `beneficiaryClaimOnly` is enabled and the caller is not the beneficiary.
+    error PullerUnauthorized();
+
+    /// @notice Reverts when attempting to bridge a token other than the configured USDT/USDC outputs.
+    error UnsupportedOutputToken();
+
+    /// @notice Reverts when the bridger reports an amount-out that does not match the expected forwarded `balance`.
+    error InsufficientOutputAmount();
+
+    /// @notice Reverts when attempting to perform a swap while pulling from an ephemeral receiver.
+    error SwapOnEphemeralReceiversNotAllowed();
+
+    /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
 
@@ -145,6 +145,10 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
         USDT = _usdt;
         USDC = _usdc;
     }
+
+    /// @notice Accepts native token (e.g. ETH) deposits.
+    /// @dev Enables bridger implementations to refund unused native fees back to this contract.
+    receive() external payable {}
 
     // Admin functions
 
@@ -271,6 +275,36 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
         return out.amountForwarded;
     }
 
+    // solhint-enable function-max-lines
+
+    // Public functions
+
+    /// @notice Returns the receiver contract for `salt`, deploying it if it does not already exist.
+    /// @dev The receiver is a CREATE2-deployed minimal proxy owned by this forwarder.
+    /// @param salt The CREATE2 salt that determines the receiver address.
+    /// @return receiver The receiver instance at the predicted address.
+    function getReceiver(bytes32 salt) public returns (UntronReceiver receiver) {
+        receiver = UntronReceiver(predictReceiverAddress(salt));
+        if (address(receiver).code.length == 0) {
+            _deployReceiver(salt);
+        }
+    }
+
+    /// @notice Predict the deterministic address for a receiver deployed via CREATE2.
+    /// @param salt The CREATE2 salt.
+    /// @return predicted The predicted address of the receiver.
+    function predictReceiverAddress(bytes32 salt) public view returns (address payable predicted) {
+        // CREATE2 address formula (EIP-1014):
+        // keccak256(0xff ++ deployerAddress ++ salt ++ keccak256(initcode))[12:]
+        predicted = payable(address(
+                uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, RECEIVER_BYTECODE_HASH))))
+            ));
+    }
+
+    // Internal functions
+
+    // solhint-disable function-max-lines
+
     function _pullFromReceiverCore(
         bytes32 forwardId,
         bytes32 baseReceiverSalt,
@@ -375,28 +409,6 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
 
     // solhint-enable function-max-lines
 
-    /// @notice Returns the receiver contract for `salt`, deploying it if it does not already exist.
-    /// @dev The receiver is a CREATE2-deployed minimal proxy owned by this forwarder.
-    /// @param salt The CREATE2 salt that determines the receiver address.
-    /// @return receiver The receiver instance at the predicted address.
-    function getReceiver(bytes32 salt) public returns (UntronReceiver receiver) {
-        receiver = UntronReceiver(predictReceiverAddress(salt));
-        if (address(receiver).code.length == 0) {
-            _deployReceiver(salt);
-        }
-    }
-
-    /// @notice Predict the deterministic address for a receiver deployed via CREATE2.
-    /// @param salt The CREATE2 salt.
-    /// @return predicted The predicted address of the receiver.
-    function predictReceiverAddress(bytes32 salt) public view returns (address payable predicted) {
-        // CREATE2 address formula (EIP-1014):
-        // keccak256(0xff ++ deployerAddress ++ salt ++ keccak256(initcode))[12:]
-        predicted = payable(address(
-                uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, RECEIVER_BYTECODE_HASH))))
-            ));
-    }
-
     /// @notice Deploys a receiver minimal proxy via CREATE2 for `salt`.
     /// @dev Reverts if deployment fails (e.g., due to an existing contract at the address).
     /// @param salt CREATE2 salt.
@@ -420,8 +432,4 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
         }
         _emitReceiverDeployed(salt, receiver, impl);
     }
-
-    /// @notice Accepts native token (e.g. ETH) deposits.
-    /// @dev Enables bridger implementations to refund unused native fees back to this contract.
-    receive() external payable {}
 }

@@ -14,18 +14,6 @@ library TokenUtils {
     /// @notice Error thrown when insufficient ETH is provided in transferFrom.
     error InsufficientETH();
 
-    /// @notice Returns ERC20 or ETH balance of 'addr'.
-    /// @param token The address of the token to query (0x00 = ETH).
-    /// @param addr The address of the account to query.
-    /// @return balance The balance of the token or ETH.
-    function getBalanceOf(address token, address addr) internal view returns (uint256) {
-        if (token == address(0)) {
-            return addr.balance;
-        } else {
-            return IERC20(token).balanceOf(addr);
-        }
-    }
-
     /// @notice Approves a token transfer.
     /// @param token The address of the token to approve (0x00 = ETH; no-op).
     /// @param spender The address of the spender to approve.
@@ -74,5 +62,14 @@ library TokenUtils {
     /// @dev    Thin wrapper over OpenZeppelin Math.mulDiv for consistency across codebase.
     function mulDiv(uint256 x, uint256 y, uint256 denominator) internal pure returns (uint256) {
         return Math.mulDiv(x, y, denominator);
+    }
+
+    /// @notice Returns ERC20 or ETH balance of 'addr'.
+    /// @param token The address of the token to query (0x00 = ETH).
+    /// @param addr The address of the account to query.
+    /// @return balance The balance of the token or ETH.
+    function getBalanceOf(address token, address addr) internal view returns (uint256 balance) {
+        if (token == address(0)) return addr.balance;
+        return IERC20(token).balanceOf(addr);
     }
 }

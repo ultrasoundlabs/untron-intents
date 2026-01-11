@@ -51,20 +51,6 @@ interface ITokenMessengerV2 {
 /// @author Ultrasound Labs
 contract CCTPV2Bridger is IBridger, Ownable {
     /*//////////////////////////////////////////////////////////////
-                                  ERRORS
-    //////////////////////////////////////////////////////////////*/
-
-    error NotAuthorizedCaller();
-    error UnsupportedToken(address token);
-    error UnsupportedChainId(uint256 chainId);
-    error ZeroOutputAddress();
-    error AmountZero();
-    error ZeroAddress();
-    error ArrayLengthMismatch(uint256 a, uint256 b);
-    error DuplicateChainId(uint256 chainId);
-    error InvalidExtraData();
-
-    /*//////////////////////////////////////////////////////////////
                                 IMMUTABLES
     //////////////////////////////////////////////////////////////*/
 
@@ -92,6 +78,20 @@ contract CCTPV2Bridger is IBridger, Ownable {
     uint32 internal constant _FINALITY_FAST = 1000;
     uint32 internal constant _FINALITY_STANDARD = 2000;
     uint256 internal constant _ONE_BPS_DENOMINATOR = 10_000;
+
+    /*//////////////////////////////////////////////////////////////
+                                  ERRORS
+    //////////////////////////////////////////////////////////////*/
+
+    error NotAuthorizedCaller();
+    error UnsupportedToken(address token);
+    error UnsupportedChainId(uint256 chainId);
+    error ZeroOutputAddress();
+    error AmountZero();
+    error ZeroAddress();
+    error ArrayLengthMismatch(uint256 a, uint256 b);
+    error DuplicateChainId(uint256 chainId);
+    error InvalidExtraData();
 
     /*//////////////////////////////////////////////////////////////
                                CONSTRUCTOR
@@ -128,6 +128,10 @@ contract CCTPV2Bridger is IBridger, Ownable {
             circleDomainByChainId[chainId] = circleDomains[i];
         }
     }
+
+    /// @notice Accepts native token (e.g. ETH) deposits.
+    /// @dev Included for compatibility with integrations that may send ETH alongside calls.
+    receive() external payable {}
 
     /*//////////////////////////////////////////////////////////////
                               IBRIDGER
@@ -181,10 +185,6 @@ contract CCTPV2Bridger is IBridger, Ownable {
     function withdraw(address token, uint256 amount) external onlyOwner {
         if (amount != 0) TokenUtils.transfer(token, payable(msg.sender), amount);
     }
-
-    /// @notice Accepts native token (e.g. ETH) deposits.
-    /// @dev Included for compatibility with integrations that may send ETH alongside calls.
-    receive() external payable {}
 
     /*//////////////////////////////////////////////////////////////
                                INTERNALS

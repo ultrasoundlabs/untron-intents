@@ -110,6 +110,39 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         bool settled;
     }
 
+    /// @notice Recommended intent fee in parts-per-million of the intent amount.
+    uint256 public recommendedIntentFeePpm;
+    /// @notice Recommended intent fee flat component (in the escrow token's units).
+    uint256 public recommendedIntentFeeFlat;
+
+    /// @notice Mapping from intent id to intent state.
+    mapping(bytes32 => IntentState) public intents;
+
+    /// @notice EVM-chain USDT used as the solver claim deposit token.
+    address public immutable USDT;
+    /// @notice UntronV3 config contract providing Tron verifier and well-known Tron addresses.
+    IUntronV3 public immutable V3;
+
+    /// @notice Grace period after claim before a solver can be unclaimed.
+    uint256 public constant TIME_TO_FILL = 2 minutes;
+    /// @notice Amount of USDT deposit required to claim an intent.
+    /// @dev Denominated in this chain's USDT token units (e.g. 6 decimals for typical USDT).
+    uint256 public constant INTENT_CLAIM_DEPOSIT = 1_000_000;
+    /// @notice Default deadline duration for receiver-originated intents.
+    uint256 public constant RECEIVER_INTENT_DURATION = 1 days;
+
+    /// @dev TRC-20 function selectors.
+    bytes4 internal constant _SELECTOR_TRANSFER = bytes4(keccak256("transfer(address,uint256)"));
+    // solhint-disable-next-line gas-small-strings
+    bytes4 internal constant _SELECTOR_TRANSFER_FROM = bytes4(keccak256("transferFrom(address,address,uint256)"));
+
+    /// @dev UntronController function selectors.
+    bytes4 internal constant _SELECTOR_TRANSFER_USDT_FROM_CONTROLLER =
+    // solhint-disable-next-line gas-small-strings
+    bytes4(keccak256("transferUsdtFromController(address,uint256)"));
+    // solhint-disable-next-line gas-small-strings
+    bytes4 internal constant _SELECTOR_MULTICALL = bytes4(keccak256("multicall(bytes[])"));
+
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -147,63 +180,10 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     /// @notice Reverts when calling {settleIntent} but intent is not in a settleable state.
     error NothingToSettle();
 
-    /// @notice Recommended intent fee in parts-per-million of the intent amount.
-    uint256 public recommendedIntentFeePpm;
-    /// @notice Recommended intent fee flat component (in the escrow token's units).
-    uint256 public recommendedIntentFeeFlat;
-
-    /// @notice Mapping from intent id to intent state.
-    mapping(bytes32 => IntentState) public intents;
-
-    /// @notice EVM-chain USDT used as the solver claim deposit token.
-    address public immutable USDT;
-    /// @notice UntronV3 config contract providing Tron verifier and well-known Tron addresses.
-    IUntronV3 public immutable V3;
-
-    /// @notice Grace period after claim before a solver can be unclaimed.
-    uint256 public constant TIME_TO_FILL = 2 minutes;
-    /// @notice Amount of USDT deposit required to claim an intent.
-    /// @dev Denominated in this chain's USDT token units (e.g. 6 decimals for typical USDT).
-    uint256 public constant INTENT_CLAIM_DEPOSIT = 1_000_000;
-    /// @notice Default deadline duration for receiver-originated intents.
-    uint256 public constant RECEIVER_INTENT_DURATION = 1 days;
-
-    /// @dev TRC-20 function selectors.
-    bytes4 internal constant _SELECTOR_TRANSFER = bytes4(keccak256("transfer(address,uint256)"));
-    // solhint-disable-next-line gas-small-strings
-    bytes4 internal constant _SELECTOR_TRANSFER_FROM = bytes4(keccak256("transferFrom(address,address,uint256)"));
-
-    /// @dev UntronController function selectors.
-    bytes4 internal constant _SELECTOR_TRANSFER_USDT_FROM_CONTROLLER =
-    // solhint-disable-next-line gas-small-strings
-    bytes4(keccak256("transferUsdtFromController(address,uint256)"));
-    // solhint-disable-next-line gas-small-strings
-    bytes4 internal constant _SELECTOR_MULTICALL = bytes4(keccak256("multicall(bytes[])"));
-
     constructor(address _owner, IUntronV3 v3, address usdt) {
         _initializeOwner(_owner);
         V3 = v3;
         USDT = usdt;
-    }
-
-    /// @notice Computes the receiver-originated intent id used by this contract.
-    /// @dev Receiver-originated ids are derived from forwarder/receiver parameters, so that
-    /// offchain agents can predict them without depending on the caller address.
-    /// @param forwarder Forwarder that owns the receiver.
-    /// @param toTron Tron recipient address (raw `0x41 || 20 bytes` cast into `address`).
-    /// @param forwardSalt Forwarder salt used for the ephemeral receiver.
-    /// @param token Escrow token on this chain.
-    /// @param amount Expected receiver balance (ephemeral receiver amount).
-    /// @return id Deterministic id for the receiver intent.
-    function receiverIntentId(
-        IntentsForwarder forwarder,
-        address toTron,
-        bytes32 forwardSalt,
-        address token,
-        uint256 amount
-    ) public pure returns (bytes32) {
-        bytes32 intentHash = keccak256(abi.encode(forwarder, toTron));
-        return keccak256(abi.encodePacked(intentHash, forwardSalt, token, amount));
     }
 
     // admin functions
@@ -668,6 +648,26 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     /// @return fee Recommended fee.
     function recommendedIntentFee(uint256 amount) public view returns (uint256) {
         return amount * recommendedIntentFeePpm / 1_000_000 + recommendedIntentFeeFlat;
+    }
+
+    /// @notice Computes the receiver-originated intent id used by this contract.
+    /// @dev Receiver-originated ids are derived from forwarder/receiver parameters, so that
+    /// offchain agents can predict them without depending on the caller address.
+    /// @param forwarder Forwarder that owns the receiver.
+    /// @param toTron Tron recipient address (raw `0x41 || 20 bytes` cast into `address`).
+    /// @param forwardSalt Forwarder salt used for the ephemeral receiver.
+    /// @param token Escrow token on this chain.
+    /// @param amount Expected receiver balance (ephemeral receiver amount).
+    /// @return id Deterministic id for the receiver intent.
+    function receiverIntentId(
+        IntentsForwarder forwarder,
+        address toTron,
+        bytes32 forwardSalt,
+        address token,
+        uint256 amount
+    ) public pure returns (bytes32) {
+        bytes32 intentHash = keccak256(abi.encode(forwarder, toTron));
+        return keccak256(abi.encodePacked(intentHash, forwardSalt, token, amount));
     }
 
     // internal functions

@@ -4,6 +4,15 @@ pragma solidity ^0.8.27;
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
 import {TokenUtils} from "./utils/TokenUtils.sol";
 
+/// @notice Thrown when a caller other than the owner attempts to call a restricted function.
+error NotOwner();
+/// @notice Thrown when one of the low-level calls in `execute` fails.
+/// @param callIndex Index of the call in the `calls` array that failed.
+error CallFailed(uint256 callIndex);
+/// @notice Thrown when the resulting token balance is less than the expected output amount.
+/// @dev This guards against incomplete or unfavorable swaps.
+error InsufficientOutput();
+
 // things below are defined outside the contract so parents can use them
 
 /// @notice Represents a low-level contract call used during swap execution.
@@ -18,15 +27,6 @@ struct Call {
     /// @notice Calldata to send to the target contract.
     bytes data;
 }
-
-/// @notice Thrown when a caller other than the owner attempts to call a restricted function.
-error NotOwner();
-/// @notice Thrown when one of the low-level calls in `execute` fails.
-/// @param callIndex Index of the call in the `calls` array that failed.
-error CallFailed(uint256 callIndex);
-/// @notice Thrown when the resulting token balance is less than the expected output amount.
-/// @dev This guards against incomplete or unfavorable swaps.
-error InsufficientOutput();
 
 /// @title SwapExecutor
 /// @notice Executes a sequence of arbitrary contract calls and settles the resulting token balance.
@@ -45,6 +45,10 @@ contract SwapExecutor is ReentrancyGuard {
     constructor() {
         OWNER = msg.sender;
     }
+
+    /// @notice Accepts native token (e.g. ETH) deposits used by swap calls.
+    /// @dev This function enables the executor to receive ETH for subsequent low-level calls.
+    receive() external payable {}
 
     /// @notice Executes a batch of arbitrary calls and settles token outputs.
     /// @dev
@@ -84,8 +88,4 @@ contract SwapExecutor is ReentrancyGuard {
             TokenUtils.transfer({token: token, recipient: recipient, amount: actualOut});
         }
     }
-
-    /// @notice Accepts native token (e.g. ETH) deposits used by swap calls.
-    /// @dev This function enables the executor to receive ETH for subsequent low-level calls.
-    receive() external payable {}
 }

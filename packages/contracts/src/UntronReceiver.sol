@@ -41,6 +41,10 @@ contract UntronReceiver {
         OWNER = payable(msg.sender);
     }
 
+    /// @notice Accepts native token (e.g. ETH) deposits.
+    /// @dev Enables receiver addresses to custody ETH as well as ERC-20 tokens.
+    receive() external payable {}
+
     /*//////////////////////////////////////////////////////////////
                                  FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -55,8 +59,4 @@ contract UntronReceiver {
             TokenUtils.transfer(token, OWNER, amount);
         }
     }
-
-    /// @notice Accepts native token (e.g. ETH) deposits.
-    /// @dev Enables receiver addresses to custody ETH as well as ERC-20 tokens.
-    receive() external payable {}
 }
