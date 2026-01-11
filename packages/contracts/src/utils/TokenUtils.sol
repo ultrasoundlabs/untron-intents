@@ -11,6 +11,9 @@ import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 ///      ERC-20 transfers/approvals to revert on failure (or return `true`).
 /// @author Ultrasound Labs
 library TokenUtils {
+    /// @notice Error thrown when insufficient ETH is provided in transferFrom.
+    error InsufficientETH();
+
     /// @notice Returns ERC20 or ETH balance of 'addr'.
     /// @param token The address of the token to query (0x00 = ETH).
     /// @param addr The address of the account to query.
@@ -46,7 +49,7 @@ library TokenUtils {
         }
     }
 
-    /// @notice Does an ERC20 transferFrom. For ETH, it's a no-op.
+    /// @notice Does an ERC20 transferFrom. For ETH, it requires the msg.value to match the amount.
     /// @param token The address of the token to transfer (0x00 = ETH).
     /// @param from The address of the sender.
     /// @param recipient The address of the recipient.
@@ -58,6 +61,8 @@ library TokenUtils {
             // is the responsibility of the caller.
             // slither-disable-next-line arbitrary-send-erc20
             SafeTransferLib.safeTransferFrom({token: token, from: from, to: recipient, amount: amount});
+        } else {
+            if (msg.value != amount) revert InsufficientETH();
         }
     }
 

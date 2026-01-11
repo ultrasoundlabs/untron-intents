@@ -125,7 +125,7 @@ contract IntentsForwarderEventChainTest is Test {
         bytes32 tipBefore = forwarder.eventChainTip();
 
         vm.recordLogs();
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -172,7 +172,7 @@ contract IntentsForwarderEventChainTest is Test {
         bytes32 tipBefore = forwarder.eventChainTip();
 
         vm.recordLogs();
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -218,7 +218,7 @@ contract IntentsForwarderEventChainTest is Test {
         bytes32 tipBefore = forwarder.eventChainTip();
 
         vm.expectRevert();
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -261,7 +261,7 @@ contract IntentsForwarderEventChainTest is Test {
         bytes32 tipBefore = forwarder.eventChainTip();
 
         vm.recordLogs();
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: targetChain,
                 beneficiary: beneficiary,

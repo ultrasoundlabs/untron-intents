@@ -11,4 +11,12 @@ interface IUntronV3 {
     /// @notice Returns the address of the TronTxReader contract.
     /// @return The address of the TronTxReader contract.
     function tronReader() external view returns (ITronTxReader);
+
+    /// @notice Returns the address of UntronController contract on Tron.
+    /// @return The address of the Controller contract.
+    function CONTROLLER_ADDRESS() external view returns (address);
+
+    /// @notice Returns the address of the USDT token on Tron.
+    /// @return The address of the USDT token.
+    function tronUsdt() external view returns (address);
 }

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+/// @notice Parsed subset of a Tron `TriggerSmartContract` transaction.
+/// @dev `txId` is the Tron transaction identifier shown by explorers and equals `sha256(raw_data)`.
+struct TriggerSmartContract {
+    bytes32 txId;
+    uint256 tronBlockNumber;
+    uint32 tronBlockTimestamp;
+    bytes21 senderTron;
+    bytes21 toTron;
+    bytes data;
+}
+
 /// @title ITronTxReader
 /// @notice Common interface for contracts that verify+decode Tron `TriggerSmartContract` transactions.
 /// @dev Implemented by `StatefulTronTxReader` and test/dev mocks.
 /// @author Ultrasound Labs
 interface ITronTxReader {
-    /// @notice Parsed subset of a Tron `TriggerSmartContract` transaction.
-    /// @dev `txId` is the Tron transaction identifier shown by explorers and equals `sha256(raw_data)`.
-    struct TriggerSmartContract {
-        bytes32 txId;
-        uint256 tronBlockNumber;
-        uint32 tronBlockTimestamp;
-        bytes21 senderTron;
-        bytes21 toTron;
-        bytes data;
-    }
-
     /// @notice Verifies inclusion of `encodedTx` in the first block and returns parsed call data.
     /// @param blocks 20 Protobuf-encoded Tron `BlockHeader` bytes, including signature.
     ///               The first block must be the one containing the transaction.

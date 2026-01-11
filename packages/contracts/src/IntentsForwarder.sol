@@ -14,7 +14,7 @@ import {IntentsForwarderIndexedOwnable} from "./auth/IntentsForwarderIndexedOwna
 /// @dev High-level design:
 /// - Users (or integrators) send funds to deterministic “receiver” addresses. These receiver
 ///   contracts are minimal proxies deployed via CREATE2 and owned by this forwarder.
-/// - Anyone (a permissionless relayer) can then call {pullReceiver} to:
+/// - Anyone (a permissionless relayer) can then call {pullFromReceiver} to:
 ///   1) pull tokens/ETH from the receiver into this forwarder,
 ///   2) optionally swap `tokenIn` -> `tokenOut` via a protocol-owned {SwapExecutor},
 ///   3) either (a) pay out locally to `beneficiary`, or (b) bridge to `targetChain` via
@@ -201,11 +201,10 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
     /// - In ephemeral mode (`balance != 0`), `balance` is the amount pulled/forwarded, and also
     ///   contributes to the ephemeral receiver address derivation.
     /// - In base mode (`balance == 0`), the function uses the receiver’s current `tokenIn` balance.
-    ///   Callers typically pass a nonzero `balance` when
-    ///   they want to pull a specific amount from a receiver.
     ///
     /// @param req Pull parameters. See {PullRequest} for field semantics.
-    function pullReceiver(PullRequest calldata req) external payable {
+    /// @return amountOut The amount of `tokenOut` forwarded (local payout amount or bridged amount on the source chain).
+    function pullFromReceiver(PullRequest calldata req) external payable returns (uint256 amountOut) {
         uint256 balanceParam = req.balance;
 
         // Base receiver salt: stable per (targetChain, beneficiary, claim policy, intent hash).
@@ -254,7 +253,7 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
         );
 
         ForwardOutcome memory out =
-            _pullReceiverCore(forwardId, baseReceiverSalt, ephemeralReceiverSalt, ephemeral, req);
+            _pullFromReceiverCore(forwardId, baseReceiverSalt, ephemeralReceiverSalt, ephemeral, req);
 
         _emitForwardCompleted(
             forwardId,
@@ -268,9 +267,11 @@ contract IntentsForwarder is IntentsForwarderIndexedOwnable {
             out.expectedBridgeOut,
             st.bridgeDataHash
         );
+
+        return out.amountForwarded;
     }
 
-    function _pullReceiverCore(
+    function _pullFromReceiverCore(
         bytes32 forwardId,
         bytes32 baseReceiverSalt,
         bytes32 ephemeralReceiverSalt,

@@ -26,7 +26,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         assertGt(predicted.code.length, 0);
     }
 
-    function test_pullReceiver_baseMode_usesReceiverBalance() external {
+    function test_pullFromReceiver_baseMode_usesReceiverBalance() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bool beneficiaryClaimOnly = false;
 
@@ -57,7 +57,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         );
 
         vm.recordLogs();
-        forwarder.pullReceiver(
+        uint256 amountOut = forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -71,6 +71,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: ""
             })
         );
+        assertEq(amountOut, receiverFunds);
 
         Vm.Log[] memory entries = vm.getRecordedLogs();
         bytes32 forwardCompletedSig =
@@ -90,7 +91,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         assertEq(usdt.balanceOf(receiver), 0);
     }
 
-    function test_pullReceiver_baseMode_explicitBalance() external {
+    function test_pullFromReceiver_baseMode_explicitBalance() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         uint256 pullAmount = 250e6;
@@ -100,7 +101,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
         usdt.mint(receiver, 1000e6);
 
-        forwarder.pullReceiver(
+        uint256 amountOut = forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -114,12 +115,13 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: ""
             })
         );
+        assertEq(amountOut, pullAmount);
 
         assertEq(usdt.balanceOf(beneficiary), pullAmount);
         assertEq(usdt.balanceOf(receiver), 1000e6 - pullAmount);
     }
 
-    function test_pullReceiver_beneficiaryClaimOnly_enforced() external {
+    function test_pullFromReceiver_beneficiaryClaimOnly_enforced() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, true, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
@@ -127,7 +129,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.PullerUnauthorized.selector);
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -143,7 +145,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         );
 
         vm.prank(beneficiary);
-        forwarder.pullReceiver(
+        uint256 amountOut = forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -157,10 +159,11 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: ""
             })
         );
+        assertEq(amountOut, 1e6);
         assertEq(usdt.balanceOf(beneficiary), 1e6);
     }
 
-    function test_pullReceiver_swap_disallowed_onEphemeral() external {
+    function test_pullFromReceiver_swap_disallowed_onEphemeral() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
 
         bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
@@ -169,7 +172,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.SwapOnEphemeralReceiversNotAllowed.selector);
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -185,7 +188,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         );
     }
 
-    function test_pullReceiver_swap_happyPath_rebatesSurplus() external {
+    function test_pullFromReceiver_swap_happyPath_rebatesSurplus() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
@@ -206,7 +209,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
 
         address relayer = makeAddr("relayer");
         vm.prank(relayer);
-        forwarder.pullReceiver(
+        uint256 amountOut = forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -220,12 +223,13 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: ""
             })
         );
+        assertEq(amountOut, 90e6);
 
         assertEq(usdc.balanceOf(beneficiary), 90e6);
         assertEq(usdc.balanceOf(relayer), 10e6);
     }
 
-    function test_pullReceiver_swap_reverts_ifInsufficientOutput() external {
+    function test_pullFromReceiver_swap_reverts_ifInsufficientOutput() external {
         address payable beneficiary = payable(makeAddr("beneficiary"));
         bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
         address payable receiver = forwarder.predictReceiverAddress(receiverSalt);
@@ -244,7 +248,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         });
 
         vm.expectRevert();
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: block.chainid,
                 beneficiary: beneficiary,
@@ -260,7 +264,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         );
     }
 
-    function test_pullReceiver_bridge_unsupportedOutputToken_reverts() external {
+    function test_pullFromReceiver_bridge_unsupportedOutputToken_reverts() external {
         ExactBridger bridger = new ExactBridger();
         vm.prank(owner);
         forwarder.setBridgers(bridger, bridger);
@@ -273,7 +277,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         other.mint(receiver, 1e6);
 
         vm.expectRevert(IntentsForwarder.UnsupportedOutputToken.selector);
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: 999999,
                 beneficiary: beneficiary,
@@ -289,7 +293,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         );
     }
 
-    function test_pullReceiver_bridge_usdc_refundsMsgValue() external {
+    function test_pullFromReceiver_bridge_usdc_refundsMsgValue() external {
         ExactBridger usdtBridger = new ExactBridger();
         ExactBridger usdcBridger = new ExactBridger();
         vm.prank(owner);
@@ -307,7 +311,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         uint256 relayerEthBefore = relayer.balance;
 
         vm.prank(relayer);
-        forwarder.pullReceiver{value: 0.3 ether}(
+        uint256 amountOut = forwarder.pullFromReceiver{value: 0.3 ether}(
             IntentsForwarder.PullRequest({
                 targetChain: 999999,
                 beneficiary: beneficiary,
@@ -321,13 +325,14 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: hex"1234"
             })
         );
+        assertEq(amountOut, 5e6);
 
         assertEq(relayer.balance, relayerEthBefore);
         assertEq(usdcBridger.lastMsgValue(), 0);
         assertEq(usdcBridger.lastInputAmount(), 5e6);
     }
 
-    function test_pullReceiver_bridge_usdt_refundsUnusedMsgValue() external {
+    function test_pullFromReceiver_bridge_usdt_refundsUnusedMsgValue() external {
         ExactBridger usdtBridger = new ExactBridger();
         ExactBridger usdcBridger = new ExactBridger();
         vm.prank(owner);
@@ -347,7 +352,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         uint256 relayerEthBefore = relayer.balance;
 
         vm.prank(relayer);
-        forwarder.pullReceiver{value: 0.3 ether}(
+        uint256 amountOut = forwarder.pullFromReceiver{value: 0.3 ether}(
             IntentsForwarder.PullRequest({
                 targetChain: 999999,
                 beneficiary: beneficiary,
@@ -361,13 +366,14 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
                 bridgeData: ""
             })
         );
+        assertEq(amountOut, 5e6);
 
         // Bridger refunded 0.2 ETH back to the forwarder; forwarder passes it through to relayer.
         assertEq(relayer.balance, relayerEthBefore - 0.3 ether + 0.2 ether);
         assertEq(usdtBridger.lastMsgValue(), 0.3 ether);
     }
 
-    function test_pullReceiver_bridge_reverts_ifExpectedAmountOutMismatch() external {
+    function test_pullFromReceiver_bridge_reverts_ifExpectedAmountOutMismatch() external {
         FeeBridger usdtBridger = new FeeBridger();
         usdtBridger.setFee(1);
 
@@ -383,7 +389,7 @@ contract IntentsForwarderCoreTest is ForwarderTestBase {
         usdt.mint(receiver, 5e6);
 
         vm.expectRevert(IntentsForwarder.InsufficientOutputAmount.selector);
-        forwarder.pullReceiver(
+        forwarder.pullFromReceiver(
             IntentsForwarder.PullRequest({
                 targetChain: 999999,
                 beneficiary: beneficiary,

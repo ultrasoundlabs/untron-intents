@@ -29,22 +29,11 @@ error CallFailed(uint256 callIndex);
 error InsufficientOutput();
 
 /// @title SwapExecutor
-/// @notice Executes a sequence of arbitrary calls and then settles the resulting balance of one token.
-/// @dev Security model:
-/// - This contract can perform arbitrary external calls and forward native ETH value, which is powerful.
-/// - Therefore, it is strictly restricted to a single immutable {OWNER} (the deploying contract).
-///
-/// Usage in this repo:
-/// - {IntentsForwarder} deploys a single {SwapExecutor} instance in its constructor.
-/// - The forwarder transfers `tokenIn` into the executor, calls {execute} with `calls`,
-///   and expects the executor to end with at least `expectedAmount` of `token` (tokenOut).
-/// - The executor then transfers *all* of `token` it holds to `recipient` (typically the forwarder).
-///
-/// Output accounting:
-/// - `expectedAmount` is a minimum bound enforced on the executor’s post-call `token` balance.
-/// - The return value `actualOut` is the full post-call `token` balance that was transferred to `recipient`.
-///
-/// Inspired by Daimo Pay’s `DaimoPayExecutor`.
+/// @notice Executes a sequence of arbitrary contract calls and settles the resulting token balance.
+/// @dev
+/// - Intended to be deployed and called via the main UntronV3 contract.
+/// - Executes calls using `call` and enforces a minimum output amount for a single ERC-20 token.
+/// Inspired by Daimo Pay's `DaimoPayExecutor`.
 /// @author Ultrasound Labs
 contract SwapExecutor is ReentrancyGuard {
     /// @notice Immutable address representing the owner/controller of this executor.
