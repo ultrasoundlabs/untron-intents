@@ -1,19 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {Math} from "openzeppelin-contracts/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 /// @title TokenUtils
 /// @notice Utility functions that work for both ERC20 and native tokens.
 /// @dev For standard EVM chains, this library uses Solady's {SafeTransferLib} which expects
 ///      ERC-20 transfers/approvals to revert on failure (or return `true`).
-///
-///      IMPORTANT: Tron-side Untron V3 contracts intentionally do NOT use {SafeTransferLib}
-///      for TRC-20 transfers, because some Tron TRC-20 tokens (notably USDT) can return `false`
-///      even when the call succeeds. Tron-side contracts should use
-///      `packages/contracts/src/utils/TronTokenUtils.sol` for TRC-20 transfers/approvals.
 /// @author Ultrasound Labs
 library TokenUtils {
     /// @notice Returns ERC20 or ETH balance of 'addr'.
@@ -34,6 +29,7 @@ library TokenUtils {
     /// @param amount The amount to approve.
     function approve(address token, address spender, uint256 amount) internal {
         if (token != address(0)) {
+            // Uses a “with retry” helper to handle tokens that require setting allowance to 0 first.
             SafeTransferLib.safeApproveWithRetry({token: token, to: spender, amount: amount});
         } // Do nothing for native token.
     }

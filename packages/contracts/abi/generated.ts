@@ -1,4 +1,219 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CCTPV2Bridger
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const cctpv2BridgerAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'authorizedCaller', internalType: 'address', type: 'address' },
+      { name: 'tokenMessengerV2', internalType: 'address', type: 'address' },
+      { name: 'usdc', internalType: 'address', type: 'address' },
+      {
+        name: 'supportedChainIds',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+      },
+      { name: 'circleDomains', internalType: 'uint32[]', type: 'uint32[]' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'AUTHORIZED_CALLER',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'TOKEN_MESSENGER_V2',
+    outputs: [
+      { name: '', internalType: 'contract ITokenMessengerV2', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDC',
+    outputs: [{ name: '', internalType: 'contract IERC20', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'inputToken', internalType: 'address', type: 'address' },
+      { name: 'inputAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'outputAddress', internalType: 'address', type: 'address' },
+      { name: 'outputChainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'bridge',
+    outputs: [
+      { name: 'expectedAmountOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cancelOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'circleDomainByChainId',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'completeOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'isSupportedChainId',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: 'result', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'ownershipHandoverExpiresAt',
+    outputs: [{ name: 'result', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'requestOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'withdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverCanceled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverRequested',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'oldOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  { type: 'error', inputs: [], name: 'AmountZero' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'a', internalType: 'uint256', type: 'uint256' },
+      { name: 'b', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'ArrayLengthMismatch',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'chainId', internalType: 'uint256', type: 'uint256' }],
+    name: 'DuplicateChainId',
+  },
+  { type: 'error', inputs: [], name: 'InvalidExtraData' },
+  { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
+  { type: 'error', inputs: [], name: 'NoHandoverRequest' },
+  { type: 'error', inputs: [], name: 'NotAuthorizedCaller' },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  {
+    type: 'error',
+    inputs: [{ name: 'chainId', internalType: 'uint256', type: 'uint256' }],
+    name: 'UnsupportedChainId',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'UnsupportedToken',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroOutputAddress' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Counter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -23,6 +238,202 @@ export const counterAbi = [
     name: 'setNumber',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IBridger
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iBridgerAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'inputToken', internalType: 'address', type: 'address' },
+      { name: 'inputAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'outputAddress', internalType: 'address', type: 'address' },
+      { name: 'outputChainId', internalType: 'uint256', type: 'uint256' },
+      { name: 'extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'bridge',
+    outputs: [
+      { name: 'expectedAmountOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'payable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IERC1363
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const ierc1363Abi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
+      { name: 'spender', internalType: 'address', type: 'address' },
+    ],
+    name: 'allowance',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'spender', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'approve',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'spender', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'approveAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'spender', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'approveAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
+    name: 'supportsInterface',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'totalSupply',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'transfer',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'transferAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'transferAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address' },
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'transferFrom',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address' },
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'transferFromAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address' },
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'value', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'transferFromAndCall',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'owner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'spender',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'value',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'Approval',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address', indexed: true },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'value',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'Transfer',
   },
 ] as const
 
@@ -129,6 +540,2702 @@ export const ierc20Abi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ILayerZeroEndpointV2
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iLayerZeroEndpointV2Abi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'burn',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'clear',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_from', internalType: 'address', type: 'address' },
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+    ],
+    name: 'composeQueue',
+    outputs: [
+      { name: 'messageHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultReceiveLibrary',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultReceiveLibraryTimeout',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultSendLibrary',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'eid',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_configType', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getConfig',
+    outputs: [{ name: 'config', internalType: 'bytes', type: 'bytes' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getReceiveLibrary',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'isDefault', internalType: 'bool', type: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'getRegisteredLibraries',
+    outputs: [{ name: '', internalType: 'address[]', type: 'address[]' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'getSendContext',
+    outputs: [
+      { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getSendLibrary',
+    outputs: [{ name: 'lib', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'inboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+    ],
+    name: 'inboundPayloadHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_receiver', internalType: 'address', type: 'address' },
+    ],
+    name: 'initializable',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'isDefaultSendLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
+    name: 'isRegisteredLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'isSendingMessage',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'isSupportedEid',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+    ],
+    name: 'isValidReceiveLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'lazyInboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_from', internalType: 'address', type: 'address' },
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'lzCompose',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'lzReceive',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'lzToken',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'nativeToken',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nextGuid',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nilify',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'outboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_params',
+        internalType: 'struct MessagingParams',
+        type: 'tuple',
+        components: [
+          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiver', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'message', internalType: 'bytes', type: 'bytes' },
+          { name: 'options', internalType: 'bytes', type: 'bytes' },
+          { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+        ],
+      },
+      { name: '_sender', internalType: 'address', type: 'address' },
+    ],
+    name: 'quote',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'receiveLibraryTimeout',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
+    name: 'registerLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_params',
+        internalType: 'struct MessagingParams',
+        type: 'tuple',
+        components: [
+          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiver', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'message', internalType: 'bytes', type: 'bytes' },
+          { name: 'options', internalType: 'bytes', type: 'bytes' },
+          { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+        ],
+      },
+      { name: '_refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'send',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MessagingReceipt',
+        type: 'tuple',
+        components: [
+          { name: 'guid', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'fee',
+            internalType: 'struct MessagingFee',
+            type: 'tuple',
+            components: [
+              { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+              { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+            ],
+          },
+        ],
+      },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'sendCompose',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      {
+        name: '_params',
+        internalType: 'struct SetConfigParam[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+          { name: 'configType', internalType: 'uint32', type: 'uint32' },
+          { name: 'config', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'setConfig',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+      { name: '_timeout', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setDefaultReceiveLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setDefaultReceiveLibraryTimeout',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+    ],
+    name: 'setDefaultSendLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_lzToken', internalType: 'address', type: 'address' }],
+    name: 'setLzToken',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setReceiveLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setReceiveLibraryTimeout',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+    ],
+    name: 'setSendLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+    ],
+    name: 'skip',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_receiver', internalType: 'address', type: 'address' },
+    ],
+    name: 'verifiable',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'verify',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'from',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: false },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+    ],
+    name: 'ComposeDelivered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'from',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: false },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'ComposeSent',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultReceiveLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'oldLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'expiry',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultReceiveLibraryTimeoutSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultSendLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'sender',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'delegate',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'DelegateSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+    ],
+    name: 'InboundNonceSkipped',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'LibraryRegistered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address', indexed: true },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'executor',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
+      {
+        name: 'value',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
+      {
+        name: 'extraData',
+        internalType: 'bytes',
+        type: 'bytes',
+        indexed: false,
+      },
+      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'LzComposeAlert',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'executor',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+        indexed: false,
+      },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
+      {
+        name: 'value',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
+      {
+        name: 'extraData',
+        internalType: 'bytes',
+        type: 'bytes',
+        indexed: false,
+      },
+      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'LzReceiveAlert',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'token',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'LzTokenSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+      {
+        name: 'payloadHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PacketBurnt',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'PacketDelivered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+      {
+        name: 'payloadHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PacketNilified',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'encodedPayload',
+        internalType: 'bytes',
+        type: 'bytes',
+        indexed: false,
+      },
+      { name: 'options', internalType: 'bytes', type: 'bytes', indexed: false },
+      {
+        name: 'sendLibrary',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'PacketSent',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'payloadHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PacketVerified',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'ReceiveLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'oldLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'timeout',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ReceiveLibraryTimeoutSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'sender',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'SendLibrarySet',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IMessageLibManager
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iMessageLibManagerAbi = [
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultReceiveLibrary',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultReceiveLibraryTimeout',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'defaultSendLibrary',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_configType', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getConfig',
+    outputs: [{ name: 'config', internalType: 'bytes', type: 'bytes' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getReceiveLibrary',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'isDefault', internalType: 'bool', type: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'getRegisteredLibraries',
+    outputs: [{ name: '', internalType: 'address[]', type: 'address[]' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'getSendLibrary',
+    outputs: [{ name: 'lib', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'isDefaultSendLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
+    name: 'isRegisteredLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'isSupportedEid',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+    ],
+    name: 'isValidReceiveLibrary',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'receiveLibraryTimeout',
+    outputs: [
+      { name: 'lib', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
+    name: 'registerLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      {
+        name: '_params',
+        internalType: 'struct SetConfigParam[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+          { name: 'configType', internalType: 'uint32', type: 'uint32' },
+          { name: 'config', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'setConfig',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+      { name: '_timeout', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setDefaultReceiveLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setDefaultReceiveLibraryTimeout',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+    ],
+    name: 'setDefaultSendLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setReceiveLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_lib', internalType: 'address', type: 'address' },
+      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setReceiveLibraryTimeout',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_newLib', internalType: 'address', type: 'address' },
+    ],
+    name: 'setSendLibrary',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultReceiveLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'oldLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'expiry',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultReceiveLibraryTimeoutSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'DefaultSendLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'LibraryRegistered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'ReceiveLibrarySet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'oldLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      {
+        name: 'timeout',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ReceiveLibraryTimeoutSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'sender',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'newLib',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'SendLibrarySet',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IMessagingChannel
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iMessagingChannelAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'burn',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'eid',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'inboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+    ],
+    name: 'inboundPayloadHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_receiver', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'lazyInboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nextGuid',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nilify',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_sender', internalType: 'address', type: 'address' },
+      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'outboundNonce',
+    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_oapp', internalType: 'address', type: 'address' },
+      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
+      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
+    ],
+    name: 'skip',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+    ],
+    name: 'InboundNonceSkipped',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+      {
+        name: 'payloadHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PacketBurnt',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'sender',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'receiver',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
+      {
+        name: 'payloadHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PacketNilified',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IMessagingComposer
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iMessagingComposerAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: '_from', internalType: 'address', type: 'address' },
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+    ],
+    name: 'composeQueue',
+    outputs: [
+      { name: 'messageHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_from', internalType: 'address', type: 'address' },
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'lzCompose',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_to', internalType: 'address', type: 'address' },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_index', internalType: 'uint16', type: 'uint16' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'sendCompose',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'from',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: false },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+    ],
+    name: 'ComposeDelivered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'from',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+      { name: 'to', internalType: 'address', type: 'address', indexed: false },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'ComposeSent',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'from', internalType: 'address', type: 'address', indexed: true },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+      {
+        name: 'executor',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
+      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
+      {
+        name: 'value',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
+      {
+        name: 'extraData',
+        internalType: 'bytes',
+        type: 'bytes',
+        indexed: false,
+      },
+      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'LzComposeAlert',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IMessagingContext
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iMessagingContextAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'getSendContext',
+    outputs: [
+      { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'isSendingMessage',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IOAppCore
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const ioAppCoreAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'endpoint',
+    outputs: [
+      {
+        name: 'iEndpoint',
+        internalType: 'contract ILayerZeroEndpointV2',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oAppVersion',
+    outputs: [
+      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
+      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'peers',
+    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'peer',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PeerSet',
+  },
+  { type: 'error', inputs: [], name: 'InvalidDelegate' },
+  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
+  {
+    type: 'error',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'NoPeer',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'OnlyPeer',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IOFT
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const ioftAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'approvalRequired',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oftVersion',
+    outputs: [
+      { name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'version', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_sendParam',
+        internalType: 'struct SendParam',
+        type: 'tuple',
+        components: [
+          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'to', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'amountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'minAmountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'extraOptions', internalType: 'bytes', type: 'bytes' },
+          { name: 'composeMsg', internalType: 'bytes', type: 'bytes' },
+          { name: 'oftCmd', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'quoteOFT',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct OFTLimit',
+        type: 'tuple',
+        components: [
+          { name: 'minAmountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'maxAmountLD', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      {
+        name: 'oftFeeDetails',
+        internalType: 'struct OFTFeeDetail[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'feeAmountLD', internalType: 'int256', type: 'int256' },
+          { name: 'description', internalType: 'string', type: 'string' },
+        ],
+      },
+      {
+        name: '',
+        internalType: 'struct OFTReceipt',
+        type: 'tuple',
+        components: [
+          { name: 'amountSentLD', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'amountReceivedLD',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_sendParam',
+        internalType: 'struct SendParam',
+        type: 'tuple',
+        components: [
+          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'to', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'amountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'minAmountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'extraOptions', internalType: 'bytes', type: 'bytes' },
+          { name: 'composeMsg', internalType: 'bytes', type: 'bytes' },
+          { name: 'oftCmd', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: '_payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'quoteSend',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_sendParam',
+        internalType: 'struct SendParam',
+        type: 'tuple',
+        components: [
+          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'to', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'amountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'minAmountLD', internalType: 'uint256', type: 'uint256' },
+          { name: 'extraOptions', internalType: 'bytes', type: 'bytes' },
+          { name: 'composeMsg', internalType: 'bytes', type: 'bytes' },
+          { name: 'oftCmd', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      {
+        name: '_fee',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: '_refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'send',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MessagingReceipt',
+        type: 'tuple',
+        components: [
+          { name: 'guid', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+          {
+            name: 'fee',
+            internalType: 'struct MessagingFee',
+            type: 'tuple',
+            components: [
+              { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+              { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+            ],
+          },
+        ],
+      },
+      {
+        name: '',
+        internalType: 'struct OFTReceipt',
+        type: 'tuple',
+        components: [
+          { name: 'amountSentLD', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'amountReceivedLD',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+        ],
+      },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'sharedDecimals',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'token',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'guid', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      {
+        name: 'srcEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'toAddress',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amountReceivedLD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OFTReceived',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'guid', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      {
+        name: 'dstEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: false,
+      },
+      {
+        name: 'fromAddress',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amountSentLD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'amountReceivedLD',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'OFTSent',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'amountSD', internalType: 'uint256', type: 'uint256' }],
+    name: 'AmountSDOverflowed',
+  },
+  { type: 'error', inputs: [], name: 'InvalidLocalDecimals' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'amountLD', internalType: 'uint256', type: 'uint256' },
+      { name: 'minAmountLD', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'SlippageExceeded',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IQuoter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iQuoterAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenIn', internalType: 'address', type: 'address' },
+      { name: 'tokenOut', internalType: 'address', type: 'address' },
+      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
+      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'quote',
+    outputs: [{ name: 'amountOut', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ITokenMessengerV2
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iTokenMessengerV2Abi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'destinationDomain', internalType: 'uint32', type: 'uint32' },
+      { name: 'mintRecipient', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'burnToken', internalType: 'address', type: 'address' },
+      { name: 'destinationCaller', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'maxFee', internalType: 'uint256', type: 'uint256' },
+      { name: 'minFinalityThreshold', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'depositForBurn',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IntentsForwarder
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const intentsForwarderAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_usdt', internalType: 'address', type: 'address' },
+      { name: '_usdc', internalType: 'address', type: 'address' },
+      { name: '_owner', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RECEIVER_BYTECODE_HASH',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RECEIVER_IMPLEMENTATION',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SWAP_EXECUTOR',
+    outputs: [
+      { name: '', internalType: 'contract SwapExecutor', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDC',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDT',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cancelOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'completeOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'salt', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getReceiver',
+    outputs: [
+      {
+        name: 'receiver',
+        internalType: 'contract UntronReceiver',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: 'result', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'ownershipHandoverExpiresAt',
+    outputs: [{ name: 'result', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'salt', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'predictReceiverAddress',
+    outputs: [
+      { name: 'predicted', internalType: 'address payable', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'targetChain', internalType: 'uint256', type: 'uint256' },
+      { name: 'beneficiary', internalType: 'address payable', type: 'address' },
+      { name: 'beneficiaryClaimOnly', internalType: 'bool', type: 'bool' },
+      { name: 'forwardSalt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'balance', internalType: 'uint256', type: 'uint256' },
+      { name: 'tokenIn', internalType: 'address', type: 'address' },
+      { name: 'tokenOut', internalType: 'address', type: 'address' },
+      {
+        name: 'swapData',
+        internalType: 'struct Call[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', internalType: 'address', type: 'address' },
+          { name: 'value', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'bridgeData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'pullReceiver',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'quoterByToken',
+    outputs: [{ name: '', internalType: 'contract IQuoter', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'requestOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_usdtBridger',
+        internalType: 'contract IBridger',
+        type: 'address',
+      },
+      {
+        name: '_usdcBridger',
+        internalType: 'contract IBridger',
+        type: 'address',
+      },
+    ],
+    name: 'setBridgers',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'targetToken', internalType: 'address', type: 'address' },
+      { name: 'quoter', internalType: 'contract IQuoter', type: 'address' },
+    ],
+    name: 'setQuoter',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'usdcBridger',
+    outputs: [{ name: '', internalType: 'contract IBridger', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'usdtBridger',
+    outputs: [{ name: '', internalType: 'contract IBridger', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverCanceled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverRequested',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'oldOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  { type: 'error', inputs: [], name: 'InsufficientOutputAmount' },
+  { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
+  { type: 'error', inputs: [], name: 'NoHandoverRequest' },
+  { type: 'error', inputs: [], name: 'PullerUnauthorized' },
+  { type: 'error', inputs: [], name: 'SwapOnEphemeralReceiversNotAllowed' },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  { type: 'error', inputs: [], name: 'UnsupportedOutputToken' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// OAppCore
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const oAppCoreAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'endpoint',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract ILayerZeroEndpointV2',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oAppVersion',
+    outputs: [
+      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
+      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'peers',
+    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'peer',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PeerSet',
+  },
+  { type: 'error', inputs: [], name: 'InvalidDelegate' },
+  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
+  {
+    type: 'error',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'NoPeer',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'OnlyPeer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// OAppSender
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const oAppSenderAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'endpoint',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract ILayerZeroEndpointV2',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oAppVersion',
+    outputs: [
+      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
+      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'peers',
+    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'peer',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PeerSet',
+  },
+  { type: 'error', inputs: [], name: 'InvalidDelegate' },
+  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
+  { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
+  {
+    type: 'error',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'NoPeer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
+    name: 'NotEnoughNative',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'OnlyPeer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Ownable
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const ownableAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ReentrancyGuard
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const reentrancyGuardAbi = [
+  { type: 'error', inputs: [], name: 'Reentrancy' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SafeCast
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -162,6 +3269,27 @@ export const safeCastAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// SafeERC20
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const safeErc20Abi = [
+  {
+    type: 'error',
+    inputs: [
+      { name: 'spender', internalType: 'address', type: 'address' },
+      { name: 'currentAllowance', internalType: 'uint256', type: 'uint256' },
+      { name: 'requestedDecrease', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'SafeERC20FailedDecreaseAllowance',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'SafeERC20FailedOperation',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SafeTransferLib
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -175,6 +3303,536 @@ export const safeTransferLibAbi = [
   { type: 'error', inputs: [], name: 'TotalSupplyQueryFailed' },
   { type: 'error', inputs: [], name: 'TransferFailed' },
   { type: 'error', inputs: [], name: 'TransferFromFailed' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// StablecoinQuoter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const stablecoinQuoterAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'address', type: 'address' },
+      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'quote',
+    outputs: [{ name: 'amountOut', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'pure',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// SwapExecutor
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const swapExecutorAbi = [
+  { type: 'constructor', inputs: [], stateMutability: 'nonpayable' },
+  { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'OWNER',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'calls',
+        internalType: 'struct Call[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', internalType: 'address', type: 'address' },
+          { name: 'value', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'expectedAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'recipient', internalType: 'address payable', type: 'address' },
+    ],
+    name: 'execute',
+    outputs: [{ name: 'actualOut', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'callIndex', internalType: 'uint256', type: 'uint256' }],
+    name: 'CallFailed',
+  },
+  { type: 'error', inputs: [], name: 'InsufficientOutput' },
+  { type: 'error', inputs: [], name: 'NotOwner' },
+  { type: 'error', inputs: [], name: 'Reentrancy' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// USDT0Bridger
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const usdt0BridgerAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: 'authorizedCaller', internalType: 'address', type: 'address' },
+      { name: 'usdt0', internalType: 'address', type: 'address' },
+      { name: 'oft', internalType: 'address', type: 'address' },
+      {
+        name: 'supportedChainIds',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+      },
+      { name: 'eids', internalType: 'uint32[]', type: 'uint32[]' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'receive', stateMutability: 'payable' },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'AUTHORIZED_CALLER',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'OFT',
+    outputs: [{ name: '', internalType: 'contract IOFT', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDT0',
+    outputs: [{ name: '', internalType: 'contract IERC20', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'inputToken', internalType: 'address', type: 'address' },
+      { name: 'inputAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'outputAddress', internalType: 'address', type: 'address' },
+      { name: 'outputChainId', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'bridge',
+    outputs: [
+      { name: 'expectedAmountOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cancelOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'completeOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'eidByChainId',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: 'result', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'ownershipHandoverExpiresAt',
+    outputs: [{ name: 'result', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'requestOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'withdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverCanceled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverRequested',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'oldOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  { type: 'error', inputs: [], name: 'AmountZero' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'a', internalType: 'uint256', type: 'uint256' },
+      { name: 'b', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'ArrayLengthMismatch',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'chainId', internalType: 'uint256', type: 'uint256' }],
+    name: 'DuplicateChainId',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'have', internalType: 'uint256', type: 'uint256' },
+      { name: 'need', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'InsufficientNativeValue',
+  },
+  { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
+  { type: 'error', inputs: [], name: 'NoHandoverRequest' },
+  { type: 'error', inputs: [], name: 'NotAuthorizedCaller' },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  {
+    type: 'error',
+    inputs: [{ name: 'chainId', internalType: 'uint256', type: 'uint256' }],
+    name: 'UnsupportedChainId',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'token', internalType: 'address', type: 'address' }],
+    name: 'UnsupportedToken',
+  },
+  { type: 'error', inputs: [], name: 'ZeroAddress' },
+  { type: 'error', inputs: [], name: 'ZeroOutputAddress' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// UntronIntentsForwarder
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const untronIntentsForwarderAbi = [
+  {
+    type: 'constructor',
+    inputs: [{ name: '_owner', internalType: 'address', type: 'address' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RECEIVER_BYTECODE_HASH',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RECEIVER_IMPLEMENTATION',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'SWAP_EXECUTOR',
+    outputs: [
+      { name: '', internalType: 'contract SwapExecutor', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDC',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'USDT',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cancelOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'completeOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'salt', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'getReceiver',
+    outputs: [
+      {
+        name: 'receiver',
+        internalType: 'contract UntronReceiver',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: 'result', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'pendingOwner', internalType: 'address', type: 'address' },
+    ],
+    name: 'ownershipHandoverExpiresAt',
+    outputs: [{ name: 'result', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'salt', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'predictReceiverAddress',
+    outputs: [
+      { name: 'predicted', internalType: 'address payable', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'targetChain', internalType: 'uint256', type: 'uint256' },
+      { name: 'beneficiary', internalType: 'address payable', type: 'address' },
+      { name: 'beneficiaryClaimOnly', internalType: 'bool', type: 'bool' },
+      { name: 'forwardSalt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'balance', internalType: 'uint256', type: 'uint256' },
+      { name: 'tokenIn', internalType: 'address', type: 'address' },
+      { name: 'tokenOut', internalType: 'address', type: 'address' },
+      {
+        name: 'swapData',
+        internalType: 'struct Call[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'to', internalType: 'address', type: 'address' },
+          { name: 'value', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+      { name: 'bridgeData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'pullReceiver',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'quoterByToken',
+    outputs: [{ name: '', internalType: 'contract IQuoter', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'requestOwnershipHandover',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_usdtBridger',
+        internalType: 'contract IBridger',
+        type: 'address',
+      },
+      {
+        name: '_usdcBridger',
+        internalType: 'contract IBridger',
+        type: 'address',
+      },
+    ],
+    name: 'setBridgers',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'targetToken', internalType: 'address', type: 'address' },
+      { name: 'quoter', internalType: 'contract IQuoter', type: 'address' },
+    ],
+    name: 'setQuoter',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'usdcBridger',
+    outputs: [{ name: '', internalType: 'contract IBridger', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'usdtBridger',
+    outputs: [{ name: '', internalType: 'contract IBridger', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverCanceled',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'pendingOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipHandoverRequested',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'oldOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  { type: 'error', inputs: [], name: 'AlreadyInitialized' },
+  { type: 'error', inputs: [], name: 'InsufficientOutputAmount' },
+  { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
+  { type: 'error', inputs: [], name: 'NoHandoverRequest' },
+  { type: 'error', inputs: [], name: 'PullerUnauthorized' },
+  { type: 'error', inputs: [], name: 'SwapOnEphemeralReceiversNotAllowed' },
+  { type: 'error', inputs: [], name: 'Unauthorized' },
+  { type: 'error', inputs: [], name: 'UnsupportedInputToken' },
+  { type: 'error', inputs: [], name: 'UnsupportedOutputToken' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
