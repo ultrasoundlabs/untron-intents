@@ -584,8 +584,23 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
             if (sig == _SELECTOR_TRANSFER_USDT_FROM_CONTROLLER) {
                 (op.to, op.amount) = _decodeTrc20TransferArgs(data);
             } else if (sig == _SELECTOR_MULTICALL) {
-                // TODO: implement
-                revert NotATrc20Transfer();
+                bytes[] memory calls = abi.decode(data.slice(4), (bytes[]));
+                bool found;
+
+                for (uint256 i = 0; i < calls.length; ++i) {
+                    bytes memory inner = calls[i];
+                    if (inner.length < 4) continue;
+                    // forge-lint: disable-next-line(unsafe-typecast)
+                    bytes4 innerSig = bytes4(inner);
+
+                    if (innerSig == _SELECTOR_TRANSFER_USDT_FROM_CONTROLLER) {
+                        if (found) revert NotATrc20Transfer();
+                        (op.to, op.amount) = _decodeControllerTransferArgs(inner);
+                        found = true;
+                    }
+                }
+
+                if (!found) revert NotATrc20Transfer();
             } else {
                 revert NotATrc20Transfer();
             }

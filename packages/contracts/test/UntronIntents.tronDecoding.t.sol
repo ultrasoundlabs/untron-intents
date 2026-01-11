@@ -12,6 +12,97 @@ contract UntronIntentsTronDecodingTest is UntronTestBase {
         _setRecommendedFee(0, 0);
     }
 
+    function test_proveIntentFill_succeeds_whenControllerTransferUsdtFromController() public {
+        address toTron = makeAddr("toTron");
+        bytes32 forwardSalt = keccak256("forwardSalt");
+        uint256 amount = 1_000_000;
+
+        bytes32 id = _claimVirtual(solver, toTron, forwardSalt, address(usdt), amount);
+
+        TriggerSmartContract memory tx_;
+        tx_.toTron = _tronAddrBytes21(v3.CONTROLLER_ADDRESS());
+        tx_.data =
+            abi.encodeWithSelector(bytes4(keccak256("transferUsdtFromController(address,uint256)")), toTron, amount);
+        tronReader.setTx(tx_);
+
+        bytes[20] memory blocks;
+        bytes32[] memory proof;
+
+        vm.prank(solver);
+        intents.proveIntentFill(id, blocks, "", proof, 0);
+    }
+
+    function test_proveIntentFill_succeeds_whenControllerMulticallContainsTransferUsdtFromController() public {
+        address toTron = makeAddr("toTron");
+        bytes32 forwardSalt = keccak256("forwardSalt");
+        uint256 amount = 1_000_000;
+
+        bytes32 id = _claimVirtual(solver, toTron, forwardSalt, address(usdt), amount);
+
+        bytes[] memory calls = new bytes[](1);
+        calls[0] =
+            abi.encodeWithSelector(bytes4(keccak256("transferUsdtFromController(address,uint256)")), toTron, amount);
+
+        TriggerSmartContract memory tx_;
+        tx_.toTron = _tronAddrBytes21(v3.CONTROLLER_ADDRESS());
+        tx_.data = abi.encodeWithSelector(bytes4(keccak256("multicall(bytes[])")), calls);
+        tronReader.setTx(tx_);
+
+        bytes[20] memory blocks;
+        bytes32[] memory proof;
+
+        vm.prank(solver);
+        intents.proveIntentFill(id, blocks, "", proof, 0);
+    }
+
+    function test_proveIntentFill_reverts_NotATrc20Transfer_whenControllerMulticallHasNoTransfer() public {
+        address toTron = makeAddr("toTron");
+        bytes32 forwardSalt = keccak256("forwardSalt");
+        uint256 amount = 1_000_000;
+
+        bytes32 id = _claimVirtual(solver, toTron, forwardSalt, address(usdt), amount);
+
+        bytes[] memory calls = new bytes[](1);
+        calls[0] = abi.encodeWithSelector(bytes4(keccak256("someOtherFn(uint256)")), 123);
+
+        TriggerSmartContract memory tx_;
+        tx_.toTron = _tronAddrBytes21(v3.CONTROLLER_ADDRESS());
+        tx_.data = abi.encodeWithSelector(bytes4(keccak256("multicall(bytes[])")), calls);
+        tronReader.setTx(tx_);
+
+        bytes[20] memory blocks;
+        bytes32[] memory proof;
+
+        vm.prank(solver);
+        vm.expectRevert(UntronIntents.NotATrc20Transfer.selector);
+        intents.proveIntentFill(id, blocks, "", proof, 0);
+    }
+
+    function test_proveIntentFill_reverts_NotATrc20Transfer_whenControllerMulticallHasTwoTransfers() public {
+        address toTron = makeAddr("toTron");
+        bytes32 forwardSalt = keccak256("forwardSalt");
+        uint256 amount = 1_000_000;
+
+        bytes32 id = _claimVirtual(solver, toTron, forwardSalt, address(usdt), amount);
+
+        bytes[] memory calls = new bytes[](2);
+        calls[0] =
+            abi.encodeWithSelector(bytes4(keccak256("transferUsdtFromController(address,uint256)")), toTron, amount);
+        calls[1] = abi.encodeWithSelector(bytes4(keccak256("transferUsdtFromController(address,uint256)")), toTron, 1);
+
+        TriggerSmartContract memory tx_;
+        tx_.toTron = _tronAddrBytes21(v3.CONTROLLER_ADDRESS());
+        tx_.data = abi.encodeWithSelector(bytes4(keccak256("multicall(bytes[])")), calls);
+        tronReader.setTx(tx_);
+
+        bytes[20] memory blocks;
+        bytes32[] memory proof;
+
+        vm.prank(solver);
+        vm.expectRevert(UntronIntents.NotATrc20Transfer.selector);
+        intents.proveIntentFill(id, blocks, "", proof, 0);
+    }
+
     function test_proveIntentFill_reverts_TronInvalidCalldataLength() public {
         address toTron = makeAddr("toTron");
         bytes32 forwardSalt = keccak256("forwardSalt");
@@ -95,4 +186,3 @@ contract UntronIntentsTronDecodingTest is UntronTestBase {
         intents.proveIntentFill(id, blocks, "", proof, 0);
     }
 }
-
