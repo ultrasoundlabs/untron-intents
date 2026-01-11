@@ -205,9 +205,9 @@ contract IntentsForwarder is Ownable {
         UntronReceiver receiver = ephemeral ? ephemeralReceiver : getReceiver(receiverSalt);
 
         if (balance == 0) {
-            // NOTE: In base mode, `balance == 0` is treated as “use this contract’s current balance”.
+            // NOTE: In base mode, `balance == 0` is treated as “use the receiver’s current balance”.
             // Callers generally pass a nonzero `balance` when they want to pull a specific amount.
-            balance = TokenUtils.getBalanceOf(tokenIn, address(this));
+            balance = TokenUtils.getBalanceOf(tokenIn, address(receiver));
         }
 
         // Pull `tokenIn` from the receiver into this contract (only possible because this contract owns receivers).
@@ -327,4 +327,8 @@ contract IntentsForwarder is Ownable {
             }
         }
     }
+
+    /// @notice Accepts native token (e.g. ETH) deposits.
+    /// @dev Enables bridger implementations to refund unused native fees back to this contract.
+    receive() external payable {}
 }
