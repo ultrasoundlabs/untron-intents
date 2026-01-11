@@ -23,5 +23,8 @@ library EventChainGenesis {
     bytes32 internal constant IntentsForwarderIndex =
         sha256(abi.encodePacked("IntentsForwarderIndex\n", THE_DECLARATION));
 
+    // forge-lint: disable-next-line(screaming-snake-case-const)
+    bytes32 internal constant UntronIntentsIndex = sha256(abi.encodePacked("UntronIntentsIndex\n", THE_DECLARATION));
+
     /* solhint-enable const-name-snakecase */
 }

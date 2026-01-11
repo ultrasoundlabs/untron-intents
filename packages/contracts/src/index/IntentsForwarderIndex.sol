@@ -276,7 +276,7 @@ contract IntentsForwarderIndex {
         _appendEventChain(BridgeInitiated.selector, abi.encode(forwardId, bridger, tokenOut, amountIn, targetChain));
     }
 
-    function _emitOwnershipTransferred(address oldOwner, address newOwner) internal {
+    function _emitOwnershipTransferred(address oldOwner, address newOwner) internal virtual {
         emit OwnershipTransferred(oldOwner, newOwner);
         _appendEventChain(OwnershipTransferred.selector, abi.encode(oldOwner, newOwner));
     }

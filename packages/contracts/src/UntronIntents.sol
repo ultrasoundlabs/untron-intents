@@ -7,15 +7,16 @@ import {IUntronV3} from "./external/interfaces/IUntronV3.sol";
 import {ITronTxReader, TriggerSmartContract} from "./external/interfaces/ITronTxReader.sol";
 import {TokenUtils} from "./utils/TokenUtils.sol";
 
-import {Ownable} from "solady/auth/Ownable.sol";
 import {LibBytes} from "solady/utils/g/LibBytes.sol";
 import {ReentrancyGuard} from "solady/utils/ReentrancyGuard.sol";
+
+import {UntronIntentsIndexedOwnable} from "./auth/UntronIntentsIndexedOwnable.sol";
 
 /// @title Untron Intents
 /// @notice Intent-based platform that lets people pay for execution of certain transactions
 ///         on Tron blockchain using an escrow on an EVM chain and a light client Tron verifier.
 /// @author Ultrasound Labs
-contract UntronIntents is Ownable, ReentrancyGuard {
+contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     using LibBytes for bytes;
 
     struct TriggerSmartContractIntent {
@@ -132,6 +133,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
     function setRecommendedIntentFee(uint256 ppm, uint256 flat) external onlyOwner {
         recommendedIntentFeePpm = ppm;
         recommendedIntentFeeFlat = flat;
+        _emitRecommendedIntentFeeSet(ppm, flat);
     }
 
     // external functions
@@ -148,7 +150,21 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         TokenUtils.transferFrom(intent.token, msg.sender, payable(address(this)), intent.amount);
 
         intents[id] = IntentState(intent, 0, deadline, address(0), false, true, false);
+
+        _emitIntentCreated(
+            id,
+            msg.sender,
+            uint8(intent.intentType),
+            intent.token,
+            intent.amount,
+            intent.refundBeneficiary,
+            deadline,
+            intent.intentSpecs
+        );
+        _emitIntentFunded(id, msg.sender, intent.token, intent.amount);
     }
+
+    // solhint-disable function-max-lines
 
     /// @notice Creates a receiver-originated intent by pulling funds from an IntentsForwarder receiver.
     /// @param forwarder Forwarder that owns the receiver.
@@ -163,6 +179,8 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         address token,
         uint256 amount
     ) external payable nonReentrant {
+        uint256 amountParam = amount;
+        uint256 deadline = block.timestamp + RECEIVER_INTENT_DURATION;
         bytes32 intentHash = keccak256(abi.encode(forwarder, toTron));
         bytes32 id = keccak256(abi.encodePacked(intentHash, forwardSalt, token, amount));
         if (intents[id].deadline != 0) revert AlreadyExists();
@@ -206,8 +224,26 @@ contract UntronIntents is Ownable, ReentrancyGuard {
             amount: amount
         });
 
-        intents[id] = IntentState(intent, 0, block.timestamp + RECEIVER_INTENT_DURATION, address(0), false, true, false);
+        intents[id] = IntentState(intent, 0, deadline, address(0), false, true, false);
+
+        _emitReceiverIntentParams(id, address(forwarder), toTron, forwardSalt, token, amountParam);
+        _emitReceiverIntentFeeSnap(
+            id, recommendedIntentFeePpm, recommendedIntentFeeFlat, amount - recommendedIntentFee(amount)
+        );
+        _emitIntentCreated(
+            id,
+            msg.sender,
+            uint8(intent.intentType),
+            intent.token,
+            intent.amount,
+            intent.refundBeneficiary,
+            deadline,
+            intent.intentSpecs
+        );
+        _emitIntentFunded(id, msg.sender, intent.token, intent.amount);
     }
+
+    // solhint-enable function-max-lines
 
     /// @notice Creates a receiver-originated (ephemeral-only) intent and claims it in one transaction.
     /// @dev This enables "virtual" intents: solvers can claim + prove the Tron fill before the escrow
@@ -234,10 +270,15 @@ contract UntronIntents is Ownable, ReentrancyGuard {
     ) external {
         if (amount == 0) revert InvalidReceiverAmount();
 
+        uint256 deadline = block.timestamp + RECEIVER_INTENT_DURATION;
         bytes32 id = receiverIntentId(forwarder, toTron, forwardSalt, token, amount);
         if (intents[id].deadline != 0) revert AlreadyExists();
 
         TokenUtils.transferFrom(USDT, msg.sender, payable(address(this)), INTENT_CLAIM_DEPOSIT);
+
+        uint256 feePpm = recommendedIntentFeePpm;
+        uint256 feeFlat = recommendedIntentFeeFlat;
+        uint256 tronPaymentAmount = amount - (amount * feePpm / 1_000_000 + feeFlat);
 
         Intent memory intent = Intent({
             intentType: IntentType.USDT_TRANSFER,
@@ -245,7 +286,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
                 USDTTransferIntent({
                     to: toTron,
                     // Fee is snapshotted at intent creation (claim) time.
-                    amount: amount - recommendedIntentFee(amount)
+                    amount: tronPaymentAmount
                 })
             ),
             refundBeneficiary: owner(),
@@ -253,9 +294,21 @@ contract UntronIntents is Ownable, ReentrancyGuard {
             amount: amount
         });
 
-        intents[id] = IntentState(
-            intent, block.timestamp, block.timestamp + RECEIVER_INTENT_DURATION, msg.sender, false, false, false
+        intents[id] = IntentState(intent, block.timestamp, deadline, msg.sender, false, false, false);
+
+        _emitReceiverIntentParams(id, address(forwarder), toTron, forwardSalt, token, amount);
+        _emitReceiverIntentFeeSnap(id, feePpm, feeFlat, tronPaymentAmount);
+        _emitIntentCreated(
+            id,
+            msg.sender,
+            uint8(intent.intentType),
+            intent.token,
+            intent.amount,
+            intent.refundBeneficiary,
+            deadline,
+            intent.intentSpecs
         );
+        _emitIntentClaimed(id, msg.sender, INTENT_CLAIM_DEPOSIT);
     }
 
     /// @notice Claims an existing intent by posting the solver deposit.
@@ -268,6 +321,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
 
         intents[id].solver = msg.sender;
         intents[id].solverClaimedAt = block.timestamp;
+        _emitIntentClaimed(id, msg.sender, INTENT_CLAIM_DEPOSIT);
     }
 
     /// @notice Clears the solver claim after a timeout if the intent is still unsolved.
@@ -286,12 +340,22 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         st.solver = address(0);
         st.solverClaimedAt = 0;
 
+        uint256 depositToCaller;
+        uint256 depositToRefundBeneficiary;
+        uint256 depositToPrevSolver;
         if (!funded_) {
+            depositToPrevSolver = INTENT_CLAIM_DEPOSIT;
             TokenUtils.transfer(USDT, payable(solver_), INTENT_CLAIM_DEPOSIT);
         } else {
+            depositToCaller = INTENT_CLAIM_DEPOSIT / 2;
+            depositToRefundBeneficiary = INTENT_CLAIM_DEPOSIT / 2;
             TokenUtils.transfer(USDT, payable(msg.sender), INTENT_CLAIM_DEPOSIT / 2);
             TokenUtils.transfer(USDT, payable(refundBeneficiary), INTENT_CLAIM_DEPOSIT / 2);
         }
+
+        _emitIntentUnclaimed(
+            id, msg.sender, solver_, funded_, depositToCaller, depositToRefundBeneficiary, depositToPrevSolver
+        );
     }
 
     /// @notice Proves that the solver executed the intent on Tron and marks it solved.
@@ -332,6 +396,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         intents[id].solved = true;
         intents[id].solverClaimedAt = block.timestamp;
 
+        _emitIntentSolved(id, msg.sender, tronTx.txId, tronTx.tronBlockNumber);
         _settleIfPossible(id);
     }
 
@@ -373,6 +438,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         if (pulledAmount != amount) revert IncorrectPullAmount();
 
         intents[id].funded = true;
+        _emitIntentFunded(id, msg.sender, token, pulledAmount);
         _settleIfPossible(id);
     }
 
@@ -383,46 +449,91 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         if (!_settleIfPossible(id)) revert NothingToSettle();
     }
 
+    // solhint-disable function-max-lines
+
     /// @notice Closes an expired intent and refunds escrow (and/or releases deposits).
     /// @param id Intent id.
     function closeIntent(bytes32 id) external {
-        if (intents[id].deadline == 0) revert IntentNotFound();
-        if (intents[id].deadline > block.timestamp) revert NotExpiredYet();
+        IntentState storage st = intents[id];
+        if (st.deadline == 0) revert IntentNotFound();
+        if (st.deadline > block.timestamp) revert NotExpiredYet();
+
+        uint256 depositToSolver;
 
         // If escrow is funded and the intent was solved, settle instead of closing.
-        if (intents[id].solved) {
-            if (intents[id].funded && !intents[id].settled) {
+        if (st.solved) {
+            if (st.funded && !st.settled) {
                 _settleIfPossible(id);
                 return;
             }
-            // If the intent was solved but escrow never arrived, let the solver recover the deposit and delete.
-            if (!intents[id].funded && intents[id].solver != address(0)) {
-                TokenUtils.transfer(USDT, payable(intents[id].solver), INTENT_CLAIM_DEPOSIT);
+
+            if (!st.funded && st.solver != address(0)) {
+                depositToSolver = INTENT_CLAIM_DEPOSIT;
+                TokenUtils.transfer(USDT, payable(st.solver), INTENT_CLAIM_DEPOSIT);
             }
+
+            _emitIntentClosed(
+                id,
+                msg.sender,
+                true,
+                st.funded,
+                st.settled,
+                st.intent.refundBeneficiary,
+                st.intent.token,
+                0,
+                USDT,
+                0,
+                0,
+                depositToSolver
+            );
+
             delete intents[id];
             return;
         }
 
+        uint256 escrowRefunded;
+        uint256 depositToCaller;
+        uint256 depositToRefundBeneficiary;
+
         // If escrow was funded, refund it to the refund beneficiary.
-        if (intents[id].funded) {
-            TokenUtils.transfer(
-                intents[id].intent.token, payable(intents[id].intent.refundBeneficiary), intents[id].intent.amount
-            );
+        if (st.funded) {
+            escrowRefunded = st.intent.amount;
+            TokenUtils.transfer(st.intent.token, payable(st.intent.refundBeneficiary), st.intent.amount);
         }
 
         // If a solver claimed, release their deposit. If escrow was funded, keep the existing "penalty" split;
         // otherwise refund the solver in full (nothing was ever available to execute against).
-        if (intents[id].solver != address(0)) {
-            if (intents[id].funded) {
+        if (st.solver != address(0)) {
+            if (st.funded) {
+                depositToCaller = INTENT_CLAIM_DEPOSIT / 2;
+                depositToRefundBeneficiary = INTENT_CLAIM_DEPOSIT / 2;
                 TokenUtils.transfer(USDT, payable(msg.sender), INTENT_CLAIM_DEPOSIT / 2);
-                TokenUtils.transfer(USDT, payable(intents[id].intent.refundBeneficiary), INTENT_CLAIM_DEPOSIT / 2);
+                TokenUtils.transfer(USDT, payable(st.intent.refundBeneficiary), INTENT_CLAIM_DEPOSIT / 2);
             } else {
-                TokenUtils.transfer(USDT, payable(intents[id].solver), INTENT_CLAIM_DEPOSIT);
+                depositToSolver = INTENT_CLAIM_DEPOSIT;
+                TokenUtils.transfer(USDT, payable(st.solver), INTENT_CLAIM_DEPOSIT);
             }
         }
 
+        _emitIntentClosed(
+            id,
+            msg.sender,
+            false,
+            st.funded,
+            st.settled,
+            st.intent.refundBeneficiary,
+            st.intent.token,
+            escrowRefunded,
+            USDT,
+            depositToCaller,
+            depositToRefundBeneficiary,
+            depositToSolver
+        );
+
         delete intents[id];
     }
+
+    // solhint-enable function-max-lines
 
     // public functions
 
@@ -440,6 +551,7 @@ contract UntronIntents is Ownable, ReentrancyGuard {
         if (st.settled || !st.solved || !st.funded) return false;
 
         st.settled = true;
+        _emitIntentSettled(id, st.solver, st.intent.token, st.intent.amount, USDT, INTENT_CLAIM_DEPOSIT);
         TokenUtils.transfer(USDT, payable(st.solver), INTENT_CLAIM_DEPOSIT);
         TokenUtils.transfer(st.intent.token, payable(st.solver), st.intent.amount);
         return true;
