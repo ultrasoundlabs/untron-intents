@@ -64,26 +64,30 @@ contract USDT0Bridger is IBridger, Ownable {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Initializes the bridger.
+    /// @param owner Contract owner (used for {withdraw}).
     /// @param authorizedCaller The contract allowed to call {bridge}.
     /// @param usdt0 USDT0 token address on the current chain.
     /// @param oft The LayerZero V2 OFT module used to send USDT0 on the current chain.
     /// @param supportedChainIds Supported destination EVM chain ids.
     /// @param eids LayerZero endpoint IDs (eid) corresponding 1:1 with `supportedChainIds`.
     constructor(
+        address owner,
         address authorizedCaller,
         address usdt0,
         address oft,
         uint256[] memory supportedChainIds,
         uint32[] memory eids
     ) {
-        if (authorizedCaller == address(0) || usdt0 == address(0) || oft == address(0)) revert ZeroAddress();
+        if (owner == address(0) || authorizedCaller == address(0) || usdt0 == address(0) || oft == address(0)) {
+            revert ZeroAddress();
+        }
         if (supportedChainIds.length != eids.length) revert ArrayLengthMismatch(supportedChainIds.length, eids.length);
 
         AUTHORIZED_CALLER = authorizedCaller;
         USDT0 = IERC20(usdt0);
         OFT = IOFT(oft);
 
-        _initializeOwner(msg.sender);
+        _initializeOwner(owner);
 
         for (uint256 i = 0; i < supportedChainIds.length; ++i) {
             uint256 chainId = supportedChainIds[i];

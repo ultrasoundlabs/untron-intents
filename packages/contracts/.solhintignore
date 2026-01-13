@@ -5,4 +5,5 @@ dist/
 cache/
 abi/
 spec/
-src/evm/index/IntentsForwarderIndexedOwnable.sol
+src/index/
+src/mocks/

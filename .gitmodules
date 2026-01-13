@@ -13,3 +13,6 @@
 [submodule "packages/contracts/lib/LayerZero-v2"]
 	path = packages/contracts/lib/LayerZero-v2
 	url = https://github.com/layerzero-labs/LayerZero-v2
+[submodule "packages/contracts/lib/createx-forge"]
+	path = packages/contracts/lib/createx-forge
+	url = https://github.com/radeksvarz/createx-forge

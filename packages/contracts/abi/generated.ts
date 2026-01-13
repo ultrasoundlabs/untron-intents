@@ -1,4 +1,45 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// AutoCreateXScript
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const autoCreateXScriptAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'IS_SCRIPT',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'deployer', internalType: 'address', type: 'address' },
+    ],
+    name: 'computeCreate3Address',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'create3',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'setUp',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CCTPV2Bridger
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -6,6 +47,7 @@ export const cctpv2BridgerAbi = [
   {
     type: 'constructor',
     inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
       { name: 'authorizedCaller', internalType: 'address', type: 'address' },
       { name: 'tokenMessengerV2', internalType: 'address', type: 'address' },
       { name: 'usdc', internalType: 'address', type: 'address' },
@@ -237,6 +279,40 @@ export const counterAbi = [
     inputs: [{ name: 'newNumber', internalType: 'uint256', type: 'uint256' }],
     name: 'setNumber',
     outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CreateXScript
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const createXScriptAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'IS_SCRIPT',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'deployer', internalType: 'address', type: 'address' },
+    ],
+    name: 'computeCreate3Address',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'create3',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'nonpayable',
   },
 ] as const
@@ -778,6 +854,493 @@ export const iBridgerAbi = [
       { name: 'expectedAmountOut', internalType: 'uint256', type: 'uint256' },
     ],
     stateMutability: 'payable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICreateX
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCreateXAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCodeHash', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'computeCreate2Address',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCodeHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'deployer', internalType: 'address', type: 'address' },
+    ],
+    name: 'computeCreate2Address',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'deployer', internalType: 'address', type: 'address' },
+    ],
+    name: 'computeCreate3Address',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'salt', internalType: 'bytes32', type: 'bytes32' }],
+    name: 'computeCreate3Address',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'nonce', internalType: 'uint256', type: 'uint256' }],
+    name: 'computeCreateAddress',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'deployer', internalType: 'address', type: 'address' },
+      { name: 'nonce', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'computeCreateAddress',
+    outputs: [
+      { name: 'computedAddress', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'initCode', internalType: 'bytes', type: 'bytes' }],
+    name: 'deployCreate',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'deployCreate2',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'initCode', internalType: 'bytes', type: 'bytes' }],
+    name: 'deployCreate2',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployCreate2AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'deployCreate2AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployCreate2AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'deployCreate2AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'implementation', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'deployCreate2Clone',
+    outputs: [{ name: 'proxy', internalType: 'address', type: 'address' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'implementation', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'deployCreate2Clone',
+    outputs: [{ name: 'proxy', internalType: 'address', type: 'address' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'initCode', internalType: 'bytes', type: 'bytes' }],
+    name: 'deployCreate3',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'deployCreate3',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'deployCreate3AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'deployCreate3AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployCreate3AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployCreate3AndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'deployCreateAndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'initCode', internalType: 'bytes', type: 'bytes' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+      {
+        name: 'values',
+        internalType: 'struct ICreateX.Values',
+        type: 'tuple',
+        components: [
+          {
+            name: 'constructorAmount',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'initCallAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'refundAddress', internalType: 'address', type: 'address' },
+    ],
+    name: 'deployCreateAndInit',
+    outputs: [
+      { name: 'newContract', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'implementation', internalType: 'address', type: 'address' },
+      { name: 'data', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'deployCreateClone',
+    outputs: [{ name: 'proxy', internalType: 'address', type: 'address' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'newContract',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32', indexed: true },
+    ],
+    name: 'ContractCreation',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'newContract',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'ContractCreation',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'newContract',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      { name: 'salt', internalType: 'bytes32', type: 'bytes32', indexed: true },
+    ],
+    name: 'Create3ProxyContractCreation',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'emitter', internalType: 'address', type: 'address' }],
+    name: 'FailedContractCreation',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'emitter', internalType: 'address', type: 'address' },
+      { name: 'revertData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'FailedContractInitialisation',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'emitter', internalType: 'address', type: 'address' },
+      { name: 'revertData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'FailedEtherTransfer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'emitter', internalType: 'address', type: 'address' }],
+    name: 'InvalidNonceValue',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'emitter', internalType: 'address', type: 'address' }],
+    name: 'InvalidSalt',
   },
 ] as const
 
@@ -2776,6 +3339,23 @@ export const iMessagingContextAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// IMintable
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iMintableAbi = [
+  {
+    type: 'function',
+    inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'mint',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // IOAppCore
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -4532,6 +5112,117 @@ export const intentsForwarderIndexedOwnableAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MockForwarderPuller
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const mockForwarderPullerAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'lastCall',
+    outputs: [
+      { name: 'targetChain', internalType: 'uint256', type: 'uint256' },
+      { name: 'beneficiary', internalType: 'address', type: 'address' },
+      { name: 'beneficiaryClaimOnly', internalType: 'bool', type: 'bool' },
+      { name: 'intentHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'forwardSalt', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'balance', internalType: 'uint256', type: 'uint256' },
+      { name: 'tokenIn', internalType: 'address', type: 'address' },
+      { name: 'tokenOut', internalType: 'address', type: 'address' },
+      { name: 'swapDataHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'bridgeDataHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'msgValue', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'nextPull',
+    outputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'shouldRevert', internalType: 'bool', type: 'bool' },
+      { name: 'enforceBalanceParam', internalType: 'bool', type: 'bool' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'req',
+        internalType: 'struct IntentsForwarder.PullRequest',
+        type: 'tuple',
+        components: [
+          { name: 'targetChain', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'beneficiary',
+            internalType: 'address payable',
+            type: 'address',
+          },
+          { name: 'beneficiaryClaimOnly', internalType: 'bool', type: 'bool' },
+          { name: 'intentHash', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'forwardSalt', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'balance', internalType: 'uint256', type: 'uint256' },
+          { name: 'tokenIn', internalType: 'address', type: 'address' },
+          { name: 'tokenOut', internalType: 'address', type: 'address' },
+          {
+            name: 'swapData',
+            internalType: 'struct Call[]',
+            type: 'tuple[]',
+            components: [
+              { name: 'to', internalType: 'address', type: 'address' },
+              { name: 'value', internalType: 'uint256', type: 'uint256' },
+              { name: 'data', internalType: 'bytes', type: 'bytes' },
+            ],
+          },
+          { name: 'bridgeData', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    name: 'pullFromReceiver',
+    outputs: [{ name: 'amountOut', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'enforceBalanceParam_', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'setEnforceBalanceParam',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'token', internalType: 'address', type: 'address' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setNextPull',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'shouldRevert_', internalType: 'bool', type: 'bool' }],
+    name: 'setShouldRevert',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'expected', internalType: 'uint256', type: 'uint256' },
+      { name: 'got', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'BalanceMismatch',
+  },
+  { type: 'error', inputs: [], name: 'RevertPull' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MockQuoter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -4577,6 +5268,20 @@ export const mockQuoterAbi = [
     stateMutability: 'view',
   },
   { type: 'error', inputs: [], name: 'RevertQuote' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MockReverter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const mockReverterAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'boom',
+    outputs: [],
+    stateMutability: 'pure',
+  },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -4708,6 +5413,33 @@ export const mockUntronV3Abi = [
     name: 'CONTROLLER_ADDRESS',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'controller_', internalType: 'address', type: 'address' }],
+    name: 'setController',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'reader_',
+        internalType: 'contract ITronTxReader',
+        type: 'address',
+      },
+    ],
+    name: 'setTronReader',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tronUsdt_', internalType: 'address', type: 'address' }],
+    name: 'setTronUsdt',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -5235,6 +5967,7 @@ export const usdt0BridgerAbi = [
   {
     type: 'constructor',
     inputs: [
+      { name: 'owner', internalType: 'address', type: 'address' },
       { name: 'authorizedCaller', internalType: 'address', type: 'address' },
       { name: 'usdt0', internalType: 'address', type: 'address' },
       { name: 'oft', internalType: 'address', type: 'address' },
@@ -7260,6 +7993,409 @@ export const untronIntentsIndexedOwnableAbi = [
   { type: 'error', inputs: [], name: 'AlreadyInitialized' },
   { type: 'error', inputs: [], name: 'NewOwnerIsZeroAddress' },
   { type: 'error', inputs: [], name: 'Unauthorized' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// UntronIsolatedTestBase
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const untronIsolatedTestBaseAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'IS_TEST',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'excludeArtifacts',
+    outputs: [
+      {
+        name: 'excludedArtifacts_',
+        internalType: 'string[]',
+        type: 'string[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'excludeContracts',
+    outputs: [
+      {
+        name: 'excludedContracts_',
+        internalType: 'address[]',
+        type: 'address[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'excludeSelectors',
+    outputs: [
+      {
+        name: 'excludedSelectors_',
+        internalType: 'struct StdInvariant.FuzzSelector[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'addr', internalType: 'address', type: 'address' },
+          { name: 'selectors', internalType: 'bytes4[]', type: 'bytes4[]' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'excludeSenders',
+    outputs: [
+      {
+        name: 'excludedSenders_',
+        internalType: 'address[]',
+        type: 'address[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'failed',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'setUp',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetArtifactSelectors',
+    outputs: [
+      {
+        name: 'targetedArtifactSelectors_',
+        internalType: 'struct StdInvariant.FuzzArtifactSelector[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'artifact', internalType: 'string', type: 'string' },
+          { name: 'selectors', internalType: 'bytes4[]', type: 'bytes4[]' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetArtifacts',
+    outputs: [
+      {
+        name: 'targetedArtifacts_',
+        internalType: 'string[]',
+        type: 'string[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetContracts',
+    outputs: [
+      {
+        name: 'targetedContracts_',
+        internalType: 'address[]',
+        type: 'address[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetInterfaces',
+    outputs: [
+      {
+        name: 'targetedInterfaces_',
+        internalType: 'struct StdInvariant.FuzzInterface[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'addr', internalType: 'address', type: 'address' },
+          { name: 'artifacts', internalType: 'string[]', type: 'string[]' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetSelectors',
+    outputs: [
+      {
+        name: 'targetedSelectors_',
+        internalType: 'struct StdInvariant.FuzzSelector[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'addr', internalType: 'address', type: 'address' },
+          { name: 'selectors', internalType: 'bytes4[]', type: 'bytes4[]' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'targetSenders',
+    outputs: [
+      {
+        name: 'targetedSenders_',
+        internalType: 'address[]',
+        type: 'address[]',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'string', type: 'string', indexed: false },
+    ],
+    name: 'log',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'address', type: 'address', indexed: false },
+    ],
+    name: 'log_address',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'val',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'val',
+        internalType: 'int256[]',
+        type: 'int256[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'val',
+        internalType: 'address[]',
+        type: 'address[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'log_bytes',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'bytes32', type: 'bytes32', indexed: false },
+    ],
+    name: 'log_bytes32',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'int256', type: 'int256', indexed: false },
+    ],
+    name: 'log_int',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'address', type: 'address', indexed: false },
+    ],
+    name: 'log_named_address',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      {
+        name: 'val',
+        internalType: 'uint256[]',
+        type: 'uint256[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_named_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      {
+        name: 'val',
+        internalType: 'int256[]',
+        type: 'int256[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_named_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      {
+        name: 'val',
+        internalType: 'address[]',
+        type: 'address[]',
+        indexed: false,
+      },
+    ],
+    name: 'log_named_array',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'log_named_bytes',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'bytes32', type: 'bytes32', indexed: false },
+    ],
+    name: 'log_named_bytes32',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'int256', type: 'int256', indexed: false },
+      {
+        name: 'decimals',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'log_named_decimal_int',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'uint256', type: 'uint256', indexed: false },
+      {
+        name: 'decimals',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'log_named_decimal_uint',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'int256', type: 'int256', indexed: false },
+    ],
+    name: 'log_named_int',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'string', type: 'string', indexed: false },
+    ],
+    name: 'log_named_string',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'key', internalType: 'string', type: 'string', indexed: false },
+      { name: 'val', internalType: 'uint256', type: 'uint256', indexed: false },
+    ],
+    name: 'log_named_uint',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'string', type: 'string', indexed: false },
+    ],
+    name: 'log_string',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'uint256', type: 'uint256', indexed: false },
+    ],
+    name: 'log_uint',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: '', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'logs',
+  },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

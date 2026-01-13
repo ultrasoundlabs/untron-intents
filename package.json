@@ -23,6 +23,7 @@
     "contracts:build": "forge build --root packages/contracts",
     "contracts:bind:rust": "forge bind --root packages/contracts --crate-name contracts_bindings --bindings-path crates/bindings --overwrite",
     "indexer:build": "pnpm contracts:bind:rust && cargo build -p indexer",
+    "contracts:anvil:multichain": "bash packages/contracts/scripts/multichain-anvil.sh",
     "openapi:build": "node infra/openapi-sidecar/build.mjs",
     "ai": "repomix -o /dev/null --copy --quiet",
     "ai:loud": "repomix -o /dev/null --copy"

@@ -8,9 +8,9 @@ import {Vm} from "forge-std/Vm.sol";
 import {IntentsForwarderIndex} from "../src/index/IntentsForwarderIndex.sol";
 
 import {ForwarderTestBase} from "./helpers/ForwarderTestBase.sol";
-import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockQuoter} from "./mocks/MockQuoter.sol";
-import {ExactBridger, FeeBridger} from "./mocks/MockBridgers.sol";
+import {MockERC20} from "../src/mocks/MockERC20.sol";
+import {MockQuoter} from "../src/mocks/MockQuoter.sol";
+import {ExactBridger, FeeBridger} from "../src/mocks/MockBridgers.sol";
 
 contract IntentsForwarderCoreTest is ForwarderTestBase {
     function test_receiver_prediction_and_deploy() external {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IBridger} from "../../src/bridgers/interfaces/IBridger.sol";
+import {IBridger} from "../bridgers/interfaces/IBridger.sol";
 
 contract ExactBridger is IBridger {
     address public lastInputToken;
@@ -60,3 +60,4 @@ contract RevertingBridger is IBridger {
         revert RevertBridge();
     }
 }
+

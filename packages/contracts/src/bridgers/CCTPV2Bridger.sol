@@ -98,19 +98,26 @@ contract CCTPV2Bridger is IBridger, Ownable {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Initializes the bridger.
+    /// @param owner Contract owner (used for {withdraw}).
     /// @param authorizedCaller The contract allowed to call {bridge}.
     /// @param tokenMessengerV2 Circle TokenMessengerV2 address on the current chain.
     /// @param usdc USDC token address on the current chain.
     /// @param supportedChainIds Supported destination EVM chain ids.
     /// @param circleDomains Circle CCTP domain ids corresponding 1:1 with `supportedChainIds`.
     constructor(
+        address owner,
         address authorizedCaller,
         address tokenMessengerV2,
         address usdc,
         uint256[] memory supportedChainIds,
         uint32[] memory circleDomains
     ) {
-        if (authorizedCaller == address(0) || tokenMessengerV2 == address(0) || usdc == address(0)) revert ZeroAddress();
+        if (
+            owner == address(0) || authorizedCaller == address(0) || tokenMessengerV2 == address(0)
+                || usdc == address(0)
+        ) {
+            revert ZeroAddress();
+        }
         if (supportedChainIds.length != circleDomains.length) {
             revert ArrayLengthMismatch(supportedChainIds.length, circleDomains.length);
         }
@@ -119,7 +126,7 @@ contract CCTPV2Bridger is IBridger, Ownable {
         TOKEN_MESSENGER_V2 = ITokenMessengerV2(tokenMessengerV2);
         USDC = IERC20(usdc);
 
-        _initializeOwner(msg.sender);
+        _initializeOwner(owner);
 
         for (uint256 i = 0; i < supportedChainIds.length; ++i) {
             uint256 chainId = supportedChainIds[i];

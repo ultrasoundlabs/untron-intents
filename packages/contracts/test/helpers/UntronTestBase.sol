@@ -6,9 +6,9 @@ import {ForwarderTestBase} from "./ForwarderTestBase.sol";
 import {UntronIntents} from "../../src/UntronIntents.sol";
 import {TriggerSmartContract} from "../../src/external/interfaces/ITronTxReader.sol";
 
-import {MockTronTxReader} from "../mocks/MockTronTxReader.sol";
-import {MockUntronV3} from "../mocks/MockUntronV3.sol";
-import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockTronTxReader} from "../../src/mocks/MockTronTxReader.sol";
+import {MockUntronV3} from "../../src/mocks/MockUntronV3.sol";
+import {MockERC20} from "../../src/mocks/MockERC20.sol";
 
 abstract contract UntronTestBase is ForwarderTestBase {
     address internal solver;

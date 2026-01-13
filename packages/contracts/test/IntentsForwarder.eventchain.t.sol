@@ -2,24 +2,20 @@
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
+import {StdAssertions} from "forge-std/StdAssertions.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 import {IntentsForwarder} from "../src/IntentsForwarder.sol";
-import {IntentsForwarderIndex} from "../src/index/IntentsForwarderIndex.sol";
 import {EventChainGenesis} from "../src/utils/EventChainGenesis.sol";
 import {Call} from "../src/SwapExecutor.sol";
 
-import {MockERC20} from "./mocks/MockERC20.sol";
-import {MockQuoter} from "./mocks/MockQuoter.sol";
-import {ExactBridger} from "./mocks/MockBridgers.sol";
+import {ForwarderTestBase} from "./helpers/ForwarderTestBase.sol";
+import {MockERC20} from "../src/mocks/MockERC20.sol";
+import {MockQuoter} from "../src/mocks/MockQuoter.sol";
+import {ExactBridger} from "../src/mocks/MockBridgers.sol";
+import {MockReverter} from "./mocks/MockReverter.sol";
 
-contract Reverter {
-    function boom() external pure {
-        revert("boom");
-    }
-}
-
-contract IntentsForwarderEventChainTest is Test {
+abstract contract EventChainAsserts is StdAssertions {
     bytes32 internal constant _EVENT_APPENDED_SIG = keccak256("EventAppended(uint256,bytes32,bytes32,bytes32,bytes)");
 
     function _countEventAppended(Vm.Log[] memory entries, address emitter) internal pure returns (uint256 count) {
@@ -72,30 +68,29 @@ contract IntentsForwarderEventChainTest is Test {
         assertEq(forwarder.eventSeq(), seqBefore + expectedAppends);
         assertEq(forwarder.eventChainTip(), tip);
     }
+}
 
+contract IntentsForwarderEventChainConstructorTest is Test, EventChainAsserts {
     function test_constructor_appendsOwnershipToChain() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
+        MockERC20 usdt_ = new MockERC20("USDT", "USDT", 6);
+        MockERC20 usdc_ = new MockERC20("USDC", "USDC", 6);
+        address owner_ = makeAddr("owner");
 
         vm.recordLogs();
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
+        IntentsForwarder forwarder_ = new IntentsForwarder(address(usdt_), address(usdc_), owner_);
         Vm.Log[] memory entries = vm.getRecordedLogs();
 
         // Constructor should append exactly one event: OwnershipTransferred(0 -> owner).
-        assertEq(forwarder.eventSeq(), 1);
-        assertTrue(forwarder.eventChainTip() != EventChainGenesis.IntentsForwarderIndex);
+        assertEq(forwarder_.eventSeq(), 1);
+        assertTrue(forwarder_.eventChainTip() != EventChainGenesis.IntentsForwarderIndex);
 
-        uint256 appendCount = _countEventAppended(entries, address(forwarder));
+        uint256 appendCount = _countEventAppended(entries, address(forwarder_));
         assertEq(appendCount, 1);
     }
+}
 
+contract IntentsForwarderEventChainTest is ForwarderTestBase, EventChainAsserts {
     function test_transferOwnership_appendsOwnershipToChain() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
-
         uint256 seqBefore = forwarder.eventSeq();
         bytes32 tipBefore = forwarder.eventChainTip();
 
@@ -110,14 +105,9 @@ contract IntentsForwarderEventChainTest is Test {
     }
 
     function test_eventSeq_delta_local_base_noSwap() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
-
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 baseSalt = keccak256(abi.encodePacked(block.chainid, beneficiary, false, bytes32(0)));
-        address payable baseReceiver = forwarder.predictReceiverAddress(baseSalt);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
+        address payable baseReceiver = forwarder.predictReceiverAddress(receiverSalt);
 
         usdt.mint(baseReceiver, 123e6);
 
@@ -141,16 +131,11 @@ contract IntentsForwarderEventChainTest is Test {
         );
         Vm.Log[] memory entries = vm.getRecordedLogs();
 
-        // ForwardStarted + ReceiverDeployed(ephemeral) + ReceiverDeployed(base) + ForwardCompleted
+        // Base no-swap path includes: ForwardStarted + ReceiverDeployed(ephemeral) + ReceiverDeployed(base) + ForwardCompleted
         _assertAndRecomputeEventChainFromLogs(forwarder, seqBefore, tipBefore, entries, 4);
     }
 
-    function test_eventSeq_delta_local_base_swap() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
-
+    function test_eventSeq_delta_local_base_swap_includesSwapExecuted() external {
         // Configure quoter for swaps from USDT.
         MockQuoter quoter = new MockQuoter();
         quoter.setAmountOut(90e6);
@@ -158,8 +143,8 @@ contract IntentsForwarderEventChainTest is Test {
         forwarder.setQuoter(address(usdt), quoter);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 baseSalt = keccak256(abi.encodePacked(block.chainid, beneficiary, false, bytes32(0)));
-        address payable baseReceiver = forwarder.predictReceiverAddress(baseSalt);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
+        address payable baseReceiver = forwarder.predictReceiverAddress(receiverSalt);
         usdt.mint(baseReceiver, 100e6);
 
         // Swap: mint 100 USDC to the executor so actualOut=100, minOut=90.
@@ -193,11 +178,6 @@ contract IntentsForwarderEventChainTest is Test {
     }
 
     function test_revert_doesNotAdvanceEventChain() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
-
         // Configure quoter for swaps from USDT.
         MockQuoter quoter = new MockQuoter();
         quoter.setAmountOut(90e6);
@@ -205,12 +185,12 @@ contract IntentsForwarderEventChainTest is Test {
         forwarder.setQuoter(address(usdt), quoter);
 
         address payable beneficiary = payable(makeAddr("beneficiary"));
-        bytes32 baseSalt = keccak256(abi.encodePacked(block.chainid, beneficiary, false, bytes32(0)));
-        address payable baseReceiver = forwarder.predictReceiverAddress(baseSalt);
+        bytes32 receiverSalt = baseSalt(block.chainid, beneficiary, false, bytes32(0));
+        address payable baseReceiver = forwarder.predictReceiverAddress(receiverSalt);
         usdt.mint(baseReceiver, 100e6);
 
         // Swap: call a reverter, causing SwapExecutor to revert => entire tx reverts.
-        Reverter reverter = new Reverter();
+        MockReverter reverter = new MockReverter();
         Call[] memory swapData = new Call[](1);
         swapData[0] = Call({to: address(reverter), value: 0, data: abi.encodeCall(reverter.boom, ())});
 
@@ -238,11 +218,6 @@ contract IntentsForwarderEventChainTest is Test {
     }
 
     function test_eventChainTip_recomputes_fromEventAppendedLogs_bridge() external {
-        MockERC20 usdt = new MockERC20("USDT", "USDT", 6);
-        MockERC20 usdc = new MockERC20("USDC", "USDC", 6);
-        address owner = makeAddr("owner");
-        IntentsForwarder forwarder = new IntentsForwarder(address(usdt), address(usdc), owner);
-
         ExactBridger usdtBridger = new ExactBridger();
         ExactBridger usdcBridger = new ExactBridger();
         vm.prank(owner);
@@ -252,8 +227,8 @@ contract IntentsForwarderEventChainTest is Test {
         uint256 targetChain = 999999;
 
         // Ephemeral mode (balance != 0) so only the ephemeral receiver is deployed.
-        bytes32 baseSalt = keccak256(abi.encodePacked(targetChain, beneficiary, false, bytes32(0)));
-        bytes32 ephemSalt = keccak256(abi.encodePacked(baseSalt, bytes32(uint256(7)), address(usdt), uint256(5e6)));
+        bytes32 receiverSalt = baseSalt(targetChain, beneficiary, false, bytes32(0));
+        bytes32 ephemSalt = ephemeralSalt(receiverSalt, bytes32(uint256(7)), address(usdt), uint256(5e6));
         address payable receiver = forwarder.predictReceiverAddress(ephemSalt);
         usdt.mint(receiver, 5e6);
 

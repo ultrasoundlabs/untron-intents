@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IBridger} from "../../src/bridgers/interfaces/IBridger.sol";
+import {IBridger} from "../bridgers/interfaces/IBridger.sol";
 import {MockERC20} from "./MockERC20.sol";
 
-/// @notice Test-only "transport" bridger that records a bridge request and lets the test
+/// @notice "Transport" bridger that records a bridge request and lets an operator
 ///         deliver funds to the destination address later.
-/// @dev This intentionally does not attempt to model source-chain token movement/fees.
+/// @dev Intentionally does not model source-chain token movement/fees.
 contract MockTransportBridger is IBridger {
     struct Pending {
         address inputToken;

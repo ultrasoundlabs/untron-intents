@@ -31,7 +31,8 @@
     "codegen": "pnpm -w wagmi generate",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "verify": "pnpm run fmt:sol && pnpm run test:ci && pnpm run build:prod && pnpm run codegen && pnpm run build:ts && pnpm run typecheck",
-    "export": "pnpm run clean && pnpm run build"
+    "export": "pnpm run clean && pnpm run build",
+    "anvil:multichain": "bash scripts/multichain-anvil.sh"
   },
   "exports": {
     ".": {

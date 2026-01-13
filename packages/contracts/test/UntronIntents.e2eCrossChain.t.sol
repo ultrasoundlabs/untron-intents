@@ -6,7 +6,7 @@ import {UntronTestBase} from "./helpers/UntronTestBase.sol";
 import {Call} from "../src/SwapExecutor.sol";
 import {IntentsForwarder} from "../src/IntentsForwarder.sol";
 
-import {MockTransportBridger} from "./mocks/MockTransportBridger.sol";
+import {MockTransportBridger} from "../src/mocks/MockTransportBridger.sol";
 
 contract UntronIntentsE2ECrossChainTest is UntronTestBase {
     uint256 internal constant CHAIN_A = 111;
@@ -70,4 +70,3 @@ contract UntronIntentsE2ECrossChainTest is UntronTestBase {
         assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT() + amount);
     }
 }
-

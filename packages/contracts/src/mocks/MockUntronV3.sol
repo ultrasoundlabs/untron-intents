@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IUntronV3} from "../../src/external/interfaces/IUntronV3.sol";
-import {ITronTxReader} from "../../src/external/interfaces/ITronTxReader.sol";
+import {IUntronV3} from "../external/interfaces/IUntronV3.sol";
+import {ITronTxReader} from "../external/interfaces/ITronTxReader.sol";
 
 contract MockUntronV3 is IUntronV3 {
     ITronTxReader internal _reader;
@@ -12,6 +12,18 @@ contract MockUntronV3 is IUntronV3 {
     constructor(ITronTxReader reader_, address controller_, address tronUsdt_) {
         _reader = reader_;
         _controller = controller_;
+        _tronUsdt = tronUsdt_;
+    }
+
+    function setTronReader(ITronTxReader reader_) external {
+        _reader = reader_;
+    }
+
+    function setController(address controller_) external {
+        _controller = controller_;
+    }
+
+    function setTronUsdt(address tronUsdt_) external {
         _tronUsdt = tronUsdt_;
     }
 

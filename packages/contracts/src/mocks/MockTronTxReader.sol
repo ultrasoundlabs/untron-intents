@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {ITronTxReader, TriggerSmartContract} from "../../src/external/interfaces/ITronTxReader.sol";
+import {ITronTxReader, TriggerSmartContract} from "../external/interfaces/ITronTxReader.sol";
 
 contract MockTronTxReader is ITronTxReader {
     TriggerSmartContract internal _tx;

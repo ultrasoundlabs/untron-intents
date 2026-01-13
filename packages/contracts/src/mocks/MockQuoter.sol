@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
-import {IQuoter} from "../../src/quoters/interfaces/IQuoter.sol";
+import {IQuoter} from "../quoters/interfaces/IQuoter.sol";
 
 contract MockQuoter is IQuoter {
     error RevertQuote();

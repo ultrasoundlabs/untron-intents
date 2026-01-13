@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {IntentsForwarder} from "../../src/IntentsForwarder.sol";
 
-import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockERC20} from "../../src/mocks/MockERC20.sol";
 
 abstract contract ForwarderTestBase is Test {
     MockERC20 internal usdt;
