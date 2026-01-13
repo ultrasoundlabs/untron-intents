@@ -1,3 +1,4 @@
 apps/research/** linguist-vendored=true
 packages/contracts/test/** linguist-vendored=true
 packages/contracts/abi/** linguist-generated
+crates/bindings/** linguist-generated

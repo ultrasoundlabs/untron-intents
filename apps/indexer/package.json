@@ -1,0 +1,12 @@
+{
+  "name": "@untron/intents-indexer",
+  "scripts": {
+    "dev": "cargo run -p indexer",
+    "test": "cargo test -p indexer",
+    "format": "cargo fmt",
+    "clippy": "cargo clippy -p indexer -- -D warnings",
+    "db:migrate": "cargo run -p indexer --bin migrate",
+    "db:format": "sqruff fix db",
+    "db:lint": "sqruff lint db"
+  }
+}

@@ -1,0 +1,5 @@
+[workspace]
+members = [
+  "apps/indexer", "apps/solver"
+]
+resolver = "2"
