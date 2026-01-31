@@ -4,7 +4,7 @@ use e2e::{
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
     cast::{
         run_cast_create_delegate_resource_intent, run_cast_create_trx_transfer_intent,
-        run_cast_mint_mock_erc20,
+        run_cast_create_usdt_transfer_intent, run_cast_mint_mock_erc20,
     },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     forge::{
@@ -21,7 +21,7 @@ use e2e::{
 use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_solver_mvp_fills_trx_transfer_and_delegate_resource_mock_tron() -> Result<()> {
+async fn e2e_solver_mvp_fills_trx_usdt_and_delegate_resource_mock_tron() -> Result<()> {
     if !require_bins(&["docker", "anvil", "forge", "cast"]) {
         return Ok(());
     }
@@ -79,6 +79,7 @@ async fn e2e_solver_mvp_fills_trx_transfer_and_delegate_resource_mock_tron() -> 
     // Create two intents.
     let to = "0x00000000000000000000000000000000000000aa";
     let _ = run_cast_create_trx_transfer_intent(&rpc_url, pk0, &intents_addr, to, "1234", 1)?;
+    let _ = run_cast_create_usdt_transfer_intent(&rpc_url, pk0, &intents_addr, to, "555", 1)?;
     let _ = run_cast_create_delegate_resource_intent(
         &rpc_url,
         pk0,
@@ -90,7 +91,7 @@ async fn e2e_solver_mvp_fills_trx_transfer_and_delegate_resource_mock_tron() -> 
         1,
     )?;
 
-    wait_for_pool_current_intents_count(&db_url, 2, Duration::from_secs(45)).await?;
+    wait_for_pool_current_intents_count(&db_url, 3, Duration::from_secs(45)).await?;
 
     // PostgREST.
     let pgrst_pw = "pgrst_pw";
@@ -115,6 +116,6 @@ async fn e2e_solver_mvp_fills_trx_transfer_and_delegate_resource_mock_tron() -> 
         &mock_reader,
     )?);
 
-    let _rows = wait_for_intents_solved_and_settled(&db_url, 2, Duration::from_secs(180)).await?;
+    let _rows = wait_for_intents_solved_and_settled(&db_url, 3, Duration::from_secs(180)).await?;
     Ok(())
 }

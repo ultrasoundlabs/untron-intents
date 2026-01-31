@@ -1,4 +1,5 @@
 apps/research/** linguist-vendored=true
 packages/contracts/test/** linguist-vendored=true
+crates/tron/protos/** linguist-vendored=true
 packages/contracts/abi/** linguist-generated
 crates/bindings/** linguist-generated

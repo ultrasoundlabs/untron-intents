@@ -17,8 +17,15 @@ alloy::sol! {
     #[sol(rpc)]
     interface IUntronIntents {
         function USDT() external view returns (address);
+        function V3() external view returns (address);
         function claimIntent(bytes32 id) external;
         function proveIntentFill(bytes32 id, bytes[20] calldata blocks, bytes calldata encodedTx, bytes32[] calldata proof, uint256 index) external;
+    }
+
+    #[sol(rpc)]
+    interface IUntronV3 {
+        function tronUsdt() external view returns (address);
+        function CONTROLLER_ADDRESS() external view returns (address);
     }
 
     #[sol(rpc)]
@@ -36,6 +43,16 @@ alloy::sol! {
         uint256 amountSun;
     }
 
+    struct TriggerSmartContract {
+        bytes32 txId;
+        uint256 tronBlockNumber;
+        uint32 tronBlockTimestamp;
+        bytes21 senderTron;
+        bytes21 toTron;
+        uint256 callValueSun;
+        bytes data;
+    }
+
     struct DelegateResourceContract {
         bytes32 txId;
         uint256 tronBlockNumber;
@@ -50,6 +67,7 @@ alloy::sol! {
 
     #[sol(rpc)]
     interface IMockTronTxReader {
+        function setTx(TriggerSmartContract calldata tx_) external;
         function setTransferTx(TransferContract calldata tx_) external;
         function setDelegateResourceTx(DelegateResourceContract calldata tx_) external;
     }
@@ -220,6 +238,67 @@ impl HubClient {
         Ok(res.context("UntronIntents.USDT")?)
     }
 
+    pub async fn pool_v3(&self) -> Result<Address> {
+        let (pool_addr, provider, telemetry) = match &self.inner {
+            HubClientInner::Eoa(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+            HubClientInner::Safe4337(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+        };
+        let pool = IUntronIntents::new(pool_addr, provider);
+        let started = Instant::now();
+        let res = pool.V3().call().await;
+        let ok = res.is_ok();
+        telemetry.hub_rpc_ms("pool_v3", ok, started.elapsed().as_millis() as u64);
+        Ok(res.context("UntronIntents.V3")?)
+    }
+
+    pub async fn v3_tron_usdt(&self) -> Result<Address> {
+        let v3 = self.pool_v3().await?;
+        let provider = match &self.inner {
+            HubClientInner::Eoa(c) => c.provider.clone(),
+            HubClientInner::Safe4337(c) => c.provider.clone(),
+        };
+        let v3c = IUntronV3::new(v3, provider);
+        let started = Instant::now();
+        let res = v3c.tronUsdt().call().await;
+        let ok = res.is_ok();
+        match &self.inner {
+            HubClientInner::Eoa(c) => {
+                c.telemetry
+                    .hub_rpc_ms("v3_tron_usdt", ok, started.elapsed().as_millis() as u64)
+            }
+            HubClientInner::Safe4337(c) => {
+                c.telemetry
+                    .hub_rpc_ms("v3_tron_usdt", ok, started.elapsed().as_millis() as u64)
+            }
+        }
+        Ok(res.context("UntronV3.tronUsdt")?)
+    }
+
+    pub async fn v3_controller_address(&self) -> Result<Address> {
+        let v3 = self.pool_v3().await?;
+        let provider = match &self.inner {
+            HubClientInner::Eoa(c) => c.provider.clone(),
+            HubClientInner::Safe4337(c) => c.provider.clone(),
+        };
+        let v3c = IUntronV3::new(v3, provider);
+        let started = Instant::now();
+        let res = v3c.CONTROLLER_ADDRESS().call().await;
+        let ok = res.is_ok();
+        match &self.inner {
+            HubClientInner::Eoa(c) => c.telemetry.hub_rpc_ms(
+                "v3_controller_address",
+                ok,
+                started.elapsed().as_millis() as u64,
+            ),
+            HubClientInner::Safe4337(c) => c.telemetry.hub_rpc_ms(
+                "v3_controller_address",
+                ok,
+                started.elapsed().as_millis() as u64,
+            ),
+        }
+        Ok(res.context("UntronV3.CONTROLLER_ADDRESS")?)
+    }
+
     pub async fn ensure_erc20_allowance(
         &self,
         token: Address,
@@ -345,6 +424,32 @@ impl HubClient {
             HubClientInner::Safe4337(c) => {
                 let call = IMockTronTxReader::setTransferTxCall { tx_: tx };
                 c.send_call_and_wait(reader, call.abi_encode(), "mock_set_transfer_tx")
+                    .await
+            }
+        }
+    }
+
+    pub async fn mock_set_trigger_tx(
+        &self,
+        reader: Address,
+        tx: TriggerSmartContract,
+    ) -> Result<TransactionReceipt> {
+        match &self.inner {
+            HubClientInner::Eoa(c) => {
+                let r = IMockTronTxReader::new(reader, c.provider.clone());
+                let started = Instant::now();
+                let pending = r.setTx(tx).send().await;
+                let ok = pending.is_ok();
+                c.telemetry.hub_rpc_ms(
+                    "mock_set_trigger_tx",
+                    ok,
+                    started.elapsed().as_millis() as u64,
+                );
+                Ok(pending?.get_receipt().await?)
+            }
+            HubClientInner::Safe4337(c) => {
+                let call = IMockTronTxReader::setTxCall { tx_: tx };
+                c.send_call_and_wait(reader, call.abi_encode(), "mock_set_trigger_tx")
                     .await
             }
         }

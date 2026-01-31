@@ -49,6 +49,10 @@ pub fn spawn_solver_mock(
         .env("HUB_SIGNER_PRIVATE_KEY_HEX", solver_private_key)
         .env("TRON_MODE", "mock")
         .env("TRON_MOCK_READER_ADDRESS", mock_reader)
+        .env(
+            "SOLVER_ENABLED_INTENT_TYPES",
+            "trx_transfer,delegate_resource,usdt_transfer",
+        )
         .env("SOLVER_TICK_INTERVAL_SECS", "1")
         .env("RUST_LOG", "info")
         .stdout(Stdio::inherit())

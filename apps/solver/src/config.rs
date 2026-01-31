@@ -17,6 +17,12 @@ pub enum TronMode {
     Mock,
 }
 
+#[derive(Debug, Clone)]
+pub struct PolicyConfig {
+    pub enabled_intent_types: Vec<crate::types::IntentType>,
+    pub min_deadline_slack_secs: u64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PaymasterServiceConfig {
     pub url: String,
@@ -30,6 +36,7 @@ pub struct AppConfig {
     pub hub: HubConfig,
     pub tron: TronConfig,
     pub jobs: JobConfig,
+    pub policy: PolicyConfig,
     pub db_url: String,
 }
 
@@ -71,6 +78,7 @@ pub struct TronConfig {
     pub mock_reader_address: Option<Address>,
 
     pub block_lag: u64,
+    pub fee_limit_cap_sun: u64,
     /// Extra headroom on computed fee_limit (ppm, i.e. 100_000 = +10%).
     pub fee_limit_headroom_ppm: u64,
     /// Optional list of external energy rental providers.
@@ -159,6 +167,9 @@ struct Env {
     tron_block_lag: u64,
 
     #[serde(default)]
+    tron_fee_limit_cap_sun: u64,
+
+    #[serde(default)]
     tron_fee_limit_headroom_ppm: u64,
 
     #[serde(default)]
@@ -179,6 +190,12 @@ struct Env {
     controller_rebalance_keep_usdt: String,
 
     pull_liquidity_ppm: u64,
+
+    #[serde(default)]
+    solver_enabled_intent_types: String,
+
+    #[serde(default)]
+    solver_min_deadline_slack_secs: u64,
 }
 
 impl Default for Env {
@@ -209,6 +226,7 @@ impl Default for Env {
             tron_controller_address: String::new(),
             tron_mock_reader_address: String::new(),
             tron_block_lag: 0,
+            tron_fee_limit_cap_sun: 200_000_000,
             tron_fee_limit_headroom_ppm: 100_000,
             tron_energy_rental_apis_json: String::new(),
             solver_tick_interval_secs: 5,
@@ -219,6 +237,9 @@ impl Default for Env {
             controller_rebalance_threshold_usdt: "0".to_string(),
             controller_rebalance_keep_usdt: "1".to_string(),
             pull_liquidity_ppm: 500_000,
+
+            solver_enabled_intent_types: "trx_transfer,delegate_resource".to_string(),
+            solver_min_deadline_slack_secs: 30,
         }
     }
 }
@@ -323,6 +344,36 @@ fn parse_tron_mode(s: &str) -> Result<TronMode> {
     }
 }
 
+fn parse_intent_types(s: &str) -> Result<Vec<crate::types::IntentType>> {
+    if s.trim().is_empty() {
+        return Ok(vec![
+            crate::types::IntentType::TrxTransfer,
+            crate::types::IntentType::DelegateResource,
+        ]);
+    }
+    let mut out = Vec::new();
+    for raw in s.split(',') {
+        let v = raw.trim();
+        if v.is_empty() {
+            continue;
+        }
+        let ty = match v {
+            "trigger_smart_contract" => crate::types::IntentType::TriggerSmartContract,
+            "usdt_transfer" => crate::types::IntentType::UsdtTransfer,
+            "trx_transfer" => crate::types::IntentType::TrxTransfer,
+            "delegate_resource" => crate::types::IntentType::DelegateResource,
+            other => anyhow::bail!("unknown intent type: {other}"),
+        };
+        if !out.contains(&ty) {
+            out.push(ty);
+        }
+    }
+    if out.is_empty() {
+        anyhow::bail!("SOLVER_ENABLED_INTENT_TYPES must not be empty");
+    }
+    Ok(out)
+}
+
 pub fn load_config() -> Result<AppConfig> {
     let env: Env = envy::from_env().context("load solver env config")?;
 
@@ -347,6 +398,8 @@ pub fn load_config() -> Result<AppConfig> {
         tracing::warn!("HUB_POOL_ADDRESS is empty; falling back to HUB_UNTRON_V3_ADDRESS");
         parse_address("HUB_UNTRON_V3_ADDRESS", &env.hub_untron_v3_address)?
     };
+
+    let enabled_intent_types = parse_intent_types(&env.solver_enabled_intent_types)?;
 
     if env.hub_signer_private_key_hex.trim().is_empty() {
         anyhow::bail!("HUB_SIGNER_PRIVATE_KEY_HEX must be set");
@@ -460,6 +513,7 @@ pub fn load_config() -> Result<AppConfig> {
                 &env.tron_mock_reader_address,
             )?,
             block_lag: env.tron_block_lag,
+            fee_limit_cap_sun: env.tron_fee_limit_cap_sun.max(1_000_000),
             fee_limit_headroom_ppm: env.tron_fee_limit_headroom_ppm.min(1_000_000),
             energy_rental_providers: parse_tron_energy_rental_apis_json(
                 &env.tron_energy_rental_apis_json,
@@ -475,6 +529,10 @@ pub fn load_config() -> Result<AppConfig> {
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
             pull_liquidity_ppm: env.pull_liquidity_ppm.min(1_000_000),
         },
+        policy: PolicyConfig {
+            enabled_intent_types,
+            min_deadline_slack_secs: env.solver_min_deadline_slack_secs,
+        },
         db_url: env.solver_db_url,
     })
 }
@@ -482,6 +540,7 @@ pub fn load_config() -> Result<AppConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::IntentType;
     use alloy::primitives::Address;
 
     #[test]
@@ -571,5 +630,20 @@ mod tests {
         assert_eq!(a, expected);
 
         assert!(parse_address("A", "not an address").is_err());
+    }
+
+    #[test]
+    fn parse_intent_types_dedups_and_preserves_order() {
+        let got = parse_intent_types("trx_transfer,delegate_resource,trx_transfer").unwrap();
+        assert_eq!(
+            got,
+            vec![IntentType::TrxTransfer, IntentType::DelegateResource]
+        );
+    }
+
+    #[test]
+    fn parse_intent_types_rejects_unknown() {
+        let err = parse_intent_types("nope").unwrap_err().to_string();
+        assert!(err.contains("unknown intent type"));
     }
 }

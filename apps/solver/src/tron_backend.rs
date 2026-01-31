@@ -1,6 +1,7 @@
 use crate::{
+    abi::encode_trc20_transfer,
     config::{JobConfig, TronConfig, TronMode},
-    hub::{DelegateResourceContract, HubClient, TransferContract, TronProof},
+    hub::{DelegateResourceContract, HubClient, TransferContract, TriggerSmartContract, TronProof},
     metrics::SolverTelemetry,
 };
 use alloy::primitives::{Address, B256, FixedBytes, U256, keccak256};
@@ -19,6 +20,11 @@ alloy::sol! {
         uint8 resource;
         uint256 balanceSun;
         uint256 lockPeriod;
+    }
+
+    struct USDTTransferIntent {
+        address to;
+        uint256 amount;
     }
 }
 
@@ -121,6 +127,49 @@ impl TronBackend {
                 .context("grpc delegate"),
         }
     }
+
+    pub async fn execute_usdt_transfer(
+        &self,
+        hub: &HubClient,
+        intent_id: B256,
+        intent_specs: &[u8],
+    ) -> Result<TronExecution> {
+        match self.cfg.mode {
+            TronMode::Mock => {
+                let reader = self
+                    .cfg
+                    .mock_reader_address
+                    .context("missing TRON_MOCK_READER_ADDRESS")?;
+                let intent =
+                    USDTTransferIntent::abi_decode(intent_specs).context("abi_decode USDT")?;
+
+                let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+                let tx_id = keccak256([intent_id.as_slice(), b":usdt"].concat());
+
+                let data = encode_trc20_transfer(intent.to, intent.amount);
+                let call = TriggerSmartContract {
+                    txId: tx_id,
+                    tronBlockNumber: U256::from(3u64),
+                    tronBlockTimestamp: 3u32,
+                    senderTron: tron_sender_from_privkey_or_fallback(self.cfg.private_key, hub),
+                    toTron: evm_to_tron_raw21(tron_usdt),
+                    callValueSun: U256::ZERO,
+                    data: data.into(),
+                };
+
+                hub.mock_set_trigger_tx(reader, call)
+                    .await
+                    .context("mock setTx")?;
+
+                Ok(TronExecution::ImmediateProof(empty_proof()))
+            }
+            TronMode::Grpc => self
+                .broadcast_usdt_transfer_grpc(hub, intent_specs)
+                .await
+                .map(|txid| TronExecution::BroadcastedTx { txid })
+                .context("grpc usdt transfer"),
+        }
+    }
 }
 
 impl TronBackend {
@@ -194,6 +243,43 @@ impl TronBackend {
         Ok(txid)
     }
 
+    async fn broadcast_usdt_transfer_grpc(
+        &self,
+        hub: &HubClient,
+        intent_specs: &[u8],
+    ) -> Result<[u8; 32]> {
+        let intent = USDTTransferIntent::abi_decode(intent_specs).context("abi_decode")?;
+        let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+
+        let wallet = TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
+        let mut grpc = self.connect_grpc().await?;
+
+        let data = encode_trc20_transfer(intent.to, intent.amount);
+        let fee_policy = tron::sender::FeePolicy {
+            fee_limit_cap_sun: self.cfg.fee_limit_cap_sun,
+            fee_limit_headroom_ppm: self.cfg.fee_limit_headroom_ppm,
+        };
+
+        let started = std::time::Instant::now();
+        let txid = wallet
+            .broadcast_trigger_smart_contract(
+                &mut grpc,
+                TronAddress::from_evm(tron_usdt),
+                data,
+                0,
+                fee_policy,
+            )
+            .await
+            .context("broadcast_trigger_smart_contract")?;
+        self.telemetry.tron_grpc_ms(
+            "broadcast_trigger_smart_contract",
+            true,
+            started.elapsed().as_millis() as u64,
+        );
+
+        Ok(txid)
+    }
+
     async fn connect_grpc(&self) -> Result<TronGrpc> {
         TronGrpc::connect(&self.cfg.grpc_url, self.cfg.api_key.as_deref())
             .await
@@ -247,4 +333,14 @@ fn evm_to_tron_raw21(a: Address) -> FixedBytes<21> {
     out[0] = 0x41;
     out[1..].copy_from_slice(a.as_slice());
     FixedBytes::from(out)
+}
+
+fn tron_sender_from_privkey_or_fallback(tron_pk: [u8; 32], hub: &HubClient) -> FixedBytes<21> {
+    if tron_pk != [0u8; 32] {
+        if let Ok(w) = TronWallet::new(tron_pk) {
+            let b = w.address().prefixed_bytes();
+            return FixedBytes::from_slice(&b);
+        }
+    }
+    evm_to_tron_raw21(hub.solver_address())
 }

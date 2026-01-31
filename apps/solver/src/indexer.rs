@@ -11,6 +11,7 @@ pub struct PoolOpenIntentRow {
     pub intent_specs: String,
     #[serde(default)]
     pub solver: Option<String>,
+    pub deadline: i64,
     pub solved: bool,
     pub funded: bool,
     pub closed: bool,

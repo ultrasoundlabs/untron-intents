@@ -1,3 +1,4 @@
+mod abi;
 mod config;
 mod db;
 mod hub;

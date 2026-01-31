@@ -294,30 +294,39 @@ Important:
 
 ## Milestones / checkboxes
 
+Status note (as of 2026-01-31): The solver has an MVP that fills `TRX_TRANSFER` + `DELEGATE_RESOURCE`
+in both `TRON_MODE=mock` and `TRON_MODE=grpc`, and can submit hub txs in both `HUB_TX_MODE=eoa`
+and `HUB_TX_MODE=safe4337`. The remaining phases below are still largely unimplemented.
+
 ### Phase 0: Foundations
 
-- [ ] Decide solver DB location (same Postgres instance + `solver` schema).
-- [ ] Add solver DB migrations + a migration runner.
-- [ ] Define persisted job state machine and idempotency rules.
-- [ ] Implement PostgREST client primitives (GET + pagination + filters).
+- [x] Decide solver DB location (same Postgres instance + `solver` schema).
+- [~] Add solver DB migrations + a migration runner.
+  - Implemented as idempotent schema init in code (`apps/solver/src/db.rs`) rather than `sqlx` migrations.
+- [~] Define persisted job state machine and idempotency rules.
+  - Minimal states exist (`claiming/claimed/tron_sent/proved`) but no leases/retry taxonomy yet.
+- [x] Implement PostgREST client primitives (GET + filters).
 - [ ] Implement “indexer lag” health gating.
 
 ### Phase 1: Minimal reliable loop (no Tron yet)
 
-- [ ] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
+- [~] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
+  - Polling exists, but jobs are not materialized as first-class rows; only “runs” are persisted.
 - [ ] Apply static policy filters + record `SKIPPED_*` reasons.
 - [ ] Acquire leases and mark `ACQUIRED`.
-- [ ] Submit AA claim tx for a chosen intent; persist submission metadata.
-- [ ] Confirm claim and mark `CLAIMED`.
+- [~] Submit claim tx for a chosen intent; persist submission metadata.
+  - Claim exists, persisted minimally (tx hash).
+- [~] Confirm claim and mark `CLAIMED`.
+  - Claim receipt wait exists.
 
 ### Phase 2: Tron execution (start with simplest)
 
-- [ ] TRX transfer executor:
+- [x] TRX transfer executor:
   - build/sign/broadcast tx,
   - wait confirmation/finality,
   - persist tx bytes + txid.
-- [ ] Proof builder for `TransferContract` fills.
-- [ ] Hub prove submission and confirmation.
+- [x] Proof builder for `TransferContract` fills.
+- [x] Hub prove submission and confirmation.
 
 ### Phase 3: USDT transfer
 
@@ -328,7 +337,7 @@ Important:
 
 ### Phase 4: Resource delegation
 
-- [ ] Implement `DelegateResourceContract` execution.
+- [x] Implement `DelegateResourceContract` execution.
 - [ ] Implement profitability model for lock-period/capital lock (simple version acceptable).
 - [ ] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
 

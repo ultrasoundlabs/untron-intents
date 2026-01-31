@@ -158,11 +158,18 @@ impl Solver {
         if row.solver.is_some() {
             return Ok(false);
         }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let slack = i64::try_from(self.cfg.policy.min_deadline_slack_secs).unwrap_or(i64::MAX);
+        if row.deadline.saturating_sub(now) < slack {
+            return Ok(false);
+        }
+
         let ty = IntentType::from_i16(row.intent_type)?;
-        Ok(matches!(
-            ty,
-            IntentType::TrxTransfer | IntentType::DelegateResource
-        ))
+        Ok(self.cfg.policy.enabled_intent_types.contains(&ty))
     }
 
     async fn try_fill(&mut self, row: PoolOpenIntentRow) -> Result<()> {
@@ -194,6 +201,11 @@ impl Solver {
                 .execute_trx_transfer(&self.hub, id, &intent_specs)
                 .await
                 .context("execute trx transfer")?,
+            IntentType::UsdtTransfer => self
+                .tron
+                .execute_usdt_transfer(&self.hub, id, &intent_specs)
+                .await
+                .context("execute usdt transfer")?,
             IntentType::DelegateResource => self
                 .tron
                 .execute_delegate_resource(&self.hub, id, &intent_specs)
