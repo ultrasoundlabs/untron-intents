@@ -8,8 +8,8 @@ import {ITronTxReader} from "./ITronTxReader.sol";
 /// @dev This interface defines the functions that can be called on the UntronV3 contract.
 /// @author Ultrasound Labs
 interface IUntronV3 {
-    /// @notice Returns the address of the TronTxReader contract.
-    /// @return The address of the TronTxReader contract.
+    /// @notice Returns the address of the Tron transaction reader/verifier contract.
+    /// @return The address of the Tron tx reader contract.
     function tronReader() external view returns (ITronTxReader);
 
     /// @notice Returns the address of UntronController contract on Tron.

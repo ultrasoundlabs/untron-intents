@@ -1,0 +1,29 @@
+{
+  "name": "@untron/research",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "run": "tsx",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier -c \"src/**/*.{ts,tsx,js,jsx}\""
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1",
+    "@noble/secp256k1": "^3.0.0",
+    "@untron/intents-contracts": "workspace:*",
+    "@untron/tron-protocol": "workspace:*",
+    "consola": "^3.4.2",
+    "dotenv": "^17.2.3",
+    "long": "^5.3.2",
+    "viem": "^2.38.6",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.2"
+  }
+}

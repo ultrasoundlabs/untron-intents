@@ -1,0 +1,60 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: postgres_exporter
+          static_configs:
+            - targets: ["postgres_exporter:9187"]
+
+        - job_name: postgrest
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["postgrest:3001"]
+
+processors:
+  resourcedetection:
+    detectors: [system]
+    override: false
+  resource/untron_instance:
+    attributes:
+      - key: untron.instance
+        action: upsert
+        value: ${env:UNTRON_INSTANCE}
+  batch:
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:9464"
+  debug:
+    verbosity: basic
+  otlp/tempo:
+    endpoint: ${env:TEMPO_OTLP_ENDPOINT}
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+      metrics:
+        readers:
+          - pull:
+              exporter:
+                prometheus:
+                  host: "0.0.0.0"
+                  port: 8888
+
+  pipelines:
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [resourcedetection, resource/untron_instance, batch]
+      exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [resourcedetection, resource/untron_instance, batch]
+      exporters: [debug, otlp/tempo]

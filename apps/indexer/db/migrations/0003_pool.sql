@@ -132,7 +132,7 @@ check (valid_to_seq is null or valid_to_seq > valid_from_seq) ;
 
 alter table pool.intent_versions
 add constraint pool_intent_type_check
-check (intent_type in (0, 1)) ;
+check (intent_type in (0, 1, 2, 3)) ;
 
 -- =========================
 -- POOL: LEDGERS (append-only actions)

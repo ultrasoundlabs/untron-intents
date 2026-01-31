@@ -1,0 +1,170 @@
+services:
+  db:
+    image: postgres:18.1
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: untron
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?set POSTGRES_EXPORTER_PASSWORD}
+      UI_READONLY_PASSWORD: ${UI_READONLY_PASSWORD:?set UI_READONLY_PASSWORD}
+      PGRST_AUTH_PASSWORD: ${PGRST_AUTH_PASSWORD:?set PGRST_AUTH_PASSWORD}
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d untron"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db_data:/var/lib/postgresql
+      - ../apps/indexer/db/init:/docker-entrypoint-initdb.d:ro
+
+  db_migrate:
+    build:
+      context: ..
+      dockerfile: apps/indexer/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/untron
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["--no-notify-pgrst"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.18.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgres://postgres_exporter:${POSTGRES_EXPORTER_PASSWORD}@db:5432/untron?sslmode=disable
+    expose:
+      - "9187"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.142.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # Default is the local Tempo container when --profile observability is enabled.
+      TEMPO_OTLP_ENDPOINT: ${TEMPO_OTLP_ENDPOINT:-tempo:4317}
+      UNTRON_INSTANCE: ${UNTRON_INSTANCE:-untron-v3}
+    volumes:
+      - ./otelcol/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "9464:9464" # Prometheus scrape endpoint (/metrics)
+      - "8888:8888"
+    depends_on:
+      - postgres_exporter
+
+  pgweb:
+    image: sosedoff/pgweb:0.17.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://ui_readonly:${UI_READONLY_PASSWORD}@db:5432/untron?sslmode=disable
+    command: ["pgweb", "--bind=0.0.0.0", "--listen=8081"]
+
+  postgrest:
+    image: postgrest/postgrest:v14.2
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      db_migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+      - "3001"
+    environment:
+      PGRST_DB_URI: postgres://pgrst_authenticator:${PGRST_AUTH_PASSWORD}@db:5432/untron
+      PGRST_DB_SCHEMAS: api
+      PGRST_DB_ANON_ROLE: pgrst_anon
+      # Security hardening:
+      # - OpenAPI should reflect the effective role privileges (so the UI doesn't advertise writes).
+      # - Force a rollback at end of every request as a defense-in-depth read-only guarantee.
+      PGRST_OPENAPI_MODE: follow-privileges
+      PGRST_DB_TX_END: rollback
+      PGRST_ADMIN_SERVER_PORT: 3001
+      PGRST_ADMIN_SERVER_HOST: 0.0.0.0
+
+  scalar:
+    image: scalarapi/api-reference:latest
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      # Prefix used by an upstream reverse-proxy that publishes the gateway under a path (e.g. "/v3"),
+      # while stripping that prefix before forwarding to this Caddy gateway.
+      EXTERNAL_PROXY_BASE_PATH: ${EXTERNAL_PROXY_BASE_PATH:-}
+      CDN_URL: ${EXTERNAL_PROXY_BASE_PATH:-}/scalar.js
+      API_REFERENCE_CONFIG: ${SCALAR_API_REFERENCE_CONFIG:-{"pathRouting":{"basePath":"${EXTERNAL_PROXY_BASE_PATH:-}/docs"},"sources":[{"url":"${EXTERNAL_PROXY_BASE_PATH:-}/openapi.json","title":"Untron API","default":true}]}}
+
+  openapi_sidecar:
+    build:
+      context: https://github.com/ultrasoundlabs/openapi-merger.git#bf53fb98e817199cfd28d6e08c513bb965093cde
+    restart: unless-stopped
+    environment:
+      # Ordered sources (2.x and/or 3.x) merged into a single OpenAPI 3.x doc.
+      # Optional sources are skipped if unreachable (useful for compose profiles).
+      # This is configured to match the legacy JS sidecar behavior:
+      # - "realtor" (optional) is the base spec, then "indexer" overlays it.
+      # - Only the indexer spec is filtered to GET-only.
+      OPENAPI_SOURCES: '[{"name":"realtor","url":"http://realtor:3000/openapi.json","optional":true,"timeout_ms":500},{"name":"indexer","url":"http://postgrest:3000/","timeout_ms":10000,"allowed_methods":["get"]}]'
+      CACHE_SECONDS: "30"
+      EXTERNAL_PROXY_BASE_PATH: ${EXTERNAL_PROXY_BASE_PATH:-}
+      OPENAPI_INFO_VERSION_FROM: "indexer"
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    depends_on:
+      - postgrest
+
+  indexer:
+    build:
+      context: ..
+      dockerfile: apps/indexer/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/untron
+    env_file:
+      - ./indexer.env
+    depends_on:
+      db_migrate:
+        condition: service_completed_successfully
+      otelcol:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  gateway:
+    image: caddy:2.9.1
+    restart: unless-stopped
+    depends_on:
+      postgrest:
+        condition: service_started
+      scalar:
+        condition: service_started
+      openapi_sidecar:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+
+volumes:
+  db_data:
+  grafana_data:
+  prometheus_data:
+  tempo_data:

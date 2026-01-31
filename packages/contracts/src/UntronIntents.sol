@@ -4,7 +4,12 @@ pragma solidity ^0.8.27;
 import {Call} from "./SwapExecutor.sol";
 import {IntentsForwarder} from "./IntentsForwarder.sol";
 import {IUntronV3} from "./external/interfaces/IUntronV3.sol";
-import {ITronTxReader, TriggerSmartContract} from "./external/interfaces/ITronTxReader.sol";
+import {
+    ITronTxReader,
+    TriggerSmartContract,
+    TransferContract,
+    DelegateResourceContract
+} from "./external/interfaces/ITronTxReader.sol";
 import {TokenUtils} from "./utils/TokenUtils.sol";
 
 import {LibBytes} from "solady/utils/g/LibBytes.sol";
@@ -55,9 +60,12 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     /// @notice Intent to execute an arbitrary Tron `TriggerSmartContract` call.
     /// @dev The proof must show a Tron transaction whose:
     /// - `toTron` address matches `to`, and
+    /// - `callValueSun` matches the attached TRX amount (in sun), and
     /// - `data` bytes match exactly.
     struct TriggerSmartContractIntent {
         address to;
+        /// @notice TRX attached to the Tron call, in sun (1 TRX = 1_000_000 sun).
+        uint256 callValueSun;
         bytes data;
     }
 
@@ -68,12 +76,30 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         uint256 amount;
     }
 
+    /// @notice Intent to perform a native Tron TRX transfer (`TransferContract`).
+    /// @dev Amount is in sun (1 TRX = 1_000_000 sun).
+    struct TRXTransferIntent {
+        address to;
+        uint256 amountSun;
+    }
+
+    /// @notice Intent to delegate Tron resources (`DelegateResourceContract`).
+    /// @dev `balanceSun` is the delegated/staked TRX amount in sun.
+    struct DelegateResourceIntent {
+        address receiver;
+        uint8 resource;
+        uint256 balanceSun;
+        uint256 lockPeriod;
+    }
+
     /// @notice Supported intent variants.
     /// @dev This contract is intentionally narrow: it only validates “what happened on Tron”
     /// for these specific patterns, and never attempts to run arbitrary logic itself.
     enum IntentType {
         TRIGGER_SMART_CONTRACT,
-        USDT_TRANSFER
+        USDT_TRANSFER,
+        TRX_TRANSFER,
+        DELEGATE_RESOURCE
     }
 
     /// @notice Canonical intent parameters.
@@ -462,34 +488,123 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         bytes32[] calldata proof,
         uint256 index
     ) external nonReentrant {
-        if (intents[id].deadline == 0) revert IntentNotFound();
-        if (intents[id].solver != msg.sender) revert NotSolver();
-        if (intents[id].solved) revert AlreadySolved();
+        IntentState storage st = intents[id];
+        if (st.deadline == 0) revert IntentNotFound();
+        if (st.solver != msg.sender) revert NotSolver();
+        if (st.solved) revert AlreadySolved();
 
+        (bytes32 tronTxId, uint256 tronBlockNumber) = _verifyAndMatchIntent(st.intent, blocks, encodedTx, proof, index);
+
+        st.solved = true;
+        // Refresh the "claimed at" timestamp so `TIME_TO_FILL` remains meaningful for any follow-up actions.
+        st.solverClaimedAt = block.timestamp;
+
+        _emitIntentSolved(id, msg.sender, tronTxId, tronBlockNumber);
+        _settleIfPossible(id);
+    }
+
+    function _verifyAndMatchIntent(
+        Intent storage intent,
+        bytes[20] calldata blocks,
+        bytes calldata encodedTx,
+        bytes32[] calldata proof,
+        uint256 index
+    ) private view returns (bytes32 tronTxId, uint256 tronBlockNumber) {
         ITronTxReader reader = V3.tronReader();
-        TriggerSmartContract memory tronTx = reader.readTriggerSmartContract(blocks, encodedTx, proof, index);
 
-        if (intents[id].intent.intentType == IntentType.TRIGGER_SMART_CONTRACT) {
-            TriggerSmartContractIntent memory intent =
-                abi.decode(intents[id].intent.intentSpecs, (TriggerSmartContractIntent));
-            if (address(uint160(uint168(tronTx.toTron))) != intent.to || !intent.data.eq(tronTx.data)) {
-                revert WrongTxProps();
-            }
-        } else if (intents[id].intent.intentType == IntentType.USDT_TRANSFER) {
-            USDTTransferIntent memory intent = abi.decode(intents[id].intent.intentSpecs, (USDTTransferIntent));
-            USDTTransferIntent memory parsedOperation = _dispatchTronTxCall(tronTx);
-
-            if (parsedOperation.to != intent.to || parsedOperation.amount != intent.amount) {
-                revert WrongTxProps();
-            }
+        if (intent.intentType == IntentType.TRIGGER_SMART_CONTRACT) {
+            return _verifyAndMatchTriggerSmartContract(reader, intent.intentSpecs, blocks, encodedTx, proof, index);
+        }
+        if (intent.intentType == IntentType.USDT_TRANSFER) {
+            return _verifyAndMatchUsdtTransfer(reader, intent.intentSpecs, blocks, encodedTx, proof, index);
+        }
+        if (intent.intentType == IntentType.TRX_TRANSFER) {
+            return _verifyAndMatchTrxTransfer(reader, intent.intentSpecs, blocks, encodedTx, proof, index);
+        }
+        if (intent.intentType == IntentType.DELEGATE_RESOURCE) {
+            return _verifyAndMatchDelegateResource(reader, intent.intentSpecs, blocks, encodedTx, proof, index);
         }
 
-        intents[id].solved = true;
-        // Refresh the "claimed at" timestamp so `TIME_TO_FILL` remains meaningful for any follow-up actions.
-        intents[id].solverClaimedAt = block.timestamp;
+        revert WrongTxProps();
+    }
 
-        _emitIntentSolved(id, msg.sender, tronTx.txId, tronTx.tronBlockNumber);
-        _settleIfPossible(id);
+    function _verifyAndMatchTriggerSmartContract(
+        ITronTxReader reader,
+        bytes storage intentSpecs,
+        bytes[20] calldata blocks,
+        bytes calldata encodedTx,
+        bytes32[] calldata proof,
+        uint256 index
+    ) private view returns (bytes32 tronTxId, uint256 tronBlockNumber) {
+        TriggerSmartContract memory tronTx = reader.readTriggerSmartContract(blocks, encodedTx, proof, index);
+
+        TriggerSmartContractIntent memory intent = abi.decode(intentSpecs, (TriggerSmartContractIntent));
+        if (
+            address(uint160(uint168(tronTx.toTron))) != intent.to || tronTx.callValueSun != intent.callValueSun
+                || !intent.data.eq(tronTx.data)
+        ) {
+            revert WrongTxProps();
+        }
+
+        return (tronTx.txId, tronTx.tronBlockNumber);
+    }
+
+    function _verifyAndMatchUsdtTransfer(
+        ITronTxReader reader,
+        bytes storage intentSpecs,
+        bytes[20] calldata blocks,
+        bytes calldata encodedTx,
+        bytes32[] calldata proof,
+        uint256 index
+    ) private view returns (bytes32 tronTxId, uint256 tronBlockNumber) {
+        TriggerSmartContract memory tronTx = reader.readTriggerSmartContract(blocks, encodedTx, proof, index);
+
+        USDTTransferIntent memory intent = abi.decode(intentSpecs, (USDTTransferIntent));
+        USDTTransferIntent memory parsedOperation = _dispatchTronTxCall(tronTx);
+        if (parsedOperation.to != intent.to || parsedOperation.amount != intent.amount) revert WrongTxProps();
+
+        return (tronTx.txId, tronTx.tronBlockNumber);
+    }
+
+    function _verifyAndMatchTrxTransfer(
+        ITronTxReader reader,
+        bytes storage intentSpecs,
+        bytes[20] calldata blocks,
+        bytes calldata encodedTx,
+        bytes32[] calldata proof,
+        uint256 index
+    ) private view returns (bytes32 tronTxId, uint256 tronBlockNumber) {
+        TransferContract memory transfer = reader.readTransferContract(blocks, encodedTx, proof, index);
+
+        TRXTransferIntent memory intent = abi.decode(intentSpecs, (TRXTransferIntent));
+        if (address(uint160(uint168(transfer.toTron))) != intent.to || transfer.amountSun != intent.amountSun) {
+            revert WrongTxProps();
+        }
+
+        return (transfer.txId, transfer.tronBlockNumber);
+    }
+
+    function _verifyAndMatchDelegateResource(
+        ITronTxReader reader,
+        bytes storage intentSpecs,
+        bytes[20] calldata blocks,
+        bytes calldata encodedTx,
+        bytes32[] calldata proof,
+        uint256 index
+    ) private view returns (bytes32 tronTxId, uint256 tronBlockNumber) {
+        DelegateResourceContract memory delegation =
+            reader.readDelegateResourceContract(blocks, encodedTx, proof, index);
+
+        DelegateResourceIntent memory intent = abi.decode(intentSpecs, (DelegateResourceIntent));
+        if (
+            address(uint160(uint168(delegation.receiverTron))) != intent.receiver
+                || delegation.resource != intent.resource || delegation.balanceSun != intent.balanceSun
+                || !delegation.lock || delegation.lockPeriod != intent.lockPeriod
+        ) {
+            revert WrongTxProps();
+        }
+
+        return (delegation.txId, delegation.tronBlockNumber);
     }
 
     /// @notice Pulls the escrow for an existing receiver intent into this contract (then settles if solved).

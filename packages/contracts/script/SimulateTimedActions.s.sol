@@ -8,7 +8,7 @@ import {AutoCreateXScript} from "./utils/AutoCreateXScript.sol";
 import {UntronIntents} from "../src/UntronIntents.sol";
 
 /// @notice Executes time-gated protocol actions (e.g., `closeIntent`, `unclaimIntent`) after time has advanced.
-/// @dev Reads state produced by `script/SimulateActivity.s.sol` from `out/activity-state-<chainid>.json`.
+/// @dev Reads state produced by `script/SimulateActivity.s.sol` from `script/activity-state-<chainid>.json`.
 contract SimulateTimedActions is AutoCreateXScript {
     using stdJson for string;
 
@@ -16,7 +16,7 @@ contract SimulateTimedActions is AutoCreateXScript {
         // Not strictly required here, but keeps the script consistent with other scripts.
         _ensureCreateX();
 
-        string memory path = string.concat("out/activity-state-", vm.toString(block.chainid), ".json");
+        string memory path = string.concat("script/activity-state-", vm.toString(block.chainid), ".json");
         string memory json = vm.readFile(path);
 
         address intentsAddr = json.readAddress(".intents");

@@ -4,7 +4,11 @@ pragma solidity ^0.8.27;
 import {UntronTestBase} from "./helpers/UntronTestBase.sol";
 
 import {UntronIntents} from "../src/UntronIntents.sol";
-import {TriggerSmartContract} from "../src/external/interfaces/ITronTxReader.sol";
+import {
+    TriggerSmartContract,
+    TransferContract,
+    DelegateResourceContract
+} from "../src/external/interfaces/ITronTxReader.sol";
 
 contract UntronIntentsLifecycleTest is UntronTestBase {
     function setUp() public override {
@@ -22,7 +26,7 @@ contract UntronIntentsLifecycleTest is UntronTestBase {
         UntronIntents.Intent memory intent = UntronIntents.Intent({
             intentType: UntronIntents.IntentType.TRIGGER_SMART_CONTRACT,
             intentSpecs: abi.encode(
-                UntronIntents.TriggerSmartContractIntent({to: makeAddr("tronTarget"), data: hex"abcd"})
+                UntronIntents.TriggerSmartContractIntent({to: makeAddr("tronTarget"), callValueSun: 0, data: hex"abcd"})
             ),
             refundBeneficiary: maker,
             token: address(usdc),
@@ -48,6 +52,7 @@ contract UntronIntentsLifecycleTest is UntronTestBase {
         {
             TriggerSmartContract memory tx_;
             tx_.toTron = _tronAddrBytes21(specs.to);
+            tx_.callValueSun = specs.callValueSun;
             tx_.data = specs.data;
             tronReader.setTx(tx_);
         }
@@ -57,6 +62,280 @@ contract UntronIntentsLifecycleTest is UntronTestBase {
         // Solver gets deposit + escrowed USDC.
         assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT());
         assertEq(usdc.balanceOf(solver), escrow);
+    }
+
+    function test_createIntent_triggerSmartContract_checksCallValueSun() public {
+        // Maker escrows USDC.
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        uint256 callValueSun = 123_456_789;
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.TRIGGER_SMART_CONTRACT,
+            intentSpecs: abi.encode(
+                UntronIntents.TriggerSmartContractIntent({
+                    to: makeAddr("tronTarget"), callValueSun: callValueSun, data: hex"abcd"
+                })
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        UntronIntents.TriggerSmartContractIntent memory specs =
+            abi.decode(intent.intentSpecs, (UntronIntents.TriggerSmartContractIntent));
+
+        // Mock Tron tx that matches the intent, including call value.
+        {
+            TriggerSmartContract memory tx_;
+            tx_.toTron = _tronAddrBytes21(specs.to);
+            tx_.callValueSun = specs.callValueSun;
+            tx_.data = specs.data;
+            tronReader.setTx(tx_);
+        }
+
+        _proveAs(solver, id);
+
+        assertEq(usdc.balanceOf(solver), escrow);
+        assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT());
+    }
+
+    function test_createIntent_triggerSmartContract_revertsOnCallValueMismatch() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.TRIGGER_SMART_CONTRACT,
+            intentSpecs: abi.encode(
+                UntronIntents.TriggerSmartContractIntent({to: makeAddr("tronTarget"), callValueSun: 1, data: hex"abcd"})
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        UntronIntents.TriggerSmartContractIntent memory specs =
+            abi.decode(intent.intentSpecs, (UntronIntents.TriggerSmartContractIntent));
+
+        // Mock Tron tx with mismatching call value.
+        {
+            TriggerSmartContract memory tx_;
+            tx_.toTron = _tronAddrBytes21(specs.to);
+            tx_.callValueSun = specs.callValueSun + 1;
+            tx_.data = specs.data;
+            tronReader.setTx(tx_);
+        }
+
+        vm.expectRevert(UntronIntents.WrongTxProps.selector);
+        _proveAs(solver, id);
+    }
+
+    function test_createIntent_trxTransfer_happyPath() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address toTron = makeAddr("trxRecipient");
+        uint256 amountSun = 1_234_567;
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.TRX_TRANSFER,
+            intentSpecs: abi.encode(UntronIntents.TRXTransferIntent({to: toTron, amountSun: amountSun})),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        // Mock Tron tx that matches the intent.
+        {
+            TransferContract memory tx_;
+            tx_.toTron = _tronAddrBytes21(toTron);
+            tx_.amountSun = amountSun;
+            tronReader.setTransferTx(tx_);
+        }
+
+        _proveAs(solver, id);
+
+        assertEq(usdc.balanceOf(solver), escrow);
+        assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT());
+    }
+
+    function test_createIntent_trxTransfer_revertsOnMismatch() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address toTron = makeAddr("trxRecipient");
+        uint256 amountSun = 1_234_567;
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.TRX_TRANSFER,
+            intentSpecs: abi.encode(UntronIntents.TRXTransferIntent({to: toTron, amountSun: amountSun})),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        // Mock Tron tx with mismatching amount.
+        {
+            TransferContract memory tx_;
+            tx_.toTron = _tronAddrBytes21(toTron);
+            tx_.amountSun = amountSun + 1;
+            tronReader.setTransferTx(tx_);
+        }
+
+        vm.expectRevert(UntronIntents.WrongTxProps.selector);
+        _proveAs(solver, id);
+    }
+
+    function test_createIntent_delegateResource_happyPath() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address receiverTron = makeAddr("tronReceiver");
+        uint8 resource = 1; // ENERGY
+        uint256 balanceSun = 23_508e6; // 23_508 TRX (sun)
+        uint256 lockPeriod = 200; // ~10 minutes if interpreted as blocks
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.DELEGATE_RESOURCE,
+            intentSpecs: abi.encode(
+                UntronIntents.DelegateResourceIntent({
+                    receiver: receiverTron, resource: resource, balanceSun: balanceSun, lockPeriod: lockPeriod
+                })
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        // Mock Tron tx that matches the intent.
+        {
+            DelegateResourceContract memory tx_;
+            tx_.receiverTron = _tronAddrBytes21(receiverTron);
+            tx_.resource = resource;
+            tx_.balanceSun = balanceSun;
+            tx_.lock = true;
+            tx_.lockPeriod = lockPeriod;
+            tronReader.setDelegateResourceTx(tx_);
+        }
+
+        _proveAs(solver, id);
+
+        assertEq(usdc.balanceOf(solver), escrow);
+        assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT());
+    }
+
+    function test_createIntent_delegateResource_revertsOnMismatch() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address receiverTron = makeAddr("tronReceiver");
+        uint8 resource = 1; // ENERGY
+        uint256 balanceSun = 23_508e6;
+        uint256 lockPeriod = 200;
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.DELEGATE_RESOURCE,
+            intentSpecs: abi.encode(
+                UntronIntents.DelegateResourceIntent({
+                    receiver: receiverTron, resource: resource, balanceSun: balanceSun, lockPeriod: lockPeriod
+                })
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        // Mock Tron tx with mismatching lock.
+        {
+            DelegateResourceContract memory tx_;
+            tx_.receiverTron = _tronAddrBytes21(receiverTron);
+            tx_.resource = resource;
+            tx_.balanceSun = balanceSun;
+            tx_.lock = false;
+            tx_.lockPeriod = lockPeriod;
+            tronReader.setDelegateResourceTx(tx_);
+        }
+
+        vm.expectRevert(UntronIntents.WrongTxProps.selector);
+        _proveAs(solver, id);
     }
 
     function test_unclaimIntent_unfunded_refundsSolverDeposit() public {

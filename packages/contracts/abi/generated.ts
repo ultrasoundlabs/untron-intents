@@ -3753,6 +3753,69 @@ export const iTronTxReaderAbi = [
       { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
       { name: 'index', internalType: 'uint256', type: 'uint256' },
     ],
+    name: 'readDelegateResourceContract',
+    outputs: [
+      {
+        name: 'delegation',
+        internalType: 'struct DelegateResourceContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          { name: 'balanceSun', internalType: 'uint256', type: 'uint256' },
+          { name: 'lockPeriod', internalType: 'uint256', type: 'uint256' },
+          { name: 'ownerTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'receiverTron', internalType: 'bytes21', type: 'bytes21' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'resource', internalType: 'uint8', type: 'uint8' },
+          { name: 'lock', internalType: 'bool', type: 'bool' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'blocks', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: 'encodedTx', internalType: 'bytes', type: 'bytes' },
+      { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'readTransferContract',
+    outputs: [
+      {
+        name: 'transfer',
+        internalType: 'struct TransferContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'amountSun', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'blocks', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: 'encodedTx', internalType: 'bytes', type: 'bytes' },
+      { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
     name: 'readTriggerSmartContract',
     outputs: [
       {
@@ -3769,6 +3832,7 @@ export const iTronTxReaderAbi = [
           },
           { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
           { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'callValueSun', internalType: 'uint256', type: 'uint256' },
           { name: 'data', internalType: 'bytes', type: 'bytes' },
         ],
       },
@@ -5340,6 +5404,69 @@ export const mockTronTxReaderAbi = [
       { name: '', internalType: 'bytes32[]', type: 'bytes32[]' },
       { name: '', internalType: 'uint256', type: 'uint256' },
     ],
+    name: 'readDelegateResourceContract',
+    outputs: [
+      {
+        name: 'delegation',
+        internalType: 'struct DelegateResourceContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          { name: 'balanceSun', internalType: 'uint256', type: 'uint256' },
+          { name: 'lockPeriod', internalType: 'uint256', type: 'uint256' },
+          { name: 'ownerTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'receiverTron', internalType: 'bytes21', type: 'bytes21' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'resource', internalType: 'uint8', type: 'uint8' },
+          { name: 'lock', internalType: 'bool', type: 'bool' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+      { name: '', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'readTransferContract',
+    outputs: [
+      {
+        name: 'transfer',
+        internalType: 'struct TransferContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'amountSun', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+      { name: '', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
     name: 'readTriggerSmartContract',
     outputs: [
       {
@@ -5356,11 +5483,65 @@ export const mockTronTxReaderAbi = [
           },
           { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
           { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'callValueSun', internalType: 'uint256', type: 'uint256' },
           { name: 'data', internalType: 'bytes', type: 'bytes' },
         ],
       },
     ],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'tx_',
+        internalType: 'struct DelegateResourceContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          { name: 'balanceSun', internalType: 'uint256', type: 'uint256' },
+          { name: 'lockPeriod', internalType: 'uint256', type: 'uint256' },
+          { name: 'ownerTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'receiverTron', internalType: 'bytes21', type: 'bytes21' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'resource', internalType: 'uint8', type: 'uint8' },
+          { name: 'lock', internalType: 'bool', type: 'bool' },
+        ],
+      },
+    ],
+    name: 'setDelegateResourceTx',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'tx_',
+        internalType: 'struct TransferContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'amountSun', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    name: 'setTransferTx',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -5379,6 +5560,7 @@ export const mockTronTxReaderAbi = [
           },
           { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
           { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'callValueSun', internalType: 'uint256', type: 'uint256' },
           { name: 'data', internalType: 'bytes', type: 'bytes' },
         ],
       },
@@ -5907,6 +6089,191 @@ export const stablecoinQuoterAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// StatefulTronTxReader
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const statefulTronTxReaderAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_srs', internalType: 'bytes20[27]', type: 'bytes20[27]' },
+      {
+        name: '_witnessDelegatees',
+        internalType: 'bytes20[27]',
+        type: 'bytes20[27]',
+      },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'blocks', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: 'encodedTx', internalType: 'bytes', type: 'bytes' },
+      { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'readDelegateResourceContract',
+    outputs: [
+      {
+        name: 'delegation',
+        internalType: 'struct DelegateResourceContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          { name: 'balanceSun', internalType: 'uint256', type: 'uint256' },
+          { name: 'lockPeriod', internalType: 'uint256', type: 'uint256' },
+          { name: 'ownerTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'receiverTron', internalType: 'bytes21', type: 'bytes21' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'resource', internalType: 'uint8', type: 'uint8' },
+          { name: 'lock', internalType: 'bool', type: 'bool' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'blocks', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: 'encodedTx', internalType: 'bytes', type: 'bytes' },
+      { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'readTransferContract',
+    outputs: [
+      {
+        name: 'transfer',
+        internalType: 'struct TransferContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'amountSun', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'blocks', internalType: 'bytes[20]', type: 'bytes[20]' },
+      { name: 'encodedTx', internalType: 'bytes', type: 'bytes' },
+      { name: 'proof', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'readTriggerSmartContract',
+    outputs: [
+      {
+        name: 'callData',
+        internalType: 'struct TriggerSmartContract',
+        type: 'tuple',
+        components: [
+          { name: 'txId', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'tronBlockNumber', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'tronBlockTimestamp',
+            internalType: 'uint32',
+            type: 'uint32',
+          },
+          { name: 'senderTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'toTron', internalType: 'bytes21', type: 'bytes21' },
+          { name: 'callValueSun', internalType: 'uint256', type: 'uint256' },
+          { name: 'data', internalType: 'bytes', type: 'bytes' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'bytes20', type: 'bytes20' }],
+    name: 'srIndexPlus1',
+    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'srs',
+    outputs: [{ name: '', internalType: 'bytes20', type: 'bytes20' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'witnessDelegatees',
+    outputs: [{ name: '', internalType: 'bytes20', type: 'bytes20' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'sr', internalType: 'bytes20', type: 'bytes20' }],
+    name: 'DuplicateSr',
+  },
+  { type: 'error', inputs: [], name: 'InvalidBlockSequence' },
+  {
+    type: 'error',
+    inputs: [{ name: 'got', internalType: 'uint256', type: 'uint256' }],
+    name: 'InvalidEncodedBlockLength',
+  },
+  { type: 'error', inputs: [], name: 'InvalidHeaderPrefix' },
+  { type: 'error', inputs: [], name: 'InvalidTxMerkleProof' },
+  {
+    type: 'error',
+    inputs: [{ name: 'got', internalType: 'uint8', type: 'uint8' }],
+    name: 'InvalidWitnessAddressPrefix',
+  },
+  { type: 'error', inputs: [], name: 'InvalidWitnessSignature' },
+  { type: 'error', inputs: [], name: 'NotDelegateResourceContract' },
+  { type: 'error', inputs: [], name: 'NotTransferContract' },
+  { type: 'error', inputs: [], name: 'NotTriggerSmartContract' },
+  { type: 'error', inputs: [], name: 'ProtoInvalidWireType' },
+  { type: 'error', inputs: [], name: 'ProtoTruncated' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+      { name: 'prev', internalType: 'bytes20', type: 'bytes20' },
+      { name: 'next', internalType: 'bytes20', type: 'bytes20' },
+    ],
+    name: 'SrSetNotSorted',
+  },
+  { type: 'error', inputs: [], name: 'TimestampOverflow' },
+  { type: 'error', inputs: [], name: 'TronInvalidBalance' },
+  { type: 'error', inputs: [], name: 'TronInvalidCallValue' },
+  { type: 'error', inputs: [], name: 'TronInvalidContractLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidContractPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidLock' },
+  { type: 'error', inputs: [], name: 'TronInvalidLockPeriod' },
+  { type: 'error', inputs: [], name: 'TronInvalidOwnerLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidOwnerPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidReceiverLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidReceiverPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidResource' },
+  { type: 'error', inputs: [], name: 'TronTxNotSuccessful' },
+  {
+    type: 'error',
+    inputs: [{ name: 'sr', internalType: 'bytes20', type: 'bytes20' }],
+    name: 'UnknownSr',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SwapExecutor
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -5957,6 +6324,62 @@ export const swapExecutorAbi = [
 
 export const tokenUtilsAbi = [
   { type: 'error', inputs: [], name: 'InsufficientETH' },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// TronTxReaderErrors
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const tronTxReaderErrorsAbi = [
+  {
+    type: 'error',
+    inputs: [{ name: 'sr', internalType: 'bytes20', type: 'bytes20' }],
+    name: 'DuplicateSr',
+  },
+  { type: 'error', inputs: [], name: 'InvalidBlockSequence' },
+  {
+    type: 'error',
+    inputs: [{ name: 'got', internalType: 'uint256', type: 'uint256' }],
+    name: 'InvalidEncodedBlockLength',
+  },
+  { type: 'error', inputs: [], name: 'InvalidHeaderPrefix' },
+  { type: 'error', inputs: [], name: 'InvalidTxMerkleProof' },
+  {
+    type: 'error',
+    inputs: [{ name: 'got', internalType: 'uint8', type: 'uint8' }],
+    name: 'InvalidWitnessAddressPrefix',
+  },
+  { type: 'error', inputs: [], name: 'InvalidWitnessSignature' },
+  { type: 'error', inputs: [], name: 'NotDelegateResourceContract' },
+  { type: 'error', inputs: [], name: 'NotTransferContract' },
+  { type: 'error', inputs: [], name: 'NotTriggerSmartContract' },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'index', internalType: 'uint256', type: 'uint256' },
+      { name: 'prev', internalType: 'bytes20', type: 'bytes20' },
+      { name: 'next', internalType: 'bytes20', type: 'bytes20' },
+    ],
+    name: 'SrSetNotSorted',
+  },
+  { type: 'error', inputs: [], name: 'TimestampOverflow' },
+  { type: 'error', inputs: [], name: 'TronInvalidBalance' },
+  { type: 'error', inputs: [], name: 'TronInvalidCallValue' },
+  { type: 'error', inputs: [], name: 'TronInvalidContractLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidContractPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidLock' },
+  { type: 'error', inputs: [], name: 'TronInvalidLockPeriod' },
+  { type: 'error', inputs: [], name: 'TronInvalidOwnerLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidOwnerPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidReceiverLength' },
+  { type: 'error', inputs: [], name: 'TronInvalidReceiverPrefix' },
+  { type: 'error', inputs: [], name: 'TronInvalidResource' },
+  { type: 'error', inputs: [], name: 'TronTxNotSuccessful' },
+  {
+    type: 'error',
+    inputs: [{ name: 'sr', internalType: 'bytes20', type: 'bytes20' }],
+    name: 'UnknownSr',
+  },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -255,7 +255,7 @@ contract SimulateActivity is AutoCreateXScript {
                 intentType: UntronIntents.IntentType.TRIGGER_SMART_CONTRACT,
                 intentSpecs: abi.encode(
                     UntronIntents.TriggerSmartContractIntent({
-                        to: address(uint160(uint256(keccak256("tronTarget")))), data: hex"abcd"
+                        to: address(uint160(uint256(keccak256("tronTarget")))), callValueSun: 0, data: hex"abcd"
                     })
                 ),
                 refundBeneficiary: maker,
@@ -332,7 +332,7 @@ contract SimulateActivity is AutoCreateXScript {
                 intentType: UntronIntents.IntentType.TRIGGER_SMART_CONTRACT,
                 intentSpecs: abi.encode(
                     UntronIntents.TriggerSmartContractIntent({
-                        to: address(uint160(uint256(keccak256("tronTarget2")))), data: hex"beef"
+                        to: address(uint160(uint256(keccak256("tronTarget2")))), callValueSun: 0, data: hex"beef"
                     })
                 ),
                 refundBeneficiary: maker,
@@ -521,6 +521,7 @@ contract SimulateActivity is AutoCreateXScript {
 
         TriggerSmartContract memory tx_;
         tx_.toTron = _tronAddrBytes21(specs.to);
+        tx_.callValueSun = specs.callValueSun;
         tx_.data = specs.data;
         _startBroadcast(pk);
         reader.setTx(tx_);
@@ -566,7 +567,9 @@ contract SimulateActivity is AutoCreateXScript {
         json = vm.serializeBytes32(obj, "closeIntentId", closeIntentId);
         json = vm.serializeBytes32(obj, "unclaimIntentId", unclaimIntentId);
 
-        string memory path = string.concat("out/activity-state-", vm.toString(block.chainid), ".json");
+        // Do not write into `out/` because that directory is also used for compiler artifacts.
+        // Writing arbitrary JSON there breaks tooling like `forge bind` which expects ABIs.
+        string memory path = string.concat("script/activity-state-", vm.toString(block.chainid), ".json");
         vm.writeJson(json, path);
         console2.log("wrote activity state", path);
     }

@@ -1,0 +1,22 @@
+:8080 {
+  # OpenAPI for Swagger UI (PostgREST GET-only + optional services)
+  handle /openapi.json {
+    reverse_proxy openapi_sidecar:5000
+  }
+
+  # API docs reference powered by Scalar
+  handle_path /docs* {
+    reverse_proxy scalar:8080
+  }
+  handle /scalar.js {
+    reverse_proxy scalar:8080
+  }
+  handle /configuration.json {
+    reverse_proxy scalar:8080
+  }
+
+  # Everything else goes to PostgREST (including "/" which serves the raw OpenAPI)
+  handle {
+    reverse_proxy postgrest:3000
+  }
+}

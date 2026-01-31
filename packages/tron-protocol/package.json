@@ -1,0 +1,79 @@
+{
+  "name": "@untron/tron-protocol",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/gen/api/api.d.ts",
+      "default": "./dist/gen/api/api.js"
+    },
+    "./tron": {
+      "types": "./dist/gen/core/Tron.d.ts",
+      "default": "./dist/gen/core/Tron.js"
+    },
+    "./api/*": {
+      "types": "./dist/gen/api/*.d.ts",
+      "default": "./dist/gen/api/*.js"
+    },
+    "./core/*": {
+      "types": "./dist/gen/core/*.d.ts",
+      "default": "./dist/gen/core/*.js"
+    },
+    "./google/*": {
+      "types": "./dist/gen/google/*.d.ts",
+      "default": "./dist/gen/google/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "protos"
+  ],
+  "scripts": {
+    "codegen": "mkdir -p src/gen && protoc -I protos -I node_modules/google-proto-files --ts_proto_out=src/gen --ts_proto_opt=outputServices=grpc-js,env=node,esModuleInterop=true,forceLong=long,importSuffix=.js,unknownFields=true protos/api/api.proto",
+    "build": "node ./scripts/build.mjs",
+    "prepublishOnly": "pnpm run codegen && pnpm run -s check-dirty && pnpm run build",
+    "check-dirty": "git diff --quiet -- src/gen || (echo 'Codegen produced diffs. Commit them.' && exit 1)",
+    "smoke": "node ./scripts/smoke.mjs"
+  },
+  "typesVersions": {
+    "*": {
+      "api": [
+        "dist/gen/api/api.d.ts"
+      ],
+      "tron": [
+        "dist/gen/core/Tron.d.ts"
+      ],
+      "api/*": [
+        "dist/gen/api/*"
+      ],
+      "core/*": [
+        "dist/gen/core/*"
+      ],
+      "google/*": [
+        "dist/gen/google/*"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "google-proto-files": "^5.0.1",
+    "ts-proto": "^1.181.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.6",
+    "long": "^5",
+    "protobufjs": "^7"
+  }
+}
+
+

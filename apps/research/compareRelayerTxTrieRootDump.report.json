@@ -1,0 +1,37 @@
+{
+  "blockNumber": 79072107,
+  "mismatch": {
+    "index": 187,
+    "kind": "leaf",
+    "dump": "0x4576ee97380eb61ff9344896f680978d53285fc5eecff809063aea08a0fe56d7",
+    "live": "0x2ceec10f25a12ba352c7f2a053981da39f5a31cc70beef736c2952d0955b94c2"
+  },
+  "dumpHeaderRoot": "0xf557fe6879e64fc27d21c3a2a99e097636a8f7253a6a48392742b411e97d8e69",
+  "liveHeaderRoot": "0xf557fe6879e64fc27d21c3a2a99e097636a8f7253a6a48392742b411e97d8e69",
+  "liveComputedRoot": "0xf557fe6879e64fc27d21c3a2a99e097636a8f7253a6a48392742b411e97d8e69",
+  "details": {
+    "index": 187,
+    "txid": "0x6e27bfe4e1d4cf2f12718d73363bfd6367a4f7ce84551458910878430e6c3a33",
+    "dumpRetHex": "0x1801",
+    "liveRetHex": "0x1801d23e0cc83e81f6a50cd03ed4b6a20f",
+    "dump": {
+      "encodedTxLen": 221,
+      "sigCount": 1,
+      "retCount": 1,
+      "rawDataLen": 147,
+      "hasRawData": true,
+      "hasRet": true
+    },
+    "live": {
+      "encodedTxLen": 236,
+      "sigCount": 1,
+      "retCount": 1,
+      "rawDataLen": 147,
+      "hasRawData": true,
+      "hasRet": true
+    },
+    "rawDataEqual": true,
+    "retEqual": false,
+    "signaturesEqual": true
+  }
+}
