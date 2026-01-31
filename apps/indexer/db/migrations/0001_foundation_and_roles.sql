@@ -361,6 +361,9 @@ This domain is used for onchain amounts, ids, nonces, and other uint256-valued f
 comment on domain public.i256 is
 $$Signed 256-bit integer stored as NUMERIC(78,0)
 
+Solidity `int256` does not fit in Postgres BIGINT, so we store it as NUMERIC with sufficient precision.
+This domain is used for signed onchain values when needed.$$ ;
+
 -- Enum types
 comment on type chain.stream is
 $$ Untron event stream identifier

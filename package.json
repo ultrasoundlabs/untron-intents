@@ -10,6 +10,7 @@
     "fmt:sol": "pnpm --filter @untron/intents-contracts fmt:sol",
     "fmt:ts": "prettier -c '**/*.{ts,tsx,js,jsx}'",
     "format:sol": "pnpm --filter @untron/intents-contracts format:sol",
+    "format:rs": "cargo fmt -p indexer -p solver -p e2e",
     "format:ts": "prettier --write '**/*.{ts,tsx,js,jsx,mjs}'",
     "format": "run-s format:*",
     "test:ci": "pnpm --filter @untron/intents-contracts test:ci",
