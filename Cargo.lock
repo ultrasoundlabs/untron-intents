@@ -2158,11 +2158,15 @@ name = "e2e"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
+ "prost 0.14.3",
  "reqwest",
  "serde_json",
+ "sha2",
  "sqlx",
  "testcontainers",
  "tokio",
+ "tron",
 ]
 
 [[package]]
@@ -5169,6 +5173,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tokio-util",
  "tracing",
@@ -5176,6 +5181,7 @@ dependencies = [
  "untron-intents-bindings",
  "untron-observability",
  "untron-v3-bindings",
+ "url",
 ]
 
 [[package]]
@@ -5231,6 +5237,7 @@ dependencies = [
  "indexmap 2.13.0",
  "log",
  "memchr",
+ "native-tls",
  "once_cell",
  "percent-encoding",
  "rustls",
@@ -6092,7 +6099,6 @@ dependencies = [
 [[package]]
 name = "tron"
 version = "0.1.0"
-source = "git+https://github.com/ultrasoundlabs/untron-v3?rev=f392dd1#f392dd1dcc426fcb18dcd68a3cac9ffc55ecd8e6"
 dependencies = [
  "alloy",
  "anyhow",

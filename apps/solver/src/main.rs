@@ -1,5 +1,11 @@
 mod config;
+mod db;
+mod hub;
+mod indexer;
 mod metrics;
+mod runner;
+mod tron_backend;
+mod types;
 
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
@@ -19,7 +25,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         indexer = %cfg.indexer.base_url,
         hub_rpc = %cfg.hub.rpc_url,
-        tron_grpc = %cfg.tron.grpc_url,
+        tron_mode = ?cfg.tron.mode,
         "config loaded"
     );
 

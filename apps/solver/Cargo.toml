@@ -18,7 +18,9 @@ opentelemetry = "0.31.0"
 alloy = { version = "1.2.1", features = ["full", "json", "serde", "contract", "sol-types", "eip712"] }
 alloy-provider = { version = "1.2", features = ["erc4337-api"] }
 tokio = { version = "1.49.0", features = ["full"] }
-tron = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "tron", rev = "f392dd1" }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "migrate", "macros"] }
+url = "2.5.4"
+tron = { path = "../../crates/tron" }
 aa = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "aa", rev = "f392dd1" }
 untron-observability = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "untron-observability", rev = "f392dd1" }
 untron-v3-bindings = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "untron-v3-bindings", rev = "f392dd1" }
