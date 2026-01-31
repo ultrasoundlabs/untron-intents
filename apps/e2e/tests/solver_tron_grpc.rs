@@ -6,6 +6,7 @@ use e2e::{
         cast_abi_encode, run_cast_create_delegate_resource_intent,
         run_cast_create_trx_transfer_intent, run_cast_mint_mock_erc20,
     },
+    docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     forge::{
         run_forge_build, run_forge_create_mock_erc20, run_forge_create_mock_untron_v3,
         run_forge_create_test_tron_tx_reader_no_sig, run_forge_create_untron_intents_with_args,
@@ -79,22 +80,13 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
     let network = format!("e2e-net-{}", find_free_port()?);
     let pg_name = format!("pg-{}", find_free_port()?);
 
-    let pg = GenericImage::new("postgres", "18.1")
-        .with_exposed_port(5432.tcp())
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_DB", "untron")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_network(network.clone())
-        .with_container_name(pg_name.clone())
-        .start()
-        .await
-        .context("start postgres container")?;
-
-    let pg_port = pg.get_host_port_ipv4(5432).await?;
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{pg_port}/untron");
+    let pg = start_postgres(PostgresOptions {
+        network: Some(network.clone()),
+        container_name: Some(pg_name.clone()),
+        ..Default::default()
+    })
+    .await?;
+    let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 
     cargo_build_indexer_bins()?;
@@ -159,22 +151,13 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
     let pgrst_pw = "pgrst_pw";
     configure_postgrest_roles(&db_url, pgrst_pw).await?;
 
-    let pgrst = GenericImage::new("postgrest/postgrest", "v14.2")
-        .with_exposed_port(3000.tcp())
-        .with_wait_for(WaitFor::Nothing)
-        .with_env_var(
-            "PGRST_DB_URI",
-            format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
-        )
-        .with_env_var("PGRST_DB_SCHEMA", "api")
-        .with_env_var("PGRST_DB_ANON_ROLE", "pgrst_anon")
-        .with_network(network)
-        .start()
-        .await
-        .context("start postgrest container")?;
-
-    let pgrst_port = pgrst.get_host_port_ipv4(3000).await?;
-    let postgrest_url = format!("http://127.0.0.1:{pgrst_port}");
+    let pgrst = start_postgrest(PostgrestOptions {
+        network,
+        db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
+        ..Default::default()
+    })
+    .await?;
+    let postgrest_url = pgrst.base_url.clone();
     wait_for_http_ok(&format!("{postgrest_url}/health"), Duration::from_secs(30)).await?;
 
     // Start solver configured for Tron gRPC mode.

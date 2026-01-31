@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, run_migrations},
+    docker::{PostgresOptions, start_postgres},
     forge::{run_forge_build, run_forge_create_intents_forwarder, run_forge_create_untron_intents},
     postgres::wait_for_postgres,
     process::KillOnDrop,
@@ -11,9 +12,6 @@ use e2e::{
 use sqlx::Row;
 use sqlx::{Connection, PgConnection};
 use std::time::Duration;
-use testcontainers::core::{IntoContainerPort, WaitFor};
-use testcontainers::runners::AsyncRunner;
-use testcontainers::{GenericImage, ImageExt};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_forwarder_stream_ingests_bridgers_set() -> Result<()> {
@@ -21,20 +19,8 @@ async fn e2e_forwarder_stream_ingests_bridgers_set() -> Result<()> {
         return Ok(());
     }
 
-    let pg = GenericImage::new("postgres", "18.1")
-        .with_exposed_port(5432.tcp())
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_DB", "untron")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .start()
-        .await
-        .context("start postgres container")?;
-
-    let pg_port = pg.get_host_port_ipv4(5432).await?;
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{pg_port}/untron");
+    let pg = start_postgres(PostgresOptions::default()).await?;
+    let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 
     cargo_build_indexer_bins()?;

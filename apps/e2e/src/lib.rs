@@ -1,6 +1,7 @@
 pub mod anvil;
 pub mod binaries;
 pub mod cast;
+pub mod docker;
 pub mod forge;
 pub mod http;
 pub mod pool_db;

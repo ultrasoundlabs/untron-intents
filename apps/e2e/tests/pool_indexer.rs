@@ -3,6 +3,7 @@ use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, run_migrations},
     cast::{run_cast_create_intent, run_cast_rpc},
+    docker::{PostgresOptions, start_postgres},
     forge::{run_forge_build, run_forge_create_untron_intents},
     pool_db::{
         CurrentIntentRow, wait_for_current_intent_match, wait_for_pool_current_intents_count,
@@ -13,9 +14,6 @@ use e2e::{
     util::{find_free_port, require_bins},
 };
 use std::time::Duration;
-use testcontainers::core::{IntoContainerPort, WaitFor};
-use testcontainers::runners::AsyncRunner;
-use testcontainers::{GenericImage, ImageExt};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_indexer_ingests_pool_intent_created() -> Result<()> {
@@ -23,21 +21,8 @@ async fn e2e_indexer_ingests_pool_intent_created() -> Result<()> {
         return Ok(());
     }
 
-    // Postgres.
-    let pg = GenericImage::new("postgres", "18.1")
-        .with_exposed_port(5432.tcp())
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_DB", "untron")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .start()
-        .await
-        .context("start postgres container")?;
-
-    let pg_port = pg.get_host_port_ipv4(5432).await?;
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{pg_port}/untron");
+    let pg = start_postgres(PostgresOptions::default()).await?;
+    let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 
     cargo_build_indexer_bins()?;
@@ -92,21 +77,8 @@ async fn e2e_indexer_rolls_back_pool_on_anvil_revert() -> Result<()> {
         return Ok(());
     }
 
-    // Postgres.
-    let pg = GenericImage::new("postgres", "18.1")
-        .with_exposed_port(5432.tcp())
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ))
-        .with_env_var("POSTGRES_DB", "untron")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .start()
-        .await
-        .context("start postgres container")?;
-
-    let pg_port = pg.get_host_port_ipv4(5432).await?;
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{pg_port}/untron");
+    let pg = start_postgres(PostgresOptions::default()).await?;
+    let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 
     cargo_build_indexer_bins()?;
