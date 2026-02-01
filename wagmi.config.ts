@@ -11,14 +11,17 @@ export default defineConfig({
     foundry({
       project: "packages/contracts", // <— your Foundry project root
       artifacts: artifactsPath,
+      // Only generate TypeScript bindings for our own contracts under `src/`.
+      // This avoids duplicate names coming from dependencies (e.g. IERC20/Ownable).
+      include: ["src/**/*.json"],
       exclude: [
-        // Start from wagmi defaults, but keep IERC20's ABI.
-        ...foundryDefaultExcludes.filter((x) => x !== "IERC20.sol/**"),
+        // Start from wagmi defaults.
+        ...foundryDefaultExcludes,
 
         // Extra exclusions for this repo.
         "**/*.dbg.json",
-        "auth/**", // e.g. solady's auth/Ownable
-        "interfaces/**", // e.g. placeholder interfaces with empty ABI
+        "auth/**", // helper-only auth contracts (no need for TS bindings)
+        "interfaces/**", // placeholder interfaces with empty ABI
         "**/IMulticall3.sol/**",
       ],
       // forge: { build: true } // default; Wagmi can run forge build for you
