@@ -1,5 +1,7 @@
+use alloy::primitives::{Address, U256};
+use alloy::rpc::types::eth::erc4337::PackedUserOperation;
 use anyhow::{Context, Result};
-use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use sqlx::{Acquire, Executor, PgPool, Postgres, Row, postgres::PgPoolOptions};
 use std::time::Duration;
 
 const MIGRATIONS: &[(i32, &str)] = &[
@@ -63,17 +65,28 @@ impl SolverDb {
 
     pub async fn migrate(&self) -> Result<()> {
         // Prevent concurrent migrations when multiple solver processes start at once.
-        // Even `create schema if not exists` can race at the catalog level.
+        //
+        // IMPORTANT: advisory locks are per-session/connection. We must run the entire migration
+        // sequence on a single connection, otherwise we might:
+        // - acquire the lock on connection A
+        // - run migrations on connection B
+        // - "unlock" on connection C (leading to a warning and leaving the original lock held)
         const MIGRATION_LOCK_KEY: i64 = 0x554E_5452_4F4E_534C; // "UNTRONSL"
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .context("acquire connection for solver migrations")?;
+
         sqlx::query("select pg_advisory_lock($1)")
             .bind(MIGRATION_LOCK_KEY)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await
             .context("acquire solver migration lock")?;
 
         let res: Result<()> = async {
             // Ensure schema and migration table exist before trying to read them.
-            exec_sql_batch_pool(&self.pool, MIGRATIONS[0].1)
+            exec_sql_batch(&mut *conn, MIGRATIONS[0].1)
                 .await
                 .context("apply solver schema bootstrap (v1)")?;
 
@@ -85,7 +98,7 @@ impl SolverDb {
                     "select version from solver.schema_migrations where version = $1",
                 )
                 .bind(*version)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *conn)
                 .await
                 .context("read solver.schema_migrations")?;
 
@@ -93,8 +106,8 @@ impl SolverDb {
                     continue;
                 }
 
-                let mut tx = self.pool.begin().await.context("begin migration tx")?;
-                exec_sql_batch_tx(&mut tx, sql)
+                let mut tx = conn.begin().await.context("begin migration tx")?;
+                exec_sql_batch(&mut *tx, sql)
                     .await
                     .with_context(|| format!("apply solver migration v{version}"))?;
                 sqlx::query("insert into solver.schema_migrations(version) values ($1)")
@@ -108,10 +121,10 @@ impl SolverDb {
         }
         .await;
 
-        // Best-effort unlock.
+        // Best-effort unlock (same connection that acquired it).
         let _ = sqlx::query("select pg_advisory_unlock($1)")
             .bind(MIGRATION_LOCK_KEY)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await;
 
         res
@@ -153,7 +166,10 @@ impl SolverDb {
                 where \
                     state in ('ready', 'claimed', 'tron_sent', 'proof_built') \
                     and next_retry_at <= now() \
-                    and (lease_until is null or lease_until < now()) \
+                    and ( \
+                        (lease_until is null or lease_until < now()) \
+                        or (leased_by = $2 and lease_until >= now()) \
+                    ) \
                 order by job_id asc \
                 limit $1 \
                 for update skip locked \
@@ -362,7 +378,7 @@ impl SolverDb {
                 success, \
                 attempts \
              from solver.hub_userops \
-             where job_id=$1 and kind=$2",
+             where job_id=$1 and kind::text=$2",
         )
         .bind(job_id)
         .bind(kind.as_str())
@@ -404,7 +420,7 @@ impl SolverDb {
     ) -> Result<()> {
         let n = sqlx::query(
             "insert into solver.hub_userops(job_id, kind, userop, state) \
-             select j.job_id, $1, $2::jsonb, 'prepared' \
+             select j.job_id, $1::solver.userop_kind, $2::jsonb, 'prepared' \
              from solver.jobs j \
              where j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now() \
              on conflict (job_id, kind) do nothing",
@@ -438,7 +454,7 @@ impl SolverDb {
                 updated_at = now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$2 \
+               and u.kind=$2::solver.userop_kind \
                and j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now()",
         )
         .bind(userop_hash)
@@ -472,7 +488,7 @@ impl SolverDb {
                 updated_at=now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$3 \
+               and u.kind=$3::solver.userop_kind \
                and j.job_id=$4 and j.leased_by=$5 and j.lease_until >= now()",
         )
         .bind(tx_hash.to_vec())
@@ -508,7 +524,7 @@ impl SolverDb {
                 updated_at = now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$3 \
+               and u.kind=$3::solver.userop_kind \
                and j.job_id=$4 and j.leased_by=$5 and j.lease_until >= now()",
         )
         .bind(msg)
@@ -541,7 +557,7 @@ impl SolverDb {
                 updated_at=now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$2 \
+               and u.kind=$2::solver.userop_kind \
                and j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now()",
         )
         .bind(msg)
@@ -557,6 +573,67 @@ impl SolverDb {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }
         Ok(())
+    }
+
+    pub async fn delete_hub_userop_prepared(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+    ) -> Result<()> {
+        // Only delete local "prepared but not submitted" artifacts. This lets us rebuild with a
+        // fresh nonce in cases where the original op is stale (AA25).
+        sqlx::query(
+            "delete from solver.hub_userops u \
+             using solver.jobs j \
+             where u.job_id=j.job_id \
+               and u.job_id=$1 \
+               and u.kind=$2::solver.userop_kind \
+               and u.state='prepared' \
+               and u.userop_hash is null \
+               and j.leased_by=$3 \
+               and j.lease_until >= now()",
+        )
+        .bind(job_id)
+        .bind(kind.as_str())
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("delete solver.hub_userops prepared")?;
+        Ok(())
+    }
+
+    /// Computes a nonce floor for Safe4337 userops based on our persisted "submitted but not yet
+    /// included" userops for a given sender.
+    ///
+    /// This is important after restarts: `EntryPoint.getNonce` only reflects included ops, but
+    /// bundlers may already have accepted pending ops and will reject re-using the same nonce
+    /// (`AA25 invalid account nonce`).
+    pub async fn hub_userop_nonce_floor_for_sender(&self, sender: Address) -> Result<Option<U256>> {
+        let rows = sqlx::query(
+            "select userop::text as userop_json \
+             from solver.hub_userops \
+             where state='submitted' and tx_hash is null",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("select solver.hub_userops (nonce floor)")?;
+
+        let mut max_nonce: Option<U256> = None;
+        for row in rows {
+            let json: String = row.try_get("userop_json")?;
+            let op: PackedUserOperation =
+                serde_json::from_str(&json).context("deserialize hub userop json")?;
+            if op.sender != sender {
+                continue;
+            }
+            max_nonce = Some(match max_nonce {
+                Some(cur) => cur.max(op.nonce),
+                None => op.nonce,
+            });
+        }
+
+        Ok(max_nonce.map(|n| n.saturating_add(U256::from(1u64))))
     }
 
     pub async fn save_tron_proof(&self, txid: [u8; 32], proof: &TronProofRow) -> Result<()> {
@@ -597,32 +674,16 @@ impl SolverDb {
     }
 }
 
-async fn exec_sql_batch_pool(pool: &PgPool, sql: &str) -> Result<()> {
+async fn exec_sql_batch<E>(exec: &mut E, sql: &str) -> Result<()>
+where
+    for<'c> &'c mut E: Executor<'c, Database = Postgres>,
+{
     for stmt in sql.split(';') {
         let s = stmt.trim();
         if s.is_empty() {
             continue;
         }
-        sqlx::query(s).execute(pool).await.with_context(|| {
-            format!(
-                "execute migration statement: {}",
-                s.lines().next().unwrap_or("")
-            )
-        })?;
-    }
-    Ok(())
-}
-
-async fn exec_sql_batch_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    sql: &str,
-) -> Result<()> {
-    for stmt in sql.split(';') {
-        let s = stmt.trim();
-        if s.is_empty() {
-            continue;
-        }
-        sqlx::query(s).execute(&mut **tx).await.with_context(|| {
+        sqlx::query(s).execute(&mut *exec).await.with_context(|| {
             format!(
                 "execute migration statement: {}",
                 s.lines().next().unwrap_or("")

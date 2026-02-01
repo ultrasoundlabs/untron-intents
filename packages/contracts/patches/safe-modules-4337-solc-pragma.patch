@@ -1,0 +1,22 @@
+diff --git a/modules/4337/contracts/Safe4337Module.sol b/modules/4337/contracts/Safe4337Module.sol
+index 2a860db..41d2cc2 100644
+--- a/modules/4337/contracts/Safe4337Module.sol
++++ b/modules/4337/contracts/Safe4337Module.sol
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: LGPL-3.0-only
+-pragma solidity 0.8.23;
++pragma solidity ^0.8.23;
+ 
+ import {HandlerContext} from "@safe-global/safe-contracts/contracts/handler/HandlerContext.sol";
+ import {CompatibilityFallbackHandler} from "@safe-global/safe-contracts/contracts/handler/CompatibilityFallbackHandler.sol";
+diff --git a/modules/4337/contracts/SafeModuleSetup.sol b/modules/4337/contracts/SafeModuleSetup.sol
+index 749376d..fe19f75 100644
+--- a/modules/4337/contracts/SafeModuleSetup.sol
++++ b/modules/4337/contracts/SafeModuleSetup.sol
+@@ -1,5 +1,5 @@
+ // SPDX-License-Identifier: LGPL-3.0-only
+-pragma solidity 0.8.23;
++pragma solidity ^0.8.23;
+ 
+ import {ISafe} from "./interfaces/Safe.sol";
+ 

@@ -14,5 +14,7 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 testcontainers = "0.23.3"
 tokio = { version = "1.49.0", features = ["full"] }
 tron = { path = "../../crates/tron" }
+aa = { path = "../../crates/aa" }
+alloy = { version = "1.2.1", features = ["full"] }
 
 [dev-dependencies]

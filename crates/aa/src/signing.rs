@@ -1,4 +1,4 @@
-use alloy::primitives::{Address, FixedBytes, U256};
+use alloy::primitives::{Address, Bytes, FixedBytes, U256};
 use alloy::sol_types::{Eip712Domain, SolStruct};
 use anyhow::{Context, Result};
 use k256::ecdsa::SigningKey;
@@ -21,14 +21,6 @@ pub(crate) fn safeop_digest(
         None,
     );
 
-    let init_code = pack_init_code(op.factory, op.factory_data.as_ref())?;
-    let paymaster_and_data = pack_paymaster_and_data(
-        op.paymaster,
-        op.paymaster_verification_gas_limit,
-        op.paymaster_post_op_gas_limit,
-        op.paymaster_data.as_ref(),
-    )?;
-
     let verification_gas_limit = u128::try_from(op.verification_gas_limit)
         .context("verificationGasLimit overflows uint128")?;
     let call_gas_limit =
@@ -42,17 +34,25 @@ pub(crate) fn safeop_digest(
     ensure_u48(valid_after, "validAfter")?;
     ensure_u48(valid_until, "validUntil")?;
 
+    let init_code = pack_init_code(op.factory, op.factory_data.as_ref())?;
+    let paymaster_and_data = pack_paymaster_and_data(
+        op.paymaster,
+        op.paymaster_verification_gas_limit,
+        op.paymaster_post_op_gas_limit,
+        op.paymaster_data.as_ref(),
+    )?;
+
     let safeop = SafeOp {
         safe: op.sender,
         nonce: op.nonce,
-        initCode: init_code.into(),
+        initCode: Bytes::from(init_code),
         callData: op.call_data.clone(),
         verificationGasLimit: verification_gas_limit,
         callGasLimit: call_gas_limit,
         preVerificationGas: op.pre_verification_gas,
         maxPriorityFeePerGas: max_priority_fee,
         maxFeePerGas: max_fee,
-        paymasterAndData: paymaster_and_data.into(),
+        paymasterAndData: Bytes::from(paymaster_and_data),
         validAfter: alloy::primitives::Uint::<48, 1>::from(valid_after),
         validUntil: alloy::primitives::Uint::<48, 1>::from(valid_until),
         entryPoint: entry_point,
@@ -92,7 +92,6 @@ pub(crate) fn sign_userop_with_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::Bytes;
     use k256::ecdsa::VerifyingKey;
     use k256::ecdsa::signature::hazmat::PrehashVerifier;
 

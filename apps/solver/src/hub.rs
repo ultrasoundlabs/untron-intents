@@ -233,6 +233,27 @@ impl HubClient {
         }
     }
 
+    pub async fn safe4337_set_nonce_floor(&self, floor: U256) -> Result<()> {
+        match &self.inner {
+            HubClientInner::Safe4337(c) => {
+                let mut sender = c.sender.lock().await;
+                sender.set_nonce_floor(floor);
+                Ok(())
+            }
+            HubClientInner::Eoa(_) => anyhow::bail!("safe4337_set_nonce_floor called in eoa mode"),
+        }
+    }
+
+    pub async fn safe4337_chain_nonce(&self) -> Result<U256> {
+        match &self.inner {
+            HubClientInner::Safe4337(c) => {
+                let sender = c.sender.lock().await;
+                sender.chain_nonce().await
+            }
+            HubClientInner::Eoa(_) => anyhow::bail!("safe4337_chain_nonce called in eoa mode"),
+        }
+    }
+
     pub async fn pool_usdt(&self) -> Result<Address> {
         let (pool_addr, provider, telemetry) = match &self.inner {
             HubClientInner::Eoa(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
@@ -533,9 +554,17 @@ struct UserOpReceipt {
     #[serde(rename = "transactionHash")]
     pub transaction_hash: Option<String>,
     #[serde(default)]
+    pub receipt: Option<UserOpReceiptInner>,
+    #[serde(default)]
     pub success: Option<bool>,
     #[serde(default)]
     pub reason: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserOpReceiptInner {
+    #[serde(rename = "transactionHash")]
+    pub transaction_hash: Option<String>,
 }
 
 impl HubSafe4337Client {
@@ -564,7 +593,10 @@ impl HubSafe4337Client {
             i = i.wrapping_add(1);
 
             if let Some(r) = self.query_userop_receipt_raw(&url, userop_hash).await? {
-                let tx_hash = match r.transaction_hash {
+                let tx_hash_str = r
+                    .transaction_hash
+                    .or_else(|| r.receipt.and_then(|x| x.transaction_hash));
+                let tx_hash = match tx_hash_str {
                     Some(txh) => Some(txh.parse().context("parse transactionHash")?),
                     None => None,
                 };
@@ -659,16 +691,15 @@ impl HubSafe4337Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::Bytes;
 
     #[test]
-    fn packed_userop_json_roundtrip() {
+    fn userop_json_roundtrip() {
         let op = PackedUserOperation {
             sender: Address::repeat_byte(0x11),
             nonce: U256::from(7u64),
             factory: Some(Address::repeat_byte(0x22)),
-            factory_data: Some(Bytes::from(vec![1, 2, 3])),
-            call_data: Bytes::from(vec![4, 5, 6, 7]),
+            factory_data: Some(alloy::primitives::Bytes::from(vec![1, 2, 3])),
+            call_data: alloy::primitives::Bytes::from(vec![4, 5, 6, 7]),
             call_gas_limit: U256::from(123u64),
             verification_gas_limit: U256::from(456u64),
             pre_verification_gas: U256::from(789u64),
@@ -676,9 +707,9 @@ mod tests {
             max_priority_fee_per_gas: U256::from(2_000u64),
             paymaster: Some(Address::repeat_byte(0x33)),
             paymaster_verification_gas_limit: Some(U256::from(10u64)),
-            paymaster_post_op_gas_limit: Some(U256::from(11u64)),
-            paymaster_data: Some(Bytes::from(vec![8, 9])),
-            signature: Bytes::from(vec![0xaa, 0xbb]),
+            paymaster_post_op_gas_limit: Some(U256::from(20u64)),
+            paymaster_data: Some(alloy::primitives::Bytes::from(vec![8, 9])),
+            signature: alloy::primitives::Bytes::from(vec![0xaa, 0xbb]),
         };
 
         let s = serde_json::to_string(&op).expect("serialize");
@@ -686,8 +717,19 @@ mod tests {
 
         assert_eq!(de.sender, op.sender);
         assert_eq!(de.nonce, op.nonce);
+        assert_eq!(de.factory, op.factory);
+        assert_eq!(de.factory_data, op.factory_data);
         assert_eq!(de.call_data, op.call_data);
         assert_eq!(de.signature, op.signature);
         assert_eq!(de.paymaster, op.paymaster);
+        assert_eq!(
+            de.paymaster_verification_gas_limit,
+            op.paymaster_verification_gas_limit
+        );
+        assert_eq!(
+            de.paymaster_post_op_gas_limit,
+            op.paymaster_post_op_gas_limit
+        );
+        assert_eq!(de.paymaster_data, op.paymaster_data);
     }
 }

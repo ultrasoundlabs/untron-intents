@@ -10,7 +10,8 @@ create table if not exists solver.hub_userops (
 
     state solver.userop_state not null default 'prepared',
 
-    -- The fully-formed signed PackedUserOperation (JSON) so we can re-submit the exact op after a restart.
+-- The fully-formed signed ERC-4337 PackedUserOperation (EntryPoint v0.7) as JSON so we can
+-- re-submit the exact op after a restart.
     userop jsonb not null,
 
     -- eth_sendUserOperation return value (0x hex string).
@@ -34,4 +35,3 @@ create unique index if not exists hub_userops_job_kind_uq
 
 create index if not exists hub_userops_state_idx
     on solver.hub_userops(state, next_retry_at, updated_at);
-

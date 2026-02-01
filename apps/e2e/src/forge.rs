@@ -27,6 +27,19 @@ fn parse_forge_deployed_address(stdout: &str, stderr: &str) -> Result<String> {
 
 pub fn run_forge_build() -> Result<()> {
     let root = repo_root();
+    // Ensure any local patches to vendored deps are applied before compilation.
+    let status = Command::new("bash")
+        .args(["packages/contracts/scripts/apply_patches.sh"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("apply contract patches")?;
+    if !status.success() {
+        anyhow::bail!("apply contract patches failed");
+    }
+
     let status = Command::new("forge")
         .args(["build", "--root", "packages/contracts"])
         .current_dir(&root)
@@ -230,6 +243,172 @@ pub fn run_forge_create_mock_tron_tx_reader(rpc_url: &str, private_key: &str) ->
     if !out.status.success() {
         anyhow::bail!(
             "forge create failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_entrypoint_v07(rpc_url: &str, private_key: &str) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "lib/account-abstraction/contracts/core/EntryPoint.sol:EntryPoint",
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create EntryPoint (v0.7)")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create EntryPoint failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_safe_singleton(rpc_url: &str, private_key: &str) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "lib/safe-smart-account/contracts/Safe.sol:Safe",
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create Safe singleton")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create Safe singleton failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_safe_proxy_factory(rpc_url: &str, private_key: &str) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "lib/safe-smart-account/contracts/proxies/SafeProxyFactory.sol:SafeProxyFactory",
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create SafeProxyFactory")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create SafeProxyFactory failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_safe_module_setup(rpc_url: &str, private_key: &str) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "lib/safe-modules/modules/4337/contracts/SafeModuleSetup.sol:SafeModuleSetup",
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create SafeModuleSetup")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create SafeModuleSetup failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_safe_4337_module(
+    rpc_url: &str,
+    private_key: &str,
+    entrypoint: &str,
+) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "lib/safe-modules/modules/4337/contracts/Safe4337Module.sol:Safe4337Module",
+            "--constructor-args",
+            entrypoint,
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create Safe4337Module")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create Safe4337Module failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

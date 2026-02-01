@@ -1,3 +1,4 @@
+pub mod alto;
 pub mod anvil;
 pub mod binaries;
 pub mod cast;

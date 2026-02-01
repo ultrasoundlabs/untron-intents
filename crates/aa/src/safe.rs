@@ -278,6 +278,8 @@ mod tests {
         };
 
         let initializer = build_safe_4337_initializer(owner, &safe_4337, &deploy);
+        // Selector of setup(address[],uint256,address,bytes,address,address,uint256,address).
+        assert_eq!(&initializer.as_ref()[0..4], &hex!("b63e800d"));
         let decoded = ISafe::setupCall::abi_decode(initializer.as_ref()).unwrap();
         assert_eq!(decoded.owners, vec![owner]);
         assert_eq!(decoded.threshold, U256::from(1u64));

@@ -81,6 +81,18 @@ impl Solver {
             }
         };
 
+        // For Safe4337 mode: on restart, the bundler may have pending userops that are not yet
+        // reflected in EntryPoint.getNonce(). Seed a local nonce floor from our persisted
+        // submitted userops to avoid AA25 invalid nonce loops.
+        if cfg.hub.tx_mode == HubTxMode::Safe4337 {
+            if let Some(floor) = db
+                .hub_userop_nonce_floor_for_sender(hub.solver_address())
+                .await?
+            {
+                hub.safe4337_set_nonce_floor(floor).await?;
+            }
+        }
+
         let indexer = IndexerClient::new(
             cfg.indexer.base_url.clone(),
             cfg.indexer.timeout,
@@ -88,11 +100,6 @@ impl Solver {
         );
 
         let tron = TronBackend::new(cfg.tron.clone(), cfg.jobs.clone(), telemetry.clone());
-
-        // Ensure we can claim by approving USDT once.
-        let usdt = hub.pool_usdt().await?;
-        hub.ensure_erc20_allowance(usdt, hub.pool_address(), U256::from(INTENT_CLAIM_DEPOSIT))
-            .await?;
 
         Ok(Self {
             instance_id: cfg.instance_id.clone(),
@@ -156,7 +163,13 @@ impl Solver {
             .lease_jobs(
                 &self.instance_id,
                 std::time::Duration::from_secs(LEASE_FOR_SECS),
-                i64::try_from(self.cfg.jobs.fill_max_claims).unwrap_or(50),
+                i64::try_from(match self.cfg.hub.tx_mode {
+                    // Safe4337 uses an onchain nonce. Until we implement a persistent "pending nonce"
+                    // manager, we must not submit multiple userops in parallel (or we will hit AA25).
+                    HubTxMode::Safe4337 => 1,
+                    HubTxMode::Eoa => self.cfg.jobs.fill_max_claims,
+                })
+                .unwrap_or(50),
             )
             .await?;
 
@@ -206,6 +219,44 @@ impl Solver {
         match job.state.as_str() {
             "ready" => {
                 tracing::info!(id = %id, intent_type = job.intent_type, "claiming intent");
+                // Ensure claim deposit can be pulled. We do this here (rather than at startup) so:
+                // - the solver starts even if AA infrastructure is temporarily down
+                // - retries are controlled by the job state machine
+                let usdt = match self.hub.pool_usdt().await {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let msg = format!("pool_usdt failed: {err:#}");
+                        self.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &self.instance_id,
+                                &msg,
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+                if let Err(err) = self
+                    .hub
+                    .ensure_erc20_allowance(
+                        usdt,
+                        self.hub.pool_address(),
+                        U256::from(INTENT_CLAIM_DEPOSIT),
+                    )
+                    .await
+                {
+                    let msg = format!("ensure_erc20_allowance failed: {err:#}");
+                    self.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &self.instance_id,
+                            &msg,
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                }
                 match self.cfg.hub.tx_mode {
                     HubTxMode::Eoa => match self.hub.claim_intent(id).await {
                         Ok(receipt) => {
@@ -240,7 +291,33 @@ impl Solver {
                     },
                     HubTxMode::Safe4337 => {
                         let kind = HubUserOpKind::Claim;
-                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let mut row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        if let Some(r) = row.as_ref() {
+                            // If we've already included it, we should have advanced state.
+                            if r.state == "included" {
+                                return Ok(());
+                            }
+                            // If we have a prepared-but-not-submitted op, ensure it isn't stale
+                            // (nonce already used onchain). Stale prepared ops can happen if we
+                            // back off for a long time while other ops progress.
+                            if r.userop_hash.is_none() && r.state == "prepared" {
+                                let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
+                                    .context("deserialize claim userop")?;
+                                let chain_nonce = self.hub.safe4337_chain_nonce().await?;
+                                if u.nonce < chain_nonce {
+                                    self.db
+                                        .delete_hub_userop_prepared(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                        )
+                                        .await
+                                        .ok();
+                                    row = None;
+                                }
+                            }
+                        }
+
                         let userop = match row {
                             None => {
                                 let call = crate::hub::IUntronIntents::claimIntentCall { id };
@@ -265,10 +342,6 @@ impl Solver {
                                 Some(userop)
                             }
                             Some(r) => {
-                                // If we've already included it, we should have advanced state.
-                                if r.state == "included" {
-                                    return Ok(());
-                                }
                                 if r.userop_hash.is_none() && r.state == "prepared" {
                                     let u: PackedUserOperation =
                                         serde_json::from_str(&r.userop_json)
@@ -294,6 +367,16 @@ impl Solver {
                                 }
                                 Err(err) => {
                                     let msg = err.to_string();
+                                    if msg.contains("AA25 invalid account nonce") {
+                                        self.db
+                                            .delete_hub_userop_prepared(
+                                                job.job_id,
+                                                &self.instance_id,
+                                                kind,
+                                            )
+                                            .await
+                                            .ok();
+                                    }
                                     self.db
                                         .record_hub_userop_retryable_error(
                                             job.job_id,
@@ -522,7 +605,29 @@ impl Solver {
                     }
                     HubTxMode::Safe4337 => {
                         let kind = HubUserOpKind::Prove;
-                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let mut row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        if let Some(r) = row.as_ref() {
+                            if r.state == "included" {
+                                return Ok(());
+                            }
+                            if r.userop_hash.is_none() && r.state == "prepared" {
+                                let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
+                                    .context("deserialize prove userop")?;
+                                let chain_nonce = self.hub.safe4337_chain_nonce().await?;
+                                if u.nonce < chain_nonce {
+                                    self.db
+                                        .delete_hub_userop_prepared(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                        )
+                                        .await
+                                        .ok();
+                                    row = None;
+                                }
+                            }
+                        }
+
                         let userop = match row {
                             None => {
                                 let call = crate::hub::IUntronIntents::proveIntentFillCall {
@@ -553,9 +658,6 @@ impl Solver {
                                 Some(userop)
                             }
                             Some(r) => {
-                                if r.state == "included" {
-                                    return Ok(());
-                                }
                                 if r.userop_hash.is_none() && r.state == "prepared" {
                                     let u: PackedUserOperation =
                                         serde_json::from_str(&r.userop_json)
@@ -581,6 +683,16 @@ impl Solver {
                                 }
                                 Err(err) => {
                                     let msg = err.to_string();
+                                    if msg.contains("AA25 invalid account nonce") {
+                                        self.db
+                                            .delete_hub_userop_prepared(
+                                                job.job_id,
+                                                &self.instance_id,
+                                                kind,
+                                            )
+                                            .await
+                                            .ok();
+                                    }
                                     self.db
                                         .record_hub_userop_retryable_error(
                                             job.job_id,

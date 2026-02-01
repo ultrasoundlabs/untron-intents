@@ -11,6 +11,7 @@ alloy::sol! {
 
     interface Safe4337Module {
         function executeUserOp(address to, uint256 value, bytes data, uint8 operation) external;
+        function executeUserOpWithErrorString(address to, uint256 value, bytes data, uint8 operation) external;
     }
 
     interface ISafe {

@@ -12,3 +12,6 @@ pub use sender::{
 };
 
 pub use safe::{Safe4337Config, SafeDeterministicDeploymentConfig};
+
+// Exposed for e2e harnesses that want to provision a Safe before starting a solver process.
+pub use safe::ensure_safe_deployed;

@@ -16,3 +16,12 @@
 [submodule "packages/contracts/lib/createx-forge"]
 	path = packages/contracts/lib/createx-forge
 	url = https://github.com/radeksvarz/createx-forge
+[submodule "packages/contracts/lib/account-abstraction"]
+	path = packages/contracts/lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction.git
+[submodule "packages/contracts/lib/safe-smart-account"]
+	path = packages/contracts/lib/safe-smart-account
+	url = https://github.com/safe-global/safe-smart-account.git
+[submodule "packages/contracts/lib/safe-modules"]
+	path = packages/contracts/lib/safe-modules
+	url = https://github.com/safe-global/safe-modules.git

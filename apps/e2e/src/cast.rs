@@ -38,6 +38,24 @@ pub fn run_cast_rpc(rpc_url: &str, method: &str, params: &[&str]) -> Result<Stri
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+pub fn run_cast_call(rpc_url: &str, to: &str, signature: &str, args: &[&str]) -> Result<String> {
+    let root = repo_root();
+    let mut cmd = Command::new("cast");
+    cmd.args(["call", "--rpc-url", rpc_url, to, signature]);
+    for a in args {
+        cmd.arg(a);
+    }
+    let out = cmd
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .output()
+        .context("cast call")?;
+    if !out.status.success() {
+        anyhow::bail!("cast call failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 pub fn run_cast_mint_mock_erc20(
     rpc_url: &str,
     private_key: &str,
@@ -65,6 +83,67 @@ pub fn run_cast_mint_mock_erc20(
         .context("cast send mint")?;
     if !status.success() {
         anyhow::bail!("cast send mint failed");
+    }
+    Ok(())
+}
+
+pub fn run_cast_entrypoint_deposit_to(
+    rpc_url: &str,
+    private_key: &str,
+    entrypoint: &str,
+    beneficiary: &str,
+    amount_wei: &str,
+) -> Result<()> {
+    let status = Command::new("cast")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--value",
+            amount_wei,
+            entrypoint,
+            "depositTo(address)",
+            beneficiary,
+        ])
+        .current_dir(repo_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("cast send EntryPoint.depositTo")?;
+    if !status.success() {
+        anyhow::bail!("cast send depositTo failed");
+    }
+    Ok(())
+}
+
+pub fn run_cast_transfer_eth(
+    rpc_url: &str,
+    private_key: &str,
+    to: &str,
+    amount_wei: &str,
+) -> Result<()> {
+    let status = Command::new("cast")
+        .args([
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--value",
+            amount_wei,
+            to,
+        ])
+        .current_dir(repo_root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("cast send eth transfer")?;
+    if !status.success() {
+        anyhow::bail!("cast send eth transfer failed");
     }
     Ok(())
 }
