@@ -1,6 +1,7 @@
 use crate::{
     config::{AppConfig, HubTxMode},
     db::SolverDb,
+    db::{SolverJob, TronProofRow},
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
     tron_backend::TronBackend,
@@ -14,6 +15,7 @@ use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const INTENT_CLAIM_DEPOSIT: u64 = 1_000_000;
+const LEASE_FOR_SECS: u64 = 30;
 
 pub struct Solver {
     cfg: AppConfig,
@@ -22,6 +24,7 @@ pub struct Solver {
     indexer: IndexerClient,
     hub: HubClient,
     tron: TronBackend,
+    instance_id: String,
 }
 
 impl Solver {
@@ -90,6 +93,7 @@ impl Solver {
             .await?;
 
         Ok(Self {
+            instance_id: cfg.instance_id.clone(),
             cfg,
             telemetry,
             db,
@@ -138,13 +142,27 @@ impl Solver {
             if !self.should_attempt(&row)? {
                 continue;
             }
-            if let Err(err) = self.try_fill(row).await {
-                tracing::warn!(err = %err, "fill failed");
-            }
+            let id = parse_b256(&row.id)?;
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            self.db
+                .insert_job_if_new(b256_to_bytes32(id), row.intent_type, &specs, row.deadline)
+                .await?;
         }
 
-        // Continue any previously-claimed/broadcasted runs without relying on PostgREST views.
-        self.process_pending_proofs().await?;
+        let jobs = self
+            .db
+            .lease_jobs(
+                &self.instance_id,
+                std::time::Duration::from_secs(LEASE_FOR_SECS),
+                i64::try_from(self.cfg.jobs.fill_max_claims).unwrap_or(50),
+            )
+            .await?;
+
+        for job in jobs {
+            if let Err(err) = self.process_job(job).await {
+                tracing::warn!(err = %err, "job failed");
+            }
+        }
         Ok(())
     }
 
@@ -172,113 +190,186 @@ impl Solver {
         Ok(self.cfg.policy.enabled_intent_types.contains(&ty))
     }
 
-    async fn try_fill(&mut self, row: PoolOpenIntentRow) -> Result<()> {
-        let id = parse_b256(&row.id)?;
-        let intent_specs = parse_hex_bytes(&row.intent_specs)?;
-        let ty = IntentType::from_i16(row.intent_type)?;
+    async fn process_job(&mut self, job: SolverJob) -> Result<()> {
+        let id = B256::from_slice(&job.intent_id);
+        let ty = IntentType::from_i16(job.intent_type)?;
 
-        tracing::info!(id = %row.id, intent_type = row.intent_type, "filling intent");
-
-        self.db
-            .upsert_run_state(b256_to_bytes32(id), "claiming", None, None, None, None)
-            .await?;
-
-        let claim_receipt = self.hub.claim_intent(id).await.context("claimIntent")?;
-        self.db
-            .upsert_run_state(
-                b256_to_bytes32(id),
-                "claimed",
-                Some(b256_to_bytes32(claim_receipt.transaction_hash)),
-                None,
-                None,
-                None,
-            )
-            .await?;
-
-        let exec = match ty {
-            IntentType::TrxTransfer => self
-                .tron
-                .execute_trx_transfer(&self.hub, id, &intent_specs)
-                .await
-                .context("execute trx transfer")?,
-            IntentType::UsdtTransfer => self
-                .tron
-                .execute_usdt_transfer(&self.hub, id, &intent_specs)
-                .await
-                .context("execute usdt transfer")?,
-            IntentType::DelegateResource => self
-                .tron
-                .execute_delegate_resource(&self.hub, id, &intent_specs)
-                .await
-                .context("execute delegate resource")?,
-            _ => unreachable!(),
+        let retry_in = |attempts: i32| {
+            // Exponential backoff with caps. This is intentionally simple and centralized.
+            let shift = u32::try_from(attempts.max(0).min(10)).unwrap_or(0);
+            let base = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+            std::time::Duration::from_secs(base.min(300))
         };
 
-        match exec {
-            TronExecution::ImmediateProof(tron) => {
-                let prove_receipt = self
+        match job.state.as_str() {
+            "ready" => {
+                tracing::info!(id = %id, intent_type = job.intent_type, "claiming intent");
+                match self.hub.claim_intent(id).await {
+                    Ok(receipt) => {
+                        self.db
+                            .record_claim(
+                                job.job_id,
+                                &self.instance_id,
+                                b256_to_bytes32(receipt.transaction_hash),
+                            )
+                            .await?;
+                        Ok(())
+                    }
+                    Err(err) => {
+                        let msg = err.to_string();
+                        // If already claimed, don't keep retrying.
+                        if msg.contains("AlreadyClaimed") {
+                            self.db
+                                .record_fatal_error(job.job_id, &self.instance_id, &msg)
+                                .await?;
+                            return Ok(());
+                        }
+                        self.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &self.instance_id,
+                                &msg,
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        Ok(())
+                    }
+                }
+            }
+            "claimed" => {
+                tracing::info!(id = %id, "executing tron tx");
+                let exec = match ty {
+                    IntentType::TrxTransfer => self
+                        .tron
+                        .execute_trx_transfer(&self.hub, id, &job.intent_specs)
+                        .await
+                        .context("execute trx transfer")?,
+                    IntentType::UsdtTransfer => self
+                        .tron
+                        .execute_usdt_transfer(&self.hub, id, &job.intent_specs)
+                        .await
+                        .context("execute usdt transfer")?,
+                    IntentType::DelegateResource => self
+                        .tron
+                        .execute_delegate_resource(&self.hub, id, &job.intent_specs)
+                        .await
+                        .context("execute delegate resource")?,
+                    _ => unreachable!(),
+                };
+
+                match exec {
+                    TronExecution::ImmediateProof(tron) => {
+                        // Store proof first; submit prove in the next tick (restart-safe).
+                        let proof_row = TronProofRow {
+                            blocks: tron.blocks.into_iter().collect(),
+                            encoded_tx: tron.encoded_tx,
+                            proof: tron
+                                .proof
+                                .into_iter()
+                                .map(|b| b.as_slice().to_vec())
+                                .collect(),
+                            index_dec: tron.index.to_string(),
+                        };
+                        let txid = job.tron_txid.unwrap_or_else(|| {
+                            b256_to_bytes32(alloy::primitives::keccak256(id.as_slice()))
+                        });
+                        self.db.save_tron_proof(txid, &proof_row).await?;
+                        self.db
+                            .record_tron_txid(job.job_id, &self.instance_id, txid)
+                            .await?;
+                        self.db
+                            .record_proof_built(job.job_id, &self.instance_id)
+                            .await?;
+                        Ok(())
+                    }
+                    TronExecution::BroadcastedTx { txid } => {
+                        self.db
+                            .record_tron_txid(job.job_id, &self.instance_id, txid)
+                            .await?;
+                        Ok(())
+                    }
+                }
+            }
+            "tron_sent" => {
+                let Some(txid) = job.tron_txid else {
+                    self.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &self.instance_id,
+                            "missing tron_txid",
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                };
+                tracing::info!(id = %id, "building tron proof");
+                let tron = self.tron.build_proof(txid).await?;
+                let proof_row = TronProofRow {
+                    blocks: tron.blocks.into_iter().collect(),
+                    encoded_tx: tron.encoded_tx,
+                    proof: tron
+                        .proof
+                        .into_iter()
+                        .map(|b| b.as_slice().to_vec())
+                        .collect(),
+                    index_dec: tron.index.to_string(),
+                };
+                self.db.save_tron_proof(txid, &proof_row).await?;
+                self.db
+                    .record_proof_built(job.job_id, &self.instance_id)
+                    .await?;
+                Ok(())
+            }
+            "proof_built" => {
+                let Some(txid) = job.tron_txid else {
+                    self.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &self.instance_id,
+                            "missing tron_txid",
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                };
+                let proof = self.db.load_tron_proof(txid).await?;
+                let tron = TronProof {
+                    blocks: std::array::from_fn(|i| proof.blocks[i].clone()),
+                    encoded_tx: proof.encoded_tx,
+                    proof: proof
+                        .proof
+                        .into_iter()
+                        .map(|b| B256::from_slice(&b))
+                        .collect(),
+                    index: crate::types::parse_u256_dec(&proof.index_dec).unwrap_or(U256::ZERO),
+                };
+                tracing::info!(id = %id, "submitting proveIntentFill");
+                let receipt = self
                     .hub
                     .prove_intent_fill(id, tron)
                     .await
                     .context("proveIntentFill")?;
                 self.db
-                    .upsert_run_state(
-                        b256_to_bytes32(id),
-                        "proved",
-                        None,
-                        Some(b256_to_bytes32(prove_receipt.transaction_hash)),
-                        None,
-                        None,
+                    .record_prove(
+                        job.job_id,
+                        &self.instance_id,
+                        b256_to_bytes32(receipt.transaction_hash),
                     )
                     .await?;
+                Ok(())
             }
-            TronExecution::BroadcastedTx { txid } => {
+            "done" | "failed_fatal" => Ok(()),
+            other => {
                 self.db
-                    .upsert_run_state(
-                        b256_to_bytes32(id),
-                        "tron_sent",
-                        None,
-                        None,
-                        Some(txid),
-                        None,
+                    .record_fatal_error(
+                        job.job_id,
+                        &self.instance_id,
+                        &format!("unknown job state: {other}"),
                     )
                     .await?;
+                Ok(())
             }
         }
-
-        tracing::info!(id = %row.id, "intent filled");
-        Ok(())
-    }
-
-    async fn process_pending_proofs(&mut self) -> Result<()> {
-        let pending = self
-            .db
-            .list_pending_proofs(i64::try_from(self.cfg.jobs.fill_max_claims).unwrap_or(50))
-            .await?;
-
-        for (intent_id, tron_txid) in pending {
-            let id = B256::from_slice(&intent_id);
-            tracing::info!(id = %id, "attempting proveIntentFill for pending run");
-
-            let tron: TronProof = self.tron.build_proof(tron_txid).await?;
-            let prove_receipt = self
-                .hub
-                .prove_intent_fill(id, tron)
-                .await
-                .context("proveIntentFill")?;
-            self.db
-                .upsert_run_state(
-                    intent_id,
-                    "proved",
-                    None,
-                    Some(b256_to_bytes32(prove_receipt.transaction_hash)),
-                    None,
-                    None,
-                )
-                .await?;
-        }
-
-        Ok(())
     }
 }
 

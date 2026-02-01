@@ -38,6 +38,7 @@ pub struct AppConfig {
     pub jobs: JobConfig,
     pub policy: PolicyConfig,
     pub db_url: String,
+    pub instance_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +197,9 @@ struct Env {
 
     #[serde(default)]
     solver_min_deadline_slack_secs: u64,
+
+    #[serde(default)]
+    solver_instance_id: String,
 }
 
 impl Default for Env {
@@ -240,6 +244,7 @@ impl Default for Env {
 
             solver_enabled_intent_types: "trx_transfer,delegate_resource".to_string(),
             solver_min_deadline_slack_secs: 30,
+            solver_instance_id: String::new(),
         }
     }
 }
@@ -534,6 +539,11 @@ pub fn load_config() -> Result<AppConfig> {
             min_deadline_slack_secs: env.solver_min_deadline_slack_secs,
         },
         db_url: env.solver_db_url,
+        instance_id: if env.solver_instance_id.trim().is_empty() {
+            format!("solver:{}", std::process::id())
+        } else {
+            env.solver_instance_id
+        },
     })
 }
 

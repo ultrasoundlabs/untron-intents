@@ -8,5 +8,6 @@ pub mod pool_db;
 pub mod postgres;
 pub mod process;
 pub mod services;
+pub mod solver_db;
 pub mod tronbox;
 pub mod util;

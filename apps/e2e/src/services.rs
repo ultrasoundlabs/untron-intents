@@ -37,6 +37,7 @@ pub fn spawn_solver_mock(
     pool_contract: &str,
     solver_private_key: &str,
     mock_reader: &str,
+    instance_id: &str,
 ) -> Result<Child> {
     let root = repo_root();
     let mut cmd = Command::new(root.join("target/debug/solver"));
@@ -49,6 +50,7 @@ pub fn spawn_solver_mock(
         .env("HUB_SIGNER_PRIVATE_KEY_HEX", solver_private_key)
         .env("TRON_MODE", "mock")
         .env("TRON_MOCK_READER_ADDRESS", mock_reader)
+        .env("SOLVER_INSTANCE_ID", instance_id)
         .env(
             "SOLVER_ENABLED_INTENT_TYPES",
             "trx_transfer,delegate_resource,usdt_transfer",
