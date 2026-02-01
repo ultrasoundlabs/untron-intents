@@ -3,6 +3,7 @@ members = [
   "apps/indexer",
   "apps/solver",
   "apps/e2e",
+  "crates/aa",
   "crates/tron"
 ]
 resolver = "2"

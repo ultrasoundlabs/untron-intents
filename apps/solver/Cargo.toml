@@ -21,7 +21,7 @@ tokio = { version = "1.49.0", features = ["full"] }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "migrate", "macros"] }
 url = "2.5.4"
 tron = { path = "../../crates/tron" }
-aa = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "aa", rev = "f392dd1" }
+aa = { path = "../../crates/aa" }
 untron-observability = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "untron-observability", rev = "f392dd1" }
 untron-v3-bindings = { git = "https://github.com/ultrasoundlabs/untron-v3", package = "untron-v3-bindings", rev = "f392dd1" }
 untron-intents-bindings = { path = "../../crates/bindings" }

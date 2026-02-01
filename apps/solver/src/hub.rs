@@ -3,6 +3,7 @@ use aa::{Safe4337UserOpSender, Safe4337UserOpSenderConfig, Safe4337UserOpSenderO
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
 use alloy::rpc::types::TransactionReceipt;
+use alloy::rpc::types::eth::erc4337::PackedUserOperation;
 use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolCall;
@@ -75,6 +76,13 @@ alloy::sol! {
 
 pub struct HubClient {
     inner: HubClientInner,
+}
+
+#[derive(Debug, Clone)]
+pub struct HubUserOpReceipt {
+    pub tx_hash: Option<B256>,
+    pub success: Option<bool>,
+    pub reason: Option<serde_json::Value>,
 }
 
 enum HubClientInner {
@@ -367,6 +375,38 @@ impl HubClient {
         }
     }
 
+    pub async fn safe4337_build_call_userop(
+        &self,
+        to: Address,
+        data: Vec<u8>,
+    ) -> Result<PackedUserOperation> {
+        match &self.inner {
+            HubClientInner::Safe4337(c) => c.build_call_userop(to, data).await,
+            HubClientInner::Eoa(_) => {
+                anyhow::bail!("safe4337_build_call_userop called in eoa mode")
+            }
+        }
+    }
+
+    pub async fn safe4337_send_userop(&self, userop: PackedUserOperation) -> Result<String> {
+        match &self.inner {
+            HubClientInner::Safe4337(c) => Ok(c.send_userop(userop).await?.userop_hash),
+            HubClientInner::Eoa(_) => anyhow::bail!("safe4337_send_userop called in eoa mode"),
+        }
+    }
+
+    pub async fn safe4337_get_userop_receipt(
+        &self,
+        userop_hash: &str,
+    ) -> Result<Option<HubUserOpReceipt>> {
+        match &self.inner {
+            HubClientInner::Safe4337(c) => c.get_userop_receipt(userop_hash).await,
+            HubClientInner::Eoa(_) => {
+                anyhow::bail!("safe4337_get_userop_receipt called in eoa mode")
+            }
+        }
+    }
+
     pub async fn prove_intent_fill(&self, id: B256, tron: TronProof) -> Result<TransactionReceipt> {
         let blocks: [alloy::primitives::Bytes; 20] =
             tron.blocks.map(alloy::primitives::Bytes::from);
@@ -492,9 +532,52 @@ struct JsonRpcResponse<T> {
 struct UserOpReceipt {
     #[serde(rename = "transactionHash")]
     pub transaction_hash: Option<String>,
+    #[serde(default)]
+    pub success: Option<bool>,
+    #[serde(default)]
+    pub reason: Option<serde_json::Value>,
 }
 
 impl HubSafe4337Client {
+    async fn build_call_userop(&self, to: Address, data: Vec<u8>) -> Result<PackedUserOperation> {
+        let mut sender = self.sender.lock().await;
+        sender.build_call_userop(to, data).await
+    }
+
+    async fn send_userop(
+        &self,
+        userop: PackedUserOperation,
+    ) -> Result<aa::Safe4337UserOpSubmission> {
+        let mut sender = self.sender.lock().await;
+        sender.send_userop(&userop).await
+    }
+
+    async fn get_userop_receipt(&self, userop_hash: &str) -> Result<Option<HubUserOpReceipt>> {
+        let mut i = 0usize;
+        // Try all bundlers once each; treat this as a "poll" (no internal waiting).
+        for _ in 0..self.bundler_urls.len().max(1) {
+            let url = self
+                .bundler_urls
+                .get(i % self.bundler_urls.len())
+                .context("no HUB_BUNDLER_URLS configured")?
+                .to_string();
+            i = i.wrapping_add(1);
+
+            if let Some(r) = self.query_userop_receipt_raw(&url, userop_hash).await? {
+                let tx_hash = match r.transaction_hash {
+                    Some(txh) => Some(txh.parse().context("parse transactionHash")?),
+                    None => None,
+                };
+                return Ok(Some(HubUserOpReceipt {
+                    tx_hash,
+                    success: r.success,
+                    reason: r.reason,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     async fn send_call_and_wait(
         &self,
         to: Address,
@@ -530,31 +613,26 @@ impl HubSafe4337Client {
 
     async fn wait_userop_tx_hash(&self, userop_hash: &str) -> Result<B256> {
         let start = Instant::now();
-        let mut i = 0usize;
         loop {
             if start.elapsed() > std::time::Duration::from_secs(120) {
                 anyhow::bail!("timeout waiting for userop receipt: {userop_hash}");
             }
-            let url = self
-                .bundler_urls
-                .get(i % self.bundler_urls.len())
-                .context("no HUB_BUNDLER_URLS configured")?
-                .to_string();
-            i = i.wrapping_add(1);
 
-            if let Some(txh) = self.query_userop_receipt(&url, userop_hash).await? {
-                return Ok(txh);
+            if let Some(r) = self.get_userop_receipt(userop_hash).await? {
+                if let Some(txh) = r.tx_hash {
+                    return Ok(txh);
+                }
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
     }
 
-    async fn query_userop_receipt(
+    async fn query_userop_receipt_raw(
         &self,
         bundler_url: &str,
         userop_hash: &str,
-    ) -> Result<Option<B256>> {
+    ) -> Result<Option<UserOpReceipt>> {
         let payload = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -574,12 +652,42 @@ impl HubSafe4337Client {
             tracing::warn!(bundler_url, err = %err, "bundler error");
             return Ok(None);
         }
-        let Some(result) = val.result else {
-            return Ok(None);
+        Ok(val.result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::Bytes;
+
+    #[test]
+    fn packed_userop_json_roundtrip() {
+        let op = PackedUserOperation {
+            sender: Address::repeat_byte(0x11),
+            nonce: U256::from(7u64),
+            factory: Some(Address::repeat_byte(0x22)),
+            factory_data: Some(Bytes::from(vec![1, 2, 3])),
+            call_data: Bytes::from(vec![4, 5, 6, 7]),
+            call_gas_limit: U256::from(123u64),
+            verification_gas_limit: U256::from(456u64),
+            pre_verification_gas: U256::from(789u64),
+            max_fee_per_gas: U256::from(1_000u64),
+            max_priority_fee_per_gas: U256::from(2_000u64),
+            paymaster: Some(Address::repeat_byte(0x33)),
+            paymaster_verification_gas_limit: Some(U256::from(10u64)),
+            paymaster_post_op_gas_limit: Some(U256::from(11u64)),
+            paymaster_data: Some(Bytes::from(vec![8, 9])),
+            signature: Bytes::from(vec![0xaa, 0xbb]),
         };
-        let Some(txh) = result.transaction_hash else {
-            return Ok(None);
-        };
-        Ok(Some(txh.parse().context("parse transactionHash")?))
+
+        let s = serde_json::to_string(&op).expect("serialize");
+        let de: PackedUserOperation = serde_json::from_str(&s).expect("deserialize");
+
+        assert_eq!(de.sender, op.sender);
+        assert_eq!(de.nonce, op.nonce);
+        assert_eq!(de.call_data, op.call_data);
+        assert_eq!(de.signature, op.signature);
+        assert_eq!(de.paymaster, op.paymaster);
     }
 }

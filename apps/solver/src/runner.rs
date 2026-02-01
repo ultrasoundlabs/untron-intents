@@ -1,7 +1,7 @@
 use crate::{
     config::{AppConfig, HubTxMode},
     db::SolverDb,
-    db::{SolverJob, TronProofRow},
+    db::{HubUserOpKind, SolverJob, TronProofRow},
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
     tron_backend::TronBackend,
@@ -10,6 +10,8 @@ use crate::{
 };
 use crate::{hub::HubClient, hub::TronProof};
 use alloy::primitives::{B256, U256};
+use alloy::rpc::types::eth::erc4337::PackedUserOperation;
+use alloy::sol_types::SolCall;
 use anyhow::{Context, Result};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -204,35 +206,193 @@ impl Solver {
         match job.state.as_str() {
             "ready" => {
                 tracing::info!(id = %id, intent_type = job.intent_type, "claiming intent");
-                match self.hub.claim_intent(id).await {
-                    Ok(receipt) => {
-                        self.db
-                            .record_claim(
-                                job.job_id,
-                                &self.instance_id,
-                                b256_to_bytes32(receipt.transaction_hash),
-                            )
-                            .await?;
-                        Ok(())
-                    }
-                    Err(err) => {
-                        let msg = err.to_string();
-                        // If already claimed, don't keep retrying.
-                        if msg.contains("AlreadyClaimed") {
+                match self.cfg.hub.tx_mode {
+                    HubTxMode::Eoa => match self.hub.claim_intent(id).await {
+                        Ok(receipt) => {
                             self.db
-                                .record_fatal_error(job.job_id, &self.instance_id, &msg)
+                                .record_claim(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    b256_to_bytes32(receipt.transaction_hash),
+                                )
                                 .await?;
-                            return Ok(());
+                            Ok(())
                         }
-                        self.db
-                            .record_retryable_error(
-                                job.job_id,
-                                &self.instance_id,
-                                &msg,
-                                retry_in(job.attempts),
-                            )
-                            .await?;
-                        Ok(())
+                        Err(err) => {
+                            let msg = err.to_string();
+                            // If already claimed, don't keep retrying.
+                            if msg.contains("AlreadyClaimed") {
+                                self.db
+                                    .record_fatal_error(job.job_id, &self.instance_id, &msg)
+                                    .await?;
+                                return Ok(());
+                            }
+                            self.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            Ok(())
+                        }
+                    },
+                    HubTxMode::Safe4337 => {
+                        let kind = HubUserOpKind::Claim;
+                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let userop = match row {
+                            None => {
+                                let call = crate::hub::IUntronIntents::claimIntentCall { id };
+                                let userop = self
+                                    .hub
+                                    .safe4337_build_call_userop(
+                                        self.hub.pool_address(),
+                                        call.abi_encode(),
+                                    )
+                                    .await
+                                    .context("build claimIntent userop")?;
+                                let json = serde_json::to_string(&userop)
+                                    .context("serialize claim userop")?;
+                                self.db
+                                    .insert_hub_userop_prepared(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        &json,
+                                    )
+                                    .await?;
+                                Some(userop)
+                            }
+                            Some(r) => {
+                                // If we've already included it, we should have advanced state.
+                                if r.state == "included" {
+                                    return Ok(());
+                                }
+                                if r.userop_hash.is_none() && r.state == "prepared" {
+                                    let u: PackedUserOperation =
+                                        serde_json::from_str(&r.userop_json)
+                                            .context("deserialize claim userop")?;
+                                    Some(u)
+                                } else {
+                                    None
+                                }
+                            }
+                        };
+
+                        if let Some(userop) = userop {
+                            match self.hub.safe4337_send_userop(userop).await {
+                                Ok(userop_hash) => {
+                                    self.db
+                                        .record_hub_userop_submitted(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &userop_hash,
+                                        )
+                                        .await?;
+                                }
+                                Err(err) => {
+                                    let msg = err.to_string();
+                                    self.db
+                                        .record_hub_userop_retryable_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &msg,
+                                            retry_in(job.attempts),
+                                        )
+                                        .await
+                                        .ok();
+                                    self.db
+                                        .record_retryable_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            &msg,
+                                            retry_in(job.attempts),
+                                        )
+                                        .await?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        // Poll receipt if we have a userop hash.
+                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let Some(r) = row else {
+                            return Ok(());
+                        };
+                        let Some(userop_hash) = r.userop_hash.clone() else {
+                            return Ok(());
+                        };
+
+                        match self.hub.safe4337_get_userop_receipt(&userop_hash).await {
+                            Ok(Some(receipt)) => {
+                                let Some(tx_hash) = receipt.tx_hash else {
+                                    return Ok(());
+                                };
+                                let success = receipt.success.unwrap_or(false);
+                                self.db
+                                    .record_hub_userop_included(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        b256_to_bytes32(tx_hash),
+                                        success,
+                                    )
+                                    .await?;
+                                if success {
+                                    self.db
+                                        .record_claim(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            b256_to_bytes32(tx_hash),
+                                        )
+                                        .await?;
+                                } else {
+                                    let msg = format!(
+                                        "claim userop failed: {:?}",
+                                        receipt.reason.unwrap_or(serde_json::Value::Null)
+                                    );
+                                    self.db
+                                        .record_hub_userop_fatal_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &msg,
+                                        )
+                                        .await
+                                        .ok();
+                                    self.db
+                                        .record_fatal_error(job.job_id, &self.instance_id, &msg)
+                                        .await?;
+                                }
+                                Ok(())
+                            }
+                            Ok(None) => Ok(()),
+                            Err(err) => {
+                                let msg = err.to_string();
+                                self.db
+                                    .record_hub_userop_retryable_error(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        &msg,
+                                        retry_in(job.attempts),
+                                    )
+                                    .await
+                                    .ok();
+                                self.db
+                                    .record_retryable_error(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        &msg,
+                                        retry_in(job.attempts),
+                                    )
+                                    .await?;
+                                Ok(())
+                            }
+                        }
                     }
                 }
             }
@@ -344,19 +504,183 @@ impl Solver {
                     index: crate::types::parse_u256_dec(&proof.index_dec).unwrap_or(U256::ZERO),
                 };
                 tracing::info!(id = %id, "submitting proveIntentFill");
-                let receipt = self
-                    .hub
-                    .prove_intent_fill(id, tron)
-                    .await
-                    .context("proveIntentFill")?;
-                self.db
-                    .record_prove(
-                        job.job_id,
-                        &self.instance_id,
-                        b256_to_bytes32(receipt.transaction_hash),
-                    )
-                    .await?;
-                Ok(())
+                match self.cfg.hub.tx_mode {
+                    HubTxMode::Eoa => {
+                        let receipt = self
+                            .hub
+                            .prove_intent_fill(id, tron)
+                            .await
+                            .context("proveIntentFill")?;
+                        self.db
+                            .record_prove(
+                                job.job_id,
+                                &self.instance_id,
+                                b256_to_bytes32(receipt.transaction_hash),
+                            )
+                            .await?;
+                        Ok(())
+                    }
+                    HubTxMode::Safe4337 => {
+                        let kind = HubUserOpKind::Prove;
+                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let userop = match row {
+                            None => {
+                                let call = crate::hub::IUntronIntents::proveIntentFillCall {
+                                    id,
+                                    blocks: tron.blocks.map(alloy::primitives::Bytes::from),
+                                    encodedTx: tron.encoded_tx.into(),
+                                    proof: tron.proof,
+                                    index: tron.index,
+                                };
+                                let userop = self
+                                    .hub
+                                    .safe4337_build_call_userop(
+                                        self.hub.pool_address(),
+                                        call.abi_encode(),
+                                    )
+                                    .await
+                                    .context("build proveIntentFill userop")?;
+                                let json = serde_json::to_string(&userop)
+                                    .context("serialize prove userop")?;
+                                self.db
+                                    .insert_hub_userop_prepared(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        &json,
+                                    )
+                                    .await?;
+                                Some(userop)
+                            }
+                            Some(r) => {
+                                if r.state == "included" {
+                                    return Ok(());
+                                }
+                                if r.userop_hash.is_none() && r.state == "prepared" {
+                                    let u: PackedUserOperation =
+                                        serde_json::from_str(&r.userop_json)
+                                            .context("deserialize prove userop")?;
+                                    Some(u)
+                                } else {
+                                    None
+                                }
+                            }
+                        };
+
+                        if let Some(userop) = userop {
+                            match self.hub.safe4337_send_userop(userop).await {
+                                Ok(userop_hash) => {
+                                    self.db
+                                        .record_hub_userop_submitted(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &userop_hash,
+                                        )
+                                        .await?;
+                                }
+                                Err(err) => {
+                                    let msg = err.to_string();
+                                    self.db
+                                        .record_hub_userop_retryable_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &msg,
+                                            retry_in(job.attempts),
+                                        )
+                                        .await
+                                        .ok();
+                                    self.db
+                                        .record_retryable_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            &msg,
+                                            retry_in(job.attempts),
+                                        )
+                                        .await?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        let row = self.db.get_hub_userop(job.job_id, kind).await?;
+                        let Some(r) = row else {
+                            return Ok(());
+                        };
+                        let Some(userop_hash) = r.userop_hash.clone() else {
+                            return Ok(());
+                        };
+
+                        match self.hub.safe4337_get_userop_receipt(&userop_hash).await {
+                            Ok(Some(receipt)) => {
+                                let Some(tx_hash) = receipt.tx_hash else {
+                                    return Ok(());
+                                };
+                                let success = receipt.success.unwrap_or(false);
+                                self.db
+                                    .record_hub_userop_included(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        b256_to_bytes32(tx_hash),
+                                        success,
+                                    )
+                                    .await?;
+                                if success {
+                                    self.db
+                                        .record_prove(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            b256_to_bytes32(tx_hash),
+                                        )
+                                        .await?;
+                                } else {
+                                    let msg = format!(
+                                        "prove userop failed: {:?}",
+                                        receipt.reason.unwrap_or(serde_json::Value::Null)
+                                    );
+                                    self.db
+                                        .record_hub_userop_fatal_error(
+                                            job.job_id,
+                                            &self.instance_id,
+                                            kind,
+                                            &msg,
+                                        )
+                                        .await
+                                        .ok();
+                                    self.db
+                                        .record_fatal_error(job.job_id, &self.instance_id, &msg)
+                                        .await?;
+                                }
+                                Ok(())
+                            }
+                            Ok(None) => Ok(()),
+                            Err(err) => {
+                                let msg = err.to_string();
+                                self.db
+                                    .record_hub_userop_retryable_error(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        kind,
+                                        &msg,
+                                        retry_in(job.attempts),
+                                    )
+                                    .await
+                                    .ok();
+                                self.db
+                                    .record_retryable_error(
+                                        job.job_id,
+                                        &self.instance_id,
+                                        &msg,
+                                        retry_in(job.attempts),
+                                    )
+                                    .await?;
+                                Ok(())
+                            }
+                        }
+                    }
+                }
             }
             "done" | "failed_fatal" => Ok(()),
             other => {

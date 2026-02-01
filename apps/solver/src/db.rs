@@ -6,6 +6,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../db/migrations/0001_schema.sql")),
     (2, include_str!("../db/migrations/0002_jobs.sql")),
     (3, include_str!("../db/migrations/0003_tron_proofs.sql")),
+    (4, include_str!("../db/migrations/0004_hub_userops.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -22,6 +23,32 @@ pub struct SolverJob {
 
 pub struct SolverDb {
     pool: PgPool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HubUserOpKind {
+    Claim,
+    Prove,
+}
+
+impl HubUserOpKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HubUserOpKind::Claim => "claim",
+            HubUserOpKind::Prove => "prove",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HubUserOpRow {
+    pub userop_id: i64,
+    pub state: String,
+    pub userop_json: String,
+    pub userop_hash: Option<String>,
+    pub tx_hash: Option<[u8; 32]>,
+    pub success: Option<bool>,
+    pub attempts: i32,
 }
 
 impl SolverDb {
@@ -314,6 +341,218 @@ impl SolverDb {
         .await
         .context("record fatal error")?
         .rows_affected();
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
+    pub async fn get_hub_userop(
+        &self,
+        job_id: i64,
+        kind: HubUserOpKind,
+    ) -> Result<Option<HubUserOpRow>> {
+        let row = sqlx::query(
+            "select \
+                userop_id, \
+                state::text as state, \
+                userop::text as userop_json, \
+                userop_hash, \
+                tx_hash, \
+                success, \
+                attempts \
+             from solver.hub_userops \
+             where job_id=$1 and kind=$2",
+        )
+        .bind(job_id)
+        .bind(kind.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.hub_userops")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let tx_hash: Option<Vec<u8>> = row.try_get("tx_hash")?;
+        let tx_hash = tx_hash.and_then(|v| {
+            if v.len() != 32 {
+                return None;
+            }
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&v);
+            Some(out)
+        });
+
+        Ok(Some(HubUserOpRow {
+            userop_id: row.try_get("userop_id")?,
+            state: row.try_get("state")?,
+            userop_json: row.try_get("userop_json")?,
+            userop_hash: row.try_get("userop_hash")?,
+            tx_hash,
+            success: row.try_get("success")?,
+            attempts: row.try_get("attempts")?,
+        }))
+    }
+
+    pub async fn insert_hub_userop_prepared(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+        userop_json: &str,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "insert into solver.hub_userops(job_id, kind, userop, state) \
+             select j.job_id, $1, $2::jsonb, 'prepared' \
+             from solver.jobs j \
+             where j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now() \
+             on conflict (job_id, kind) do nothing",
+        )
+        .bind(kind.as_str())
+        .bind(userop_json)
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("insert solver.hub_userops prepared")?
+        .rows_affected();
+
+        if n > 1 {
+            anyhow::bail!("unexpected rows_affected inserting hub_userops: {n}");
+        }
+        Ok(())
+    }
+
+    pub async fn record_hub_userop_submitted(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+        userop_hash: &str,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "update solver.hub_userops u set \
+                userop_hash = coalesce(u.userop_hash, $1), \
+                state = 'submitted', \
+                updated_at = now() \
+             from solver.jobs j \
+             where u.job_id=j.job_id \
+               and u.kind=$2 \
+               and j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now()",
+        )
+        .bind(userop_hash)
+        .bind(kind.as_str())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("update solver.hub_userops submitted")?
+        .rows_affected();
+
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
+    pub async fn record_hub_userop_included(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+        tx_hash: [u8; 32],
+        success: bool,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "update solver.hub_userops u set \
+                tx_hash=$1, \
+                success=$2, \
+                state='included', \
+                updated_at=now() \
+             from solver.jobs j \
+             where u.job_id=j.job_id \
+               and u.kind=$3 \
+               and j.job_id=$4 and j.leased_by=$5 and j.lease_until >= now()",
+        )
+        .bind(tx_hash.to_vec())
+        .bind(success)
+        .bind(kind.as_str())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("update solver.hub_userops included")?
+        .rows_affected();
+
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
+    pub async fn record_hub_userop_retryable_error(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+        msg: &str,
+        retry_in: Duration,
+    ) -> Result<()> {
+        let secs: i64 = retry_in.as_secs().try_into().unwrap_or(60);
+        let n = sqlx::query(
+            "update solver.hub_userops u set \
+                attempts = u.attempts + 1, \
+                last_error = $1, \
+                next_retry_at = now() + make_interval(secs => $2), \
+                updated_at = now() \
+             from solver.jobs j \
+             where u.job_id=j.job_id \
+               and u.kind=$3 \
+               and j.job_id=$4 and j.leased_by=$5 and j.lease_until >= now()",
+        )
+        .bind(msg)
+        .bind(secs)
+        .bind(kind.as_str())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("update solver.hub_userops retryable error")?
+        .rows_affected();
+
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
+    pub async fn record_hub_userop_fatal_error(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        kind: HubUserOpKind,
+        msg: &str,
+    ) -> Result<()> {
+        let n = sqlx::query(
+            "update solver.hub_userops u set \
+                state='failed_fatal', \
+                last_error=$1, \
+                updated_at=now() \
+             from solver.jobs j \
+             where u.job_id=j.job_id \
+               and u.kind=$2 \
+               and j.job_id=$3 and j.leased_by=$4 and j.lease_until >= now()",
+        )
+        .bind(msg)
+        .bind(kind.as_str())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("update solver.hub_userops fatal error")?
+        .rows_affected();
+
         if n != 1 {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }

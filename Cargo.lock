@@ -5,7 +5,6 @@ version = 4
 [[package]]
 name = "aa"
 version = "0.1.0"
-source = "git+https://github.com/ultrasoundlabs/untron-v3?rev=f392dd1#f392dd1dcc426fcb18dcd68a3cac9ffc55ecd8e6"
 dependencies = [
  "alloy",
  "alloy-provider",
