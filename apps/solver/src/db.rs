@@ -14,6 +14,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
         include_str!("../db/migrations/0005_circuit_breakers.sql"),
     ),
     (6, include_str!("../db/migrations/0006_tron_signed_txs.sql")),
+    (
+        7,
+        include_str!("../db/migrations/0007_hub_userop_receipts.sql"),
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -54,7 +58,9 @@ pub struct HubUserOpRow {
     pub userop_json: String,
     pub userop_hash: Option<String>,
     pub tx_hash: Option<[u8; 32]>,
+    pub block_number: Option<i64>,
     pub success: Option<bool>,
+    pub receipt_json: Option<String>,
     pub attempts: i32,
 }
 
@@ -443,7 +449,9 @@ impl SolverDb {
                 userop::text as userop_json, \
                 userop_hash, \
                 tx_hash, \
+                block_number, \
                 success, \
+                receipt::text as receipt_json, \
                 attempts \
              from solver.hub_userops \
              where job_id=$1 and kind::text=$2",
@@ -474,7 +482,9 @@ impl SolverDb {
             userop_json: row.try_get("userop_json")?,
             userop_hash: row.try_get("userop_hash")?,
             tx_hash,
+            block_number: row.try_get("block_number")?,
             success: row.try_get("success")?,
+            receipt_json: row.try_get("receipt_json")?,
             attempts: row.try_get("attempts")?,
         }))
     }
@@ -546,21 +556,27 @@ impl SolverDb {
         leased_by: &str,
         kind: HubUserOpKind,
         tx_hash: [u8; 32],
+        block_number: Option<i64>,
         success: bool,
+        receipt_json: &str,
     ) -> Result<()> {
         let n = sqlx::query(
             "update solver.hub_userops u set \
                 tx_hash=$1, \
-                success=$2, \
+                block_number=coalesce($2, u.block_number), \
+                success=$3, \
+                receipt=$4::jsonb, \
                 state='included', \
                 updated_at=now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$3::solver.userop_kind \
-               and j.job_id=$4 and j.leased_by=$5 and j.lease_until >= now()",
+               and u.kind=$5::solver.userop_kind \
+               and j.job_id=$6 and j.leased_by=$7 and j.lease_until >= now()",
         )
         .bind(tx_hash.to_vec())
+        .bind(block_number)
         .bind(success)
+        .bind(receipt_json)
         .bind(kind.as_str())
         .bind(job_id)
         .bind(leased_by)

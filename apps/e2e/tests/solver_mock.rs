@@ -7,6 +7,7 @@ use e2e::{
         run_cast_create_usdt_transfer_intent, run_cast_mint_mock_erc20,
     },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
         run_forge_build, run_forge_create_mock_erc20, run_forge_create_mock_tron_tx_reader,
         run_forge_create_mock_untron_v3, run_forge_create_untron_intents_with_args,
@@ -26,8 +27,10 @@ async fn e2e_solver_mvp_fills_trx_usdt_and_delegate_resource_mock_tron() -> Resu
         return Ok(());
     }
 
+    cleanup_untron_e2e_containers().ok();
+
     let network = format!("e2e-net-{}", find_free_port()?);
-    let pg_name = format!("pg-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
 
     let pg = start_postgres(PostgresOptions {
         network: Some(network.clone()),
@@ -99,6 +102,7 @@ async fn e2e_solver_mvp_fills_trx_usdt_and_delegate_resource_mock_tron() -> Resu
 
     let pgrst = start_postgrest(PostgrestOptions {
         network,
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
         db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
         ..Default::default()
     })

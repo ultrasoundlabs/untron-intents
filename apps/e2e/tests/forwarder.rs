@@ -3,6 +3,7 @@ use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, run_migrations},
     docker::{PostgresOptions, start_postgres},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{run_forge_build, run_forge_create_intents_forwarder, run_forge_create_untron_intents},
     postgres::wait_for_postgres,
     process::KillOnDrop,
@@ -19,7 +20,13 @@ async fn e2e_forwarder_stream_ingests_bridgers_set() -> Result<()> {
         return Ok(());
     }
 
-    let pg = start_postgres(PostgresOptions::default()).await?;
+    cleanup_untron_e2e_containers().ok();
+
+    let pg = start_postgres(PostgresOptions {
+        container_name: Some(format!("untron-e2e-pg-{}", find_free_port()?)),
+        ..Default::default()
+    })
+    .await?;
     let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 

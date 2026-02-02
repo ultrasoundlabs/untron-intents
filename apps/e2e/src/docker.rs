@@ -77,6 +77,7 @@ pub struct PostgrestInstance {
 pub struct PostgrestOptions {
     pub image_tag: String,
     pub network: String,
+    pub container_name: Option<String>,
     pub db_uri: String,
     pub db_schema: String,
     pub anon_role: String,
@@ -87,6 +88,7 @@ impl Default for PostgrestOptions {
         Self {
             image_tag: "v14.2".to_string(),
             network: "bridge".to_string(),
+            container_name: None,
             db_uri: "postgres://pgrst_authenticator:pw@postgres:5432/untron".to_string(),
             db_schema: "api".to_string(),
             anon_role: "pgrst_anon".to_string(),
@@ -95,16 +97,19 @@ impl Default for PostgrestOptions {
 }
 
 pub async fn start_postgrest(opts: PostgrestOptions) -> Result<PostgrestInstance> {
-    let pgrst = GenericImage::new("postgrest/postgrest".to_string(), opts.image_tag)
+    let mut pgrst = GenericImage::new("postgrest/postgrest".to_string(), opts.image_tag)
         .with_exposed_port(3000.tcp())
         .with_wait_for(WaitFor::Nothing)
         .with_env_var("PGRST_DB_URI", opts.db_uri)
         .with_env_var("PGRST_DB_SCHEMA", opts.db_schema)
         .with_env_var("PGRST_DB_ANON_ROLE", opts.anon_role)
-        .with_network(opts.network)
-        .start()
-        .await
-        .context("start postgrest container")?;
+        .with_network(opts.network);
+
+    if let Some(name) = opts.container_name {
+        pgrst = pgrst.with_container_name(name);
+    }
+
+    let pgrst = pgrst.start().await.context("start postgrest container")?;
 
     let host_port = pgrst.get_host_port_ipv4(3000).await?;
     let base_url = format!("http://127.0.0.1:{host_port}");

@@ -80,6 +80,7 @@ pub struct AltoInstance {
 pub struct AltoOptions {
     pub image_tag: String,
     pub network: Option<String>,
+    pub container_name: Option<String>,
     pub rpc_url: String,
     pub entrypoints_csv: String,
     pub executor_private_keys_csv: String,
@@ -94,6 +95,7 @@ impl Default for AltoOptions {
         Self {
             image_tag: "latest".to_string(),
             network: None,
+            container_name: None,
             rpc_url: "http://anvil:8545".to_string(),
             entrypoints_csv: String::new(),
             executor_private_keys_csv: String::new(),
@@ -154,6 +156,9 @@ pub async fn start_alto(opts: AltoOptions) -> Result<AltoInstance> {
 
     if let Some(network) = opts.network {
         alto = alto.with_network(network);
+    }
+    if let Some(name) = opts.container_name {
+        alto = alto.with_container_name(name);
     }
 
     let container = alto.start().await.context("start alto container")?;

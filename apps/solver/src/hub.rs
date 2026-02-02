@@ -2,8 +2,8 @@ use crate::metrics::SolverTelemetry;
 use aa::{Safe4337UserOpSender, Safe4337UserOpSenderConfig, Safe4337UserOpSenderOptions};
 use alloy::primitives::{Address, B256, U256};
 use alloy::providers::{DynProvider, Provider, ProviderBuilder};
-use alloy::rpc::types::TransactionReceipt;
 use alloy::rpc::types::eth::erc4337::PackedUserOperation;
+use alloy::rpc::types::{BlockNumberOrTag, Filter, TransactionReceipt};
 use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolCall;
@@ -81,8 +81,11 @@ pub struct HubClient {
 #[derive(Debug, Clone)]
 pub struct HubUserOpReceipt {
     pub tx_hash: Option<B256>,
+    pub block_number: Option<u64>,
     pub success: Option<bool>,
     pub reason: Option<serde_json::Value>,
+    /// Raw JSON-RPC `result` object returned by `eth_getUserOperationReceipt`.
+    pub raw: serde_json::Value,
 }
 
 enum HubClientInner {
@@ -101,6 +104,7 @@ struct HubSafe4337Client {
     pool: Address,
     provider: DynProvider,
     solver: Address,
+    entrypoint: Address,
     bundler_urls: Vec<String>,
     sender: tokio::sync::Mutex<Safe4337UserOpSender>,
     http: Client,
@@ -211,6 +215,7 @@ impl HubClient {
                 pool,
                 provider,
                 solver: sender.safe_address(),
+                entrypoint,
                 bundler_urls,
                 sender: tokio::sync::Mutex::new(sender),
                 http: Client::new(),
@@ -561,24 +566,6 @@ struct JsonRpcResponse<T> {
     pub error: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct UserOpReceipt {
-    #[serde(rename = "transactionHash")]
-    pub transaction_hash: Option<String>,
-    #[serde(default)]
-    pub receipt: Option<UserOpReceiptInner>,
-    #[serde(default)]
-    pub success: Option<bool>,
-    #[serde(default)]
-    pub reason: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserOpReceiptInner {
-    #[serde(rename = "transactionHash")]
-    pub transaction_hash: Option<String>,
-}
-
 impl HubSafe4337Client {
     async fn build_call_userop(&self, to: Address, data: Vec<u8>) -> Result<PackedUserOperation> {
         let mut sender = self.sender.lock().await;
@@ -604,22 +591,91 @@ impl HubSafe4337Client {
                 .to_string();
             i = i.wrapping_add(1);
 
-            if let Some(r) = self.query_userop_receipt_raw(&url, userop_hash).await? {
-                let tx_hash_str = r
-                    .transaction_hash
-                    .or_else(|| r.receipt.and_then(|x| x.transaction_hash));
-                let tx_hash = match tx_hash_str {
-                    Some(txh) => Some(txh.parse().context("parse transactionHash")?),
-                    None => None,
-                };
+            if let Some(raw) = self.query_userop_receipt_raw(&url, userop_hash).await? {
+                let (tx_hash, block_number, success, reason) = extract_userop_receipt_fields(&raw)?;
                 return Ok(Some(HubUserOpReceipt {
                     tx_hash,
-                    success: r.success,
-                    reason: r.reason,
+                    block_number,
+                    success,
+                    reason,
+                    raw,
                 }));
             }
         }
-        Ok(None)
+        // Bundlers may not retain receipts forever and some implementations can be flaky under
+        // load. As a deterministic fallback, query the canonical chain via EntryPoint's
+        // `UserOperationEvent` (indexed by userOpHash). This also lets the solver become
+        // "eventually consistent" after temporary bundler outages.
+        self.query_userop_receipt_from_entrypoint_log(userop_hash)
+            .await
+    }
+
+    async fn query_userop_receipt_from_entrypoint_log(
+        &self,
+        userop_hash: &str,
+    ) -> Result<Option<HubUserOpReceipt>> {
+        let userop_hash: B256 = userop_hash.parse().context("parse userop_hash")?;
+
+        // EntryPoint v0.7:
+        // UserOperationEvent(bytes32 indexed userOpHash,address indexed sender,address indexed paymaster,uint256 nonce,bool success,uint256 actualGasCost,uint256 actualGasUsed)
+        let topic0 = alloy::primitives::keccak256(
+            "UserOperationEvent(bytes32,address,address,uint256,bool,uint256,uint256)".as_bytes(),
+        );
+
+        let head = self
+            .provider
+            .get_block_number()
+            .await
+            .context("eth_blockNumber")?;
+        let head_u64: u64 = head.try_into().unwrap_or(u64::MAX);
+        let from = head_u64.saturating_sub(10_000);
+
+        let filter = Filter::new()
+            .address(self.entrypoint)
+            .event_signature(topic0)
+            .topic1(userop_hash)
+            .from_block(BlockNumberOrTag::Number(from))
+            .to_block(BlockNumberOrTag::Number(head_u64));
+
+        let logs = self
+            .provider
+            .get_logs(&filter)
+            .await
+            .context("eth_getLogs")?;
+        let Some(log) = logs.into_iter().next() else {
+            return Ok(None);
+        };
+
+        let tx_hash = log
+            .transaction_hash
+            .context("UserOperationEvent log missing transaction_hash")?;
+        let block_number = log.block_number.map(|n| n as u64);
+
+        // Decode `success` from ABI-encoded data: (nonce, success, actualGasCost, actualGasUsed).
+        // - each is 32 bytes
+        // - success is the 2nd word.
+        let data = log.data().data.as_ref();
+        let success = if data.len() >= 64 {
+            Some(data[63] == 1)
+        } else {
+            None
+        };
+
+        let raw = json!({
+            "source": "entrypoint_log",
+            "userOpHash": format!("{userop_hash:#x}"),
+            "transactionHash": format!("{tx_hash:#x}"),
+            "blockNumber": block_number.map(|n| format!("0x{:x}", n)),
+            "success": success,
+        });
+
+        Ok(Some(HubUserOpReceipt {
+            tx_hash: Some(tx_hash),
+            block_number,
+            success,
+            reason: None,
+            raw,
+        }))
     }
 
     async fn send_call_and_wait(
@@ -676,7 +732,7 @@ impl HubSafe4337Client {
         &self,
         bundler_url: &str,
         userop_hash: &str,
-    ) -> Result<Option<UserOpReceipt>> {
+    ) -> Result<Option<serde_json::Value>> {
         let payload = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -691,13 +747,54 @@ impl HubSafe4337Client {
             .await
             .context("post bundler jsonrpc")?;
 
-        let val: JsonRpcResponse<UserOpReceipt> = resp.json().await.context("decode jsonrpc")?;
+        let val: JsonRpcResponse<serde_json::Value> =
+            resp.json().await.context("decode jsonrpc")?;
         if let Some(err) = val.error {
             tracing::warn!(bundler_url, err = %err, "bundler error");
             return Ok(None);
         }
         Ok(val.result)
     }
+}
+
+fn extract_userop_receipt_fields(
+    raw: &serde_json::Value,
+) -> Result<(
+    Option<B256>,
+    Option<u64>,
+    Option<bool>,
+    Option<serde_json::Value>,
+)> {
+    // We keep this intentionally defensive: bundlers differ slightly in where fields appear.
+    let tx_hash_str = raw
+        .get("transactionHash")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            raw.get("receipt")
+                .and_then(|r| r.get("transactionHash"))
+                .and_then(|v| v.as_str())
+        });
+    let tx_hash = match tx_hash_str {
+        Some(s) => Some(s.parse().context("parse transactionHash")?),
+        None => None,
+    };
+
+    let block_number = raw
+        .get("receipt")
+        .and_then(|r| r.get("blockNumber"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.strip_prefix("0x"))
+        .and_then(|s| u64::from_str_radix(s, 16).ok())
+        .or_else(|| {
+            raw.get("receipt")
+                .and_then(|r| r.get("blockNumber"))
+                .and_then(|v| v.as_u64())
+        });
+
+    let success = raw.get("success").and_then(|v| v.as_bool());
+    let reason = raw.get("reason").cloned();
+
+    Ok((tx_hash, block_number, success, reason))
 }
 
 #[cfg(test)]

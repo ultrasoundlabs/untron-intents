@@ -4,6 +4,7 @@ use e2e::{
     binaries::{cargo_build_indexer_bins, run_migrations},
     cast::{run_cast_create_intent, run_cast_rpc},
     docker::{PostgresOptions, start_postgres},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{run_forge_build, run_forge_create_untron_intents},
     pool_db::{
         CurrentIntentRow, wait_for_current_intent_match, wait_for_pool_current_intents_count,
@@ -21,7 +22,13 @@ async fn e2e_indexer_ingests_pool_intent_created() -> Result<()> {
         return Ok(());
     }
 
-    let pg = start_postgres(PostgresOptions::default()).await?;
+    cleanup_untron_e2e_containers().ok();
+
+    let pg = start_postgres(PostgresOptions {
+        container_name: Some(format!("untron-e2e-pg-{}", find_free_port()?)),
+        ..Default::default()
+    })
+    .await?;
     let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 
@@ -77,7 +84,13 @@ async fn e2e_indexer_rolls_back_pool_on_anvil_revert() -> Result<()> {
         return Ok(());
     }
 
-    let pg = start_postgres(PostgresOptions::default()).await?;
+    cleanup_untron_e2e_containers().ok();
+
+    let pg = start_postgres(PostgresOptions {
+        container_name: Some(format!("untron-e2e-pg-{}", find_free_port()?)),
+        ..Default::default()
+    })
+    .await?;
     let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 

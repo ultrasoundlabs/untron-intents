@@ -452,13 +452,17 @@ impl Solver {
                                     return Ok(());
                                 };
                                 let success = receipt.success.unwrap_or(false);
+                                let receipt_json = serde_json::to_string(&receipt.raw)
+                                    .unwrap_or_else(|_| "{}".to_string());
                                 self.db
                                     .record_hub_userop_included(
                                         job.job_id,
                                         &self.instance_id,
                                         kind,
                                         b256_to_bytes32(tx_hash),
+                                        receipt.block_number.map(|n| n as i64),
                                         success,
+                                        &receipt_json,
                                     )
                                     .await?;
                                 if success {
@@ -926,13 +930,17 @@ impl Solver {
                                     return Ok(());
                                 };
                                 let success = receipt.success.unwrap_or(false);
+                                let receipt_json = serde_json::to_string(&receipt.raw)
+                                    .unwrap_or_else(|_| "{}".to_string());
                                 self.db
                                     .record_hub_userop_included(
                                         job.job_id,
                                         &self.instance_id,
                                         kind,
                                         b256_to_bytes32(tx_hash),
+                                        receipt.block_number.map(|n| n as i64),
                                         success,
+                                        &receipt_json,
                                     )
                                     .await?;
                                 if success {

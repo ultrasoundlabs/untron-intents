@@ -4,6 +4,7 @@ use e2e::{
     binaries::{cargo_build_indexer_bins, run_migrations},
     cast::run_cast_create_intent,
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{run_forge_build, run_forge_create_untron_intents},
     http::{http_get_json, wait_for_http_ok},
     pool_db::{assert_multi_intent_ordering, wait_for_pool_current_intents_count},
@@ -21,8 +22,10 @@ async fn e2e_postgrest_pool_intents_smoke() -> Result<()> {
         return Ok(());
     }
 
+    cleanup_untron_e2e_containers().ok();
+
     let network = format!("e2e-net-{}", find_free_port()?);
-    let pg_name = format!("pg-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
 
     let pg = start_postgres(PostgresOptions {
         network: Some(network.clone()),
@@ -67,6 +70,7 @@ async fn e2e_postgrest_pool_intents_smoke() -> Result<()> {
 
     let pgrst = start_postgrest(PostgrestOptions {
         network,
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
         db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
         ..Default::default()
     })
@@ -103,7 +107,13 @@ async fn e2e_pool_multi_intent_ordering() -> Result<()> {
         return Ok(());
     }
 
-    let pg = start_postgres(PostgresOptions::default()).await?;
+    cleanup_untron_e2e_containers().ok();
+
+    let pg = start_postgres(PostgresOptions {
+        container_name: Some(format!("untron-e2e-pg-{}", find_free_port()?)),
+        ..Default::default()
+    })
+    .await?;
     let db_url = pg.db_url.clone();
     wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
 

@@ -181,7 +181,9 @@ impl TronBackend {
 
     pub async fn broadcast_signed_tx(&self, tx_bytes: &[u8]) -> Result<()> {
         match self.cfg.mode {
-            TronMode::Mock => anyhow::bail!("broadcast_signed_tx is not available in TRON_MODE=mock"),
+            TronMode::Mock => {
+                anyhow::bail!("broadcast_signed_tx is not available in TRON_MODE=mock")
+            }
             TronMode::Grpc => grpc::broadcast_signed_tx(&self.cfg, &self.telemetry, tx_bytes).await,
         }
     }

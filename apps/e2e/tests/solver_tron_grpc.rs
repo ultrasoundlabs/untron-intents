@@ -7,6 +7,7 @@ use e2e::{
         run_cast_create_trx_transfer_intent, run_cast_mint_mock_erc20,
     },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
         run_forge_build, run_forge_create_mock_erc20, run_forge_create_mock_untron_v3,
         run_forge_create_test_tron_tx_reader_no_sig, run_forge_create_untron_intents_with_args,
@@ -35,6 +36,8 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
         return Ok(());
     }
 
+    cleanup_untron_e2e_containers().ok();
+
     // Start a private Tron network (tronbox/tre).
     let tron_tag = std::env::var("TRON_TRE_TAG").unwrap_or_else(|_| "1.0.4".to_string());
     let tron = GenericImage::new("tronbox/tre".to_string(), tron_tag)
@@ -42,6 +45,7 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
         .with_exposed_port(50051.tcp())
         .with_exposed_port(50052.tcp())
         .with_wait_for(WaitFor::Nothing)
+        .with_container_name(format!("untron-e2e-tron-{}", find_free_port()?))
         .start()
         .await
         .context("start tronbox/tre container")?;
@@ -79,7 +83,7 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
     }
 
     let network = format!("e2e-net-{}", find_free_port()?);
-    let pg_name = format!("pg-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
 
     let pg = start_postgres(PostgresOptions {
         network: Some(network.clone()),
@@ -154,6 +158,7 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
 
     let pgrst = start_postgrest(PostgrestOptions {
         network,
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
         db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
         ..Default::default()
     })

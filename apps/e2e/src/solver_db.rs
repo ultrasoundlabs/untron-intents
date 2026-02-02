@@ -53,13 +53,15 @@ pub struct HubUserOpRow {
     pub state: String,
     pub userop_hash: Option<String>,
     pub tx_hash: Option<String>,
+    pub block_number: Option<i64>,
     pub success: Option<bool>,
+    pub receipt_json: Option<String>,
 }
 
 pub async fn fetch_hub_userop(db_url: &str, job_id: i64, kind: &str) -> Result<HubUserOpRow> {
     let pool = PgPool::connect(db_url).await.context("connect db")?;
     let row = sqlx::query(
-        "select kind::text as kind, state::text as state, userop_hash, tx_hash, success \
+        "select kind::text as kind, state::text as state, userop_hash, tx_hash, block_number, success, receipt::text as receipt_json \
          from solver.hub_userops where job_id = $1 and kind = $2",
     )
     .bind(job_id)
@@ -76,6 +78,8 @@ pub async fn fetch_hub_userop(db_url: &str, job_id: i64, kind: &str) -> Result<H
         state: row.try_get("state")?,
         userop_hash: row.try_get("userop_hash")?,
         tx_hash,
+        block_number: row.try_get("block_number")?,
         success: row.try_get("success")?,
+        receipt_json: row.try_get("receipt_json")?,
     })
 }

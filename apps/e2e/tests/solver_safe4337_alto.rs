@@ -9,6 +9,7 @@ use e2e::{
         run_cast_entrypoint_deposit_to, run_cast_mint_mock_erc20, run_cast_transfer_eth,
     },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
+    docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
         run_forge_build, run_forge_create_entrypoint_v07, run_forge_create_mock_erc20,
         run_forge_create_mock_tron_tx_reader, run_forge_create_mock_untron_v3,
@@ -281,8 +282,10 @@ async fn e2e_solver_safe4337_uses_alto_and_recovers_after_crash() -> Result<()> 
         return Ok(());
     }
 
+    cleanup_untron_e2e_containers().ok();
+
     let network = format!("e2e-net-{}", find_free_port()?);
-    let pg_name = format!("pg-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
 
     let pg = start_postgres(PostgresOptions {
         network: Some(network.clone()),
@@ -321,6 +324,7 @@ async fn e2e_solver_safe4337_uses_alto_and_recovers_after_crash() -> Result<()> 
     // Start Alto bundler.
     let alto = start_alto(AltoOptions {
         network: None,
+        container_name: Some(format!("untron-e2e-alto-{}", find_free_port()?)),
         rpc_url: alto_rpc_url,
         entrypoints_csv: entrypoint.clone(),
         executor_private_keys_csv: pk1.to_string(),
@@ -504,6 +508,7 @@ async fn e2e_solver_safe4337_uses_alto_and_recovers_after_crash() -> Result<()> 
 
     let pgrst = start_postgrest(PostgrestOptions {
         network: network.clone(),
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
         db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
         ..Default::default()
     })
@@ -702,5 +707,44 @@ async fn e2e_solver_safe4337_uses_alto_and_recovers_after_crash() -> Result<()> 
             return Err(err);
         }
     };
+
+    // Assert AA persistence surface: all userops reached "included" and we stored the raw receipt.
+    // (This is what the solver needs to be restart-safe and debuggable in production.)
+    let rows = sqlx::query(
+        "select kind::text as kind, state::text as state, tx_hash, success, receipt \
+         from solver.hub_userops \
+         order by userop_id asc",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("select solver.hub_userops final")?;
+
+    if rows.len() < 6 {
+        anyhow::bail!(
+            "expected at least 6 hub_userops (3 jobs x claim+prove), got {}",
+            rows.len()
+        );
+    }
+
+    for r in rows {
+        let kind: String = r.try_get("kind").unwrap_or_default();
+        let state: String = r.try_get("state").unwrap_or_default();
+        let tx_hash: Option<Vec<u8>> = r.try_get("tx_hash").ok();
+        let success: Option<bool> = r.try_get("success").ok();
+        let receipt: Option<serde_json::Value> = r.try_get("receipt").ok();
+
+        if state != "included" {
+            anyhow::bail!("expected hub_userops state=included, got kind={kind} state={state}");
+        }
+        if tx_hash.as_ref().map(|v| v.len()).unwrap_or(0) != 32 {
+            anyhow::bail!("expected hub_userops tx_hash(32) for kind={kind}, got {tx_hash:?}");
+        }
+        if success != Some(true) {
+            anyhow::bail!("expected hub_userops success=true for kind={kind}, got {success:?}");
+        }
+        if receipt.is_none() {
+            anyhow::bail!("expected hub_userops receipt json for kind={kind}, got None");
+        }
+    }
     Ok(())
 }
