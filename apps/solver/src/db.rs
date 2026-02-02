@@ -32,6 +32,7 @@ pub struct SolverJob {
     pub tron_txid: Option<[u8; 32]>,
 }
 
+#[derive(Clone)]
 pub struct SolverDb {
     pool: PgPool,
 }

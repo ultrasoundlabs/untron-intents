@@ -1,6 +1,7 @@
 pub mod alto;
 pub mod anvil;
 pub mod binaries;
+pub mod bundler_proxy;
 pub mod cast;
 pub mod docker;
 pub mod docker_cleanup;
