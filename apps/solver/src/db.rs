@@ -13,6 +13,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         5,
         include_str!("../db/migrations/0005_circuit_breakers.sql"),
     ),
+    (6, include_str!("../db/migrations/0006_tron_signed_txs.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -168,7 +169,7 @@ impl SolverDb {
                 select job_id \
                 from solver.jobs \
                 where \
-                    state in ('ready', 'claimed', 'tron_sent', 'proof_built') \
+                    state in ('ready', 'claimed', 'tron_prepared', 'tron_sent', 'proof_built') \
                     and next_retry_at <= now() \
                     and ( \
                         (lease_until is null or lease_until < now()) \
@@ -284,6 +285,69 @@ impl SolverDb {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }
         Ok(())
+    }
+
+    pub async fn record_tron_prepared(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        txid: [u8; 32],
+        tx_bytes: &[u8],
+        fee_limit_sun: Option<i64>,
+        energy_required: Option<i64>,
+        tx_size_bytes: Option<i64>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.context("begin tron_prepared tx")?;
+
+        sqlx::query(
+            "insert into solver.tron_signed_txs(txid, job_id, step, tx_bytes, fee_limit_sun, energy_required, tx_size_bytes, updated_at) \
+             values ($1, $2, 'final', $3, $4, $5, $6, now()) \
+             on conflict (txid) do update set \
+                job_id = excluded.job_id, \
+                step = excluded.step, \
+                tx_bytes = excluded.tx_bytes, \
+                fee_limit_sun = excluded.fee_limit_sun, \
+                energy_required = excluded.energy_required, \
+                tx_size_bytes = excluded.tx_size_bytes, \
+                updated_at = now()",
+        )
+        .bind(txid.to_vec())
+        .bind(job_id)
+        .bind(tx_bytes)
+        .bind(fee_limit_sun)
+        .bind(energy_required)
+        .bind(tx_size_bytes)
+        .execute(&mut *tx)
+        .await
+        .context("upsert solver.tron_signed_txs")?;
+
+        let n = sqlx::query(
+            "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
+             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+        )
+        .bind(txid.to_vec())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&mut *tx)
+        .await
+        .context("record tron_prepared")?
+        .rows_affected();
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+
+        tx.commit().await.context("commit tron_prepared tx")?;
+        Ok(())
+    }
+
+    pub async fn load_tron_signed_tx_bytes(&self, txid: [u8; 32]) -> Result<Vec<u8>> {
+        let row: Vec<u8> =
+            sqlx::query_scalar("select tx_bytes from solver.tron_signed_txs where txid = $1")
+                .bind(txid.to_vec())
+                .fetch_one(&self.pool)
+                .await
+                .context("select solver.tron_signed_txs")?;
+        Ok(row)
     }
 
     pub async fn record_proof_built(&self, job_id: i64, leased_by: &str) -> Result<()> {

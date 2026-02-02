@@ -6,13 +6,23 @@ use crate::{
 use alloy::primitives::B256;
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
+use prost::Message;
 use tron::{TronAddress, TronGrpc, TronTxProofBuilder, TronWallet};
 
-pub async fn broadcast_trx_transfer(
+#[derive(Debug, Clone)]
+pub struct PreparedTronTx {
+    pub txid: [u8; 32],
+    pub tx_bytes: Vec<u8>,
+    pub fee_limit_sun: Option<i64>,
+    pub energy_required: Option<i64>,
+    pub tx_size_bytes: Option<i64>,
+}
+
+pub async fn prepare_trx_transfer(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
     intent_specs: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<PreparedTronTx> {
     let intent = super::TRXTransferIntent::abi_decode(intent_specs)
         .context("abi_decode TRXTransferIntent")?;
 
@@ -23,24 +33,30 @@ pub async fn broadcast_trx_transfer(
     let mut grpc = connect_grpc(cfg).await?;
 
     let started = std::time::Instant::now();
-    let txid = wallet
-        .broadcast_transfer_contract(&mut grpc, to, amount_sun_i64)
+    let signed = wallet
+        .build_and_sign_transfer_contract(&mut grpc, to, amount_sun_i64)
         .await
-        .context("broadcast_transfer_contract")?;
+        .context("build_and_sign_transfer_contract")?;
     telemetry.tron_grpc_ms(
-        "broadcast_transfer_contract",
+        "build_and_sign_transfer_contract",
         true,
         started.elapsed().as_millis() as u64,
     );
 
-    Ok(txid)
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
 }
 
-pub async fn broadcast_trigger_smart_contract(
+pub async fn prepare_trigger_smart_contract(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
     intent_specs: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<PreparedTronTx> {
     let intent = super::TriggerSmartContractIntent::abi_decode(intent_specs)
         .context("abi_decode TriggerSmartContractIntent")?;
 
@@ -57,8 +73,8 @@ pub async fn broadcast_trigger_smart_contract(
     };
 
     let started = std::time::Instant::now();
-    let txid = wallet
-        .broadcast_trigger_smart_contract(
+    let signed = wallet
+        .build_and_sign_trigger_smart_contract(
             &mut grpc,
             to,
             intent.data.to_vec(),
@@ -66,21 +82,27 @@ pub async fn broadcast_trigger_smart_contract(
             fee_policy,
         )
         .await
-        .context("broadcast_trigger_smart_contract")?;
+        .context("build_and_sign_trigger_smart_contract")?;
     telemetry.tron_grpc_ms(
-        "broadcast_trigger_smart_contract",
+        "build_and_sign_trigger_smart_contract",
         true,
         started.elapsed().as_millis() as u64,
     );
 
-    Ok(txid)
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
 }
 
-pub async fn broadcast_delegate_resource(
+pub async fn prepare_delegate_resource(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
     intent_specs: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<PreparedTronTx> {
     let intent = super::DelegateResourceIntent::abi_decode(intent_specs)
         .context("abi_decode DelegateResourceIntent")?;
 
@@ -102,8 +124,8 @@ pub async fn broadcast_delegate_resource(
     let mut grpc = connect_grpc(cfg).await?;
 
     let started = std::time::Instant::now();
-    let txid = wallet
-        .broadcast_delegate_resource_contract(
+    let signed = wallet
+        .build_and_sign_delegate_resource_contract(
             &mut grpc,
             receiver,
             rc,
@@ -112,22 +134,28 @@ pub async fn broadcast_delegate_resource(
             lock_period_i64,
         )
         .await
-        .context("broadcast_delegate_resource_contract")?;
+        .context("build_and_sign_delegate_resource_contract")?;
     telemetry.tron_grpc_ms(
-        "broadcast_delegate_resource_contract",
+        "build_and_sign_delegate_resource_contract",
         true,
         started.elapsed().as_millis() as u64,
     );
 
-    Ok(txid)
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
 }
 
-pub async fn broadcast_usdt_transfer(
+pub async fn prepare_usdt_transfer(
     hub: &crate::hub::HubClient,
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
     intent_specs: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<PreparedTronTx> {
     let intent = super::USDTTransferIntent::abi_decode(intent_specs)
         .context("abi_decode USDTTransferIntent")?;
     let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
@@ -142,8 +170,8 @@ pub async fn broadcast_usdt_transfer(
     };
 
     let started = std::time::Instant::now();
-    let txid = wallet
-        .broadcast_trigger_smart_contract(
+    let signed = wallet
+        .build_and_sign_trigger_smart_contract(
             &mut grpc,
             TronAddress::from_evm(tron_usdt),
             data,
@@ -151,19 +179,86 @@ pub async fn broadcast_usdt_transfer(
             fee_policy,
         )
         .await
-        .context("broadcast_trigger_smart_contract")?;
+        .context("build_and_sign_trigger_smart_contract")?;
     telemetry.tron_grpc_ms(
-        "broadcast_trigger_smart_contract",
+        "build_and_sign_trigger_smart_contract",
         true,
         started.elapsed().as_millis() as u64,
     );
 
-    Ok(txid)
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
 }
 
 pub async fn build_proof(cfg: &TronConfig, jobs: &JobConfig, txid: [u8; 32]) -> Result<TronProof> {
     let mut grpc = connect_grpc(cfg).await?;
     build_proof_with(&mut grpc, jobs, txid).await
+}
+
+pub async fn tx_is_known(cfg: &TronConfig, telemetry: &SolverTelemetry, txid: [u8; 32]) -> bool {
+    let mut grpc = match connect_grpc(cfg).await {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let started = std::time::Instant::now();
+    let res = grpc.get_transaction_info_by_id(txid).await;
+    let ok = match res {
+        Ok(info) => {
+            // Some nodes return an "empty" TransactionInfo for unknown txids. Treat a tx as
+            // known only if we see either:
+            // - the id field populated and equal to the requested txid, or
+            // - a non-zero block_number (confirmed).
+            let id_matches = info.id.len() == 32 && info.id.as_slice() == txid;
+            let confirmed = info.block_number > 0;
+            id_matches || confirmed
+        }
+        Err(_) => false,
+    };
+    telemetry.tron_grpc_ms(
+        "get_transaction_info_by_id",
+        ok,
+        started.elapsed().as_millis() as u64,
+    );
+    ok
+}
+
+pub async fn broadcast_signed_tx(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    tx_bytes: &[u8],
+) -> Result<()> {
+    let tx = tron::protocol::Transaction::decode(tx_bytes).context("decode signed tx bytes")?;
+    let mut grpc = connect_grpc(cfg).await?;
+    let started = std::time::Instant::now();
+    let ret = grpc
+        .broadcast_transaction(tx)
+        .await
+        .context("broadcast_transaction")?;
+    telemetry.tron_grpc_ms(
+        "broadcast_transaction",
+        ret.result,
+        started.elapsed().as_millis() as u64,
+    );
+    if !ret.result {
+        // Re-broadcasts are expected after restarts (or if state was updated after a broadcast
+        // but before persisting). Treat "duplicate" responses as success.
+        let msg_utf8 = String::from_utf8_lossy(&ret.message).to_string();
+        let msg_upper = msg_utf8.to_ascii_uppercase();
+        if msg_upper.contains("DUP") || msg_upper.contains("EXISTS") {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "broadcast failed: msg_hex=0x{}, msg_utf8={}",
+            hex::encode(&ret.message),
+            msg_utf8
+        );
+    }
+    Ok(())
 }
 
 async fn connect_grpc(cfg: &TronConfig) -> Result<TronGrpc> {

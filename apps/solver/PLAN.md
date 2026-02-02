@@ -294,9 +294,10 @@ Important:
 
 ## Milestones / checkboxes
 
-Status note (as of 2026-01-31): The solver has an MVP that fills `TRX_TRANSFER` + `DELEGATE_RESOURCE`
-in both `TRON_MODE=mock` and `TRON_MODE=grpc`, and can submit hub txs in both `HUB_TX_MODE=eoa`
-and `HUB_TX_MODE=safe4337`. The remaining phases below are still largely unimplemented.
+Status note (as of 2026-02-02): The solver has an MVP that fills:
+- `TRX_TRANSFER`, `USDT_TRANSFER`, `DELEGATE_RESOURCE` in `TRON_MODE=mock`
+- `TRX_TRANSFER`, `USDT_TRANSFER`, `DELEGATE_RESOURCE`, `TRIGGER_SMART_CONTRACT` in `TRON_MODE=grpc`
+and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alto bundler e2e exists).
 
 ### Phase 0: Foundations
 
@@ -304,16 +305,20 @@ and `HUB_TX_MODE=safe4337`. The remaining phases below are still largely unimple
 - [~] Add solver DB migrations + a migration runner.
   - Implemented as idempotent schema init in code (`apps/solver/src/db.rs`) rather than `sqlx` migrations.
 - [~] Define persisted job state machine and idempotency rules.
-  - Minimal states exist (`claiming/claimed/tron_sent/proved`) but no leases/retry taxonomy yet.
+  - Job rows + leases + retry/backoff exist; remaining work is multi-step planning (pre-txs) and stricter
+    “persist every external artifact” discipline for all paths.
 - [x] Implement PostgREST client primitives (GET + filters).
-- [ ] Implement “indexer lag” health gating.
+- [x] Implement “indexer lag” health gating.
+  - Guard uses `api.event_appended` head vs hub `eth_blockNumber`, but is best-effort (does not hard-stop on API blips).
 
 ### Phase 1: Minimal reliable loop (no Tron yet)
 
 - [~] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
-  - Polling exists, but jobs are not materialized as first-class rows; only “runs” are persisted.
-- [ ] Apply static policy filters + record `SKIPPED_*` reasons.
-- [ ] Acquire leases and mark `ACQUIRED`.
+  - Jobs are persisted in `solver.jobs`; remaining work is richer terminal states + skip reason persistence.
+- [~] Apply static policy filters + record `SKIPPED_*` reasons.
+  - Policy is centralized (`apps/solver/src/policy.rs`) but skip reasons are only logged today.
+- [x] Acquire leases and mark `ACQUIRED`.
+  - Implemented via `solver.jobs.leased_by/lease_until` selection and renewal.
 - [~] Submit claim tx for a chosen intent; persist submission metadata.
   - Claim exists, persisted minimally (tx hash).
 - [~] Confirm claim and mark `CLAIMED`.
@@ -330,28 +335,30 @@ and `HUB_TX_MODE=safe4337`. The remaining phases below are still largely unimple
 
 ### Phase 3: USDT transfer
 
-- [ ] Implement USDT transfer execution on Tron (one allowed call shape first).
+- [x] Implement USDT transfer execution on Tron (one allowed call shape first).
 - [ ] Add optional consolidation planning for USDT with strict limits.
-- [ ] Proof builder for `TriggerSmartContract` fills.
-- [ ] Profitability model expanded to include TRX/USD.
+- [x] Proof builder for `TriggerSmartContract` fills.
+- [~] Profitability model expanded to include TRX/USD.
+  - Implemented as best-effort price cache + intent-type cost estimation; needs AA gas estimation + buffers.
 
 ### Phase 4: Resource delegation
 
 - [x] Implement `DelegateResourceContract` execution.
-- [ ] Implement profitability model for lock-period/capital lock (simple version acceptable).
+- [~] Implement profitability model for lock-period/capital lock (simple version acceptable).
+  - Implemented as a configurable “capital lock ppm/day” cost term; needs calibration and better Tron cost modeling.
 - [ ] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
 
 ### Phase 5: TRIGGER_SMART_CONTRACT (strictly gated)
 
-- [ ] Implement strict allowlist (contract + optional selector).
-- [ ] Add selector denylist defaults.
-- [ ] Add contract-level dynamic breaker and persistence.
+- [x] Implement strict allowlist (contract + optional selector).
+- [x] Add selector denylist defaults.
+- [x] Add contract-level dynamic breaker and persistence.
 - [ ] Optional: Tron simulation preflight + “simulation-success but onchain-fail” breaker escalation.
 
 ### Phase 6: Hardening
 
-- [ ] Restart/recovery tests: kill solver mid-flight and ensure it resumes without double-send.
-- [ ] Multi-instance tests: two solvers sharing DB should not double-claim/fill the same intent.
+- [x] Restart/recovery tests: kill solver mid-flight and ensure it resumes without double-send.
+- [x] Multi-instance tests: two solvers sharing DB should not double-claim/fill the same intent.
 - [ ] Rate limiting and global circuit breakers.
 - [ ] Better observability: structured logs + metrics for state transitions and failure causes.
 
@@ -372,4 +379,3 @@ and `HUB_TX_MODE=safe4337`. The remaining phases below are still largely unimple
   - Note: the indexer can correlate forwarder events into `api.forwarder_expected_receiver_intents`,
     but only if forwarder streams are configured for the relevant origin chains. MVP can ignore this
     and fill maker-funded intents first.
-- How do we want to handle receiver-originated “virtual” intents in MVP?

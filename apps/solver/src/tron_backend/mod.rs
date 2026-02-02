@@ -41,9 +41,18 @@ pub struct TronBackend {
     telemetry: SolverTelemetry,
 }
 
+#[derive(Debug, Clone)]
+pub struct TronPreparedTx {
+    pub txid: [u8; 32],
+    pub tx_bytes: Vec<u8>,
+    pub fee_limit_sun: Option<i64>,
+    pub energy_required: Option<i64>,
+    pub tx_size_bytes: Option<i64>,
+}
+
 pub enum TronExecution {
     ImmediateProof(crate::hub::TronProof),
-    BroadcastedTx { txid: [u8; 32] },
+    PreparedTx(TronPreparedTx),
 }
 
 impl TronBackend {
@@ -55,7 +64,7 @@ impl TronBackend {
         }
     }
 
-    pub async fn execute_trx_transfer(
+    pub async fn prepare_trx_transfer(
         &self,
         hub: &HubClient,
         intent_id: B256,
@@ -66,15 +75,21 @@ impl TronBackend {
                 mock::execute_trx_transfer(hub, &self.cfg, intent_id, intent_specs).await
             }
             TronMode::Grpc => {
-                let txid = grpc::broadcast_trx_transfer(&self.cfg, &self.telemetry, intent_specs)
+                let p = grpc::prepare_trx_transfer(&self.cfg, &self.telemetry, intent_specs)
                     .await
-                    .context("grpc transfer")?;
-                Ok(TronExecution::BroadcastedTx { txid })
+                    .context("grpc prepare transfer")?;
+                Ok(TronExecution::PreparedTx(TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                }))
             }
         }
     }
 
-    pub async fn execute_trigger_smart_contract(
+    pub async fn prepare_trigger_smart_contract(
         &self,
         hub: &HubClient,
         intent_id: B256,
@@ -85,19 +100,22 @@ impl TronBackend {
                 mock::execute_trigger_smart_contract(hub, &self.cfg, intent_id, intent_specs).await
             }
             TronMode::Grpc => {
-                let txid = grpc::broadcast_trigger_smart_contract(
-                    &self.cfg,
-                    &self.telemetry,
-                    intent_specs,
-                )
-                .await
-                .context("grpc trigger_smart_contract")?;
-                Ok(TronExecution::BroadcastedTx { txid })
+                let p =
+                    grpc::prepare_trigger_smart_contract(&self.cfg, &self.telemetry, intent_specs)
+                        .await
+                        .context("grpc prepare trigger_smart_contract")?;
+                Ok(TronExecution::PreparedTx(TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                }))
             }
         }
     }
 
-    pub async fn execute_delegate_resource(
+    pub async fn prepare_delegate_resource(
         &self,
         hub: &HubClient,
         intent_id: B256,
@@ -108,16 +126,21 @@ impl TronBackend {
                 mock::execute_delegate_resource(hub, &self.cfg, intent_id, intent_specs).await
             }
             TronMode::Grpc => {
-                let txid =
-                    grpc::broadcast_delegate_resource(&self.cfg, &self.telemetry, intent_specs)
-                        .await
-                        .context("grpc delegate")?;
-                Ok(TronExecution::BroadcastedTx { txid })
+                let p = grpc::prepare_delegate_resource(&self.cfg, &self.telemetry, intent_specs)
+                    .await
+                    .context("grpc prepare delegate")?;
+                Ok(TronExecution::PreparedTx(TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                }))
             }
         }
     }
 
-    pub async fn execute_usdt_transfer(
+    pub async fn prepare_usdt_transfer(
         &self,
         hub: &HubClient,
         intent_id: B256,
@@ -128,11 +151,16 @@ impl TronBackend {
                 mock::execute_usdt_transfer(hub, &self.cfg, intent_id, intent_specs).await
             }
             TronMode::Grpc => {
-                let txid =
-                    grpc::broadcast_usdt_transfer(hub, &self.cfg, &self.telemetry, intent_specs)
-                        .await
-                        .context("grpc usdt transfer")?;
-                Ok(TronExecution::BroadcastedTx { txid })
+                let p = grpc::prepare_usdt_transfer(hub, &self.cfg, &self.telemetry, intent_specs)
+                    .await
+                    .context("grpc prepare usdt transfer")?;
+                Ok(TronExecution::PreparedTx(TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                }))
             }
         }
     }
@@ -141,6 +169,20 @@ impl TronBackend {
         match self.cfg.mode {
             TronMode::Mock => anyhow::bail!("build_proof is not available in TRON_MODE=mock"),
             TronMode::Grpc => grpc::build_proof(&self.cfg, &self.jobs, txid).await,
+        }
+    }
+
+    pub async fn tx_is_known(&self, txid: [u8; 32]) -> bool {
+        match self.cfg.mode {
+            TronMode::Mock => false,
+            TronMode::Grpc => grpc::tx_is_known(&self.cfg, &self.telemetry, txid).await,
+        }
+    }
+
+    pub async fn broadcast_signed_tx(&self, tx_bytes: &[u8]) -> Result<()> {
+        match self.cfg.mode {
+            TronMode::Mock => anyhow::bail!("broadcast_signed_tx is not available in TRON_MODE=mock"),
+            TronMode::Grpc => grpc::broadcast_signed_tx(&self.cfg, &self.telemetry, tx_bytes).await,
         }
     }
 }

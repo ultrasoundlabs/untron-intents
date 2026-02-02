@@ -1,5 +1,5 @@
 use crate::{
-    config::{AppConfig, HubTxMode},
+    config::{AppConfig, HubTxMode, TronMode},
     db::SolverDb,
     db::{HubUserOpKind, SolverJob, TronProofRow},
     indexer::{IndexerClient, PoolOpenIntentRow},
@@ -517,94 +517,194 @@ impl Solver {
                 }
             }
             "claimed" => {
-                tracing::info!(id = %id, "executing tron tx");
-                let exec_res = match ty {
-                    IntentType::TriggerSmartContract => self
-                        .tron
-                        .execute_trigger_smart_contract(&self.hub, id, &job.intent_specs)
-                        .await
-                        .context("execute trigger smart contract"),
-                    IntentType::TrxTransfer => self
-                        .tron
-                        .execute_trx_transfer(&self.hub, id, &job.intent_specs)
-                        .await
-                        .context("execute trx transfer"),
-                    IntentType::UsdtTransfer => self
-                        .tron
-                        .execute_usdt_transfer(&self.hub, id, &job.intent_specs)
-                        .await
-                        .context("execute usdt transfer"),
-                    IntentType::DelegateResource => self
-                        .tron
-                        .execute_delegate_resource(&self.hub, id, &job.intent_specs)
-                        .await
-                        .context("execute delegate resource"),
-                };
+                if self.cfg.tron.mode == TronMode::Mock {
+                    tracing::info!(id = %id, "executing tron tx (mock)");
+                    let exec_res = match ty {
+                        IntentType::TriggerSmartContract => self
+                            .tron
+                            .prepare_trigger_smart_contract(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("execute trigger smart contract"),
+                        IntentType::TrxTransfer => self
+                            .tron
+                            .prepare_trx_transfer(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("execute trx transfer"),
+                        IntentType::UsdtTransfer => self
+                            .tron
+                            .prepare_usdt_transfer(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("execute usdt transfer"),
+                        IntentType::DelegateResource => self
+                            .tron
+                            .prepare_delegate_resource(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("execute delegate resource"),
+                    };
 
-                let exec = match exec_res {
-                    Ok(v) => v,
-                    Err(err) => {
-                        let msg = err.to_string();
+                    let exec = match exec_res {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let msg = err.to_string();
 
-                        // If this is a trigger smart contract, record a breaker on likely-deterministic failures.
-                        if ty == IntentType::TriggerSmartContract
-                            && !looks_like_tron_server_busy(&msg)
-                            && looks_like_tron_contract_failure(&msg)
-                        {
-                            if let Some((contract, selector)) =
-                                decode_trigger_contract_and_selector(&job.intent_specs)
+                            // If this is a trigger smart contract, record a breaker on likely-deterministic failures.
+                            if ty == IntentType::TriggerSmartContract
+                                && !looks_like_tron_server_busy(&msg)
+                                && looks_like_tron_contract_failure(&msg)
                             {
-                                let _ = self
-                                    .db
-                                    .breaker_record_failure(contract, selector, &msg)
-                                    .await;
+                                if let Some((contract, selector)) =
+                                    decode_trigger_contract_and_selector(&job.intent_specs)
+                                {
+                                    let _ = self
+                                        .db
+                                        .breaker_record_failure(contract, selector, &msg)
+                                        .await;
+                                }
                             }
+
+                            self.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            return Ok(());
                         }
+                    };
 
-                        self.db
-                            .record_retryable_error(
-                                job.job_id,
-                                &self.instance_id,
-                                &msg,
-                                retry_in(job.attempts),
-                            )
-                            .await?;
-                        return Ok(());
+                    match exec {
+                        TronExecution::ImmediateProof(tron) => {
+                            // Store proof first; submit prove in the next tick (restart-safe).
+                            let proof_row = TronProofRow {
+                                blocks: tron.blocks.into_iter().collect(),
+                                encoded_tx: tron.encoded_tx,
+                                proof: tron
+                                    .proof
+                                    .into_iter()
+                                    .map(|b| b.as_slice().to_vec())
+                                    .collect(),
+                                index_dec: tron.index.to_string(),
+                            };
+                            let txid = job.tron_txid.unwrap_or_else(|| {
+                                b256_to_bytes32(alloy::primitives::keccak256(id.as_slice()))
+                            });
+                            self.db.save_tron_proof(txid, &proof_row).await?;
+                            self.db
+                                .record_tron_txid(job.job_id, &self.instance_id, txid)
+                                .await?;
+                            self.db
+                                .record_proof_built(job.job_id, &self.instance_id)
+                                .await?;
+                            Ok(())
+                        }
+                        TronExecution::PreparedTx(_) => {
+                            anyhow::bail!("unexpected PreparedTx in TRON_MODE=mock")
+                        }
                     }
-                };
+                } else {
+                    tracing::info!(id = %id, "preparing tron tx (persist signed bytes)");
+                    let exec_res = match ty {
+                        IntentType::TriggerSmartContract => self
+                            .tron
+                            .prepare_trigger_smart_contract(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("prepare trigger smart contract"),
+                        IntentType::TrxTransfer => self
+                            .tron
+                            .prepare_trx_transfer(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("prepare trx transfer"),
+                        IntentType::UsdtTransfer => self
+                            .tron
+                            .prepare_usdt_transfer(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("prepare usdt transfer"),
+                        IntentType::DelegateResource => self
+                            .tron
+                            .prepare_delegate_resource(&self.hub, id, &job.intent_specs)
+                            .await
+                            .context("prepare delegate resource"),
+                    };
 
-                match exec {
-                    TronExecution::ImmediateProof(tron) => {
-                        // Store proof first; submit prove in the next tick (restart-safe).
-                        let proof_row = TronProofRow {
-                            blocks: tron.blocks.into_iter().collect(),
-                            encoded_tx: tron.encoded_tx,
-                            proof: tron
-                                .proof
-                                .into_iter()
-                                .map(|b| b.as_slice().to_vec())
-                                .collect(),
-                            index_dec: tron.index.to_string(),
-                        };
-                        let txid = job.tron_txid.unwrap_or_else(|| {
-                            b256_to_bytes32(alloy::primitives::keccak256(id.as_slice()))
-                        });
-                        self.db.save_tron_proof(txid, &proof_row).await?;
-                        self.db
-                            .record_tron_txid(job.job_id, &self.instance_id, txid)
-                            .await?;
-                        self.db
-                            .record_proof_built(job.job_id, &self.instance_id)
-                            .await?;
-                        Ok(())
-                    }
-                    TronExecution::BroadcastedTx { txid } => {
-                        self.db
-                            .record_tron_txid(job.job_id, &self.instance_id, txid)
-                            .await?;
-                        Ok(())
+                    let exec = match exec_res {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let msg = err.to_string();
+                            self.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            return Ok(());
+                        }
+                    };
+
+                    match exec {
+                        TronExecution::ImmediateProof(_) => {
+                            anyhow::bail!("unexpected ImmediateProof in TRON_MODE=grpc")
+                        }
+                        TronExecution::PreparedTx(p) => {
+                            self.db
+                                .record_tron_prepared(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    p.txid,
+                                    &p.tx_bytes,
+                                    p.fee_limit_sun,
+                                    p.energy_required,
+                                    p.tx_size_bytes,
+                                )
+                                .await?;
+                            Ok(())
+                        }
                     }
                 }
+            }
+            "tron_prepared" => {
+                let Some(txid) = job.tron_txid else {
+                    self.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &self.instance_id,
+                            "missing tron_txid",
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                };
+
+                // If we already see the tx onchain, just move forward. This avoids double-broadcasts
+                // across crashes between broadcast and state update.
+                if self.tron.tx_is_known(txid).await {
+                    self.db
+                        .record_tron_txid(job.job_id, &self.instance_id, txid)
+                        .await?;
+                    return Ok(());
+                }
+
+                let tx_bytes = self.db.load_tron_signed_tx_bytes(txid).await?;
+                if let Err(err) = self.tron.broadcast_signed_tx(&tx_bytes).await {
+                    let msg = err.to_string();
+                    self.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &self.instance_id,
+                            &msg,
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                }
+
+                self.db
+                    .record_tron_txid(job.job_id, &self.instance_id, txid)
+                    .await?;
+                Ok(())
             }
             "tron_sent" => {
                 let Some(txid) = job.tron_txid else {

@@ -5171,6 +5171,7 @@ dependencies = [
  "futures",
  "hex",
  "opentelemetry",
+ "prost 0.14.3",
  "reqwest",
  "serde",
  "serde_json",

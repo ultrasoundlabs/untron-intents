@@ -16,6 +16,7 @@ use e2e::{
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
     services::{spawn_indexer, spawn_solver_tron_grpc},
+    solver_db::fetch_job_by_intent_id,
     tronbox::{
         decode_hex32, fetch_tron_tx_by_id_from_block, wait_for_tronbox_accounts,
         wait_for_tronbox_admin,
@@ -172,7 +173,32 @@ async fn e2e_solver_tron_grpc_fills_trx_transfer_and_delegate_resource() -> Resu
         &tron_controller_address,
     )?);
 
-    let rows = wait_for_intents_solved_and_settled(&db_url, 2, Duration::from_secs(180)).await?;
+    let rows = match wait_for_intents_solved_and_settled(&db_url, 2, Duration::from_secs(180)).await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            let current = e2e::pool_db::fetch_current_intents(&db_url).await?;
+            for r in &current {
+                if r.row.solver.is_some() {
+                    let job = fetch_job_by_intent_id(&db_url, &r.id).await?;
+                    eprintln!(
+                        "solver.jobs diagnostic: intent_id={} job_id={} state={} attempts={} next_retry_at={} leased_by={:?} tron_txid={:?} last_error={:?} claim_tx_hash={:?} prove_tx_hash={:?}",
+                        r.id,
+                        job.job_id,
+                        job.state,
+                        job.attempts,
+                        job.next_retry_at,
+                        job.leased_by,
+                        job.tron_txid,
+                        job.last_error,
+                        job.claim_tx_hash,
+                        job.prove_tx_hash,
+                    );
+                }
+            }
+            return Err(e);
+        }
+    };
 
     let mut grpc = tron::TronGrpc::connect(&tron_grpc_url, None)
         .await
