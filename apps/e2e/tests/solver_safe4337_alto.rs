@@ -709,15 +709,56 @@ async fn e2e_solver_safe4337_uses_alto_and_recovers_after_crash() -> Result<()> 
     };
 
     // Assert AA persistence surface: all userops reached "included" and we stored the raw receipt.
-    // (This is what the solver needs to be restart-safe and debuggable in production.)
-    let rows = sqlx::query(
-        "select kind::text as kind, state::text as state, tx_hash, success, receipt \
-         from solver.hub_userops \
-         order by userop_id asc",
-    )
-    .fetch_all(&pool)
-    .await
-    .context("select solver.hub_userops final")?;
+    //
+    // Note: pool settlement can be observed by the indexer slightly before the solver finishes
+    // writing receipt metadata, so we wait for the hub_userops projection to converge.
+    let start = Instant::now();
+    let rows = loop {
+        if start.elapsed() > Duration::from_secs(90) {
+            if let Ok(rows) = sqlx::query(
+                "select kind::text as kind, state::text as state, coalesce(userop_hash,'') as userop_hash, attempts, coalesce(last_error,'') as last_error \
+                 from solver.hub_userops \
+                 order by userop_id asc",
+            )
+            .fetch_all(&pool)
+            .await
+            {
+                eprintln!("solver.hub_userops (timeout waiting for included):");
+                for r in rows {
+                    let kind: String = r.try_get("kind").unwrap_or_default();
+                    let state: String = r.try_get("state").unwrap_or_default();
+                    let userop_hash: String = r.try_get("userop_hash").unwrap_or_default();
+                    let attempts: i32 = r.try_get("attempts").unwrap_or_default();
+                    let last_error: String = r.try_get("last_error").unwrap_or_default();
+                    eprintln!(
+                        "  kind={kind} state={state} attempts={attempts} userop_hash={userop_hash} last_error={last_error}"
+                    );
+                }
+            }
+            solver1_logs.dump_last(250);
+            solver2_logs.dump_last(250);
+            anyhow::bail!("timed out waiting for solver.hub_userops to reach state=included");
+        }
+
+        let rows = sqlx::query(
+            "select kind::text as kind, state::text as state, tx_hash, success, receipt \
+             from solver.hub_userops \
+             order by userop_id asc",
+        )
+        .fetch_all(&pool)
+        .await
+        .context("select solver.hub_userops final")?;
+
+        if rows.len() >= 6
+            && rows
+                .iter()
+                .all(|r| r.try_get::<String, _>("state").unwrap_or_default() == "included")
+        {
+            break rows;
+        }
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
 
     if rows.len() < 6 {
         anyhow::bail!(
