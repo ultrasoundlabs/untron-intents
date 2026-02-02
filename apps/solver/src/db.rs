@@ -18,6 +18,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         7,
         include_str!("../db/migrations/0007_hub_userop_receipts.sql"),
     ),
+    (8, include_str!("../db/migrations/0008_hub_userop_gas.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -559,24 +560,32 @@ impl SolverDb {
         tx_hash: [u8; 32],
         block_number: Option<i64>,
         success: bool,
+        actual_gas_cost_wei: Option<U256>,
+        actual_gas_used: Option<U256>,
         receipt_json: &str,
     ) -> Result<()> {
+        let actual_gas_cost_wei = actual_gas_cost_wei.map(|v| v.to_string());
+        let actual_gas_used = actual_gas_used.map(|v| v.to_string());
         let n = sqlx::query(
             "update solver.hub_userops u set \
                 tx_hash=$1, \
                 block_number=coalesce($2, u.block_number), \
                 success=$3, \
-                receipt=$4::jsonb, \
+                actual_gas_cost_wei=coalesce($4::numeric, u.actual_gas_cost_wei), \
+                actual_gas_used=coalesce($5::numeric, u.actual_gas_used), \
+                receipt=$6::jsonb, \
                 state='included', \
                 updated_at=now() \
              from solver.jobs j \
              where u.job_id=j.job_id \
-               and u.kind=$5::solver.userop_kind \
-               and j.job_id=$6 and j.leased_by=$7 and j.lease_until >= now()",
+               and u.kind=$7::solver.userop_kind \
+               and j.job_id=$8 and j.leased_by=$9 and j.lease_until >= now()",
         )
         .bind(tx_hash.to_vec())
         .bind(block_number)
         .bind(success)
+        .bind(actual_gas_cost_wei)
+        .bind(actual_gas_used)
         .bind(receipt_json)
         .bind(kind.as_str())
         .bind(job_id)
@@ -590,6 +599,47 @@ impl SolverDb {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }
         Ok(())
+    }
+
+    pub async fn hub_userop_avg_actual_gas_cost_wei(
+        &self,
+        kind: HubUserOpKind,
+        lookback: i64,
+    ) -> Result<Option<U256>> {
+        let lookback = lookback.max(1).min(10_000);
+        let rows = sqlx::query(
+            "select actual_gas_cost_wei::text as v \
+             from solver.hub_userops \
+             where state='included' \
+               and kind=$1::solver.userop_kind \
+               and actual_gas_cost_wei is not null \
+             order by updated_at desc \
+             limit $2",
+        )
+        .bind(kind.as_str())
+        .bind(lookback)
+        .fetch_all(&self.pool)
+        .await
+        .context("select solver.hub_userops actual_gas_cost_wei")?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let mut sum = U256::ZERO;
+        let mut n: u64 = 0;
+        for row in rows {
+            let s: String = row.try_get("v")?;
+            let v: U256 = s
+                .parse()
+                .with_context(|| format!("parse actual_gas_cost_wei numeric: {s}"))?;
+            sum = sum.saturating_add(v);
+            n = n.saturating_add(1);
+        }
+        if n == 0 {
+            return Ok(None);
+        }
+        Ok(Some(sum / U256::from(n)))
     }
 
     pub async fn record_hub_userop_retryable_error(

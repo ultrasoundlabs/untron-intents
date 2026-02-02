@@ -2,6 +2,7 @@ use crate::{
     config::{AppConfig, HubTxMode, TronMode},
     db::SolverDb,
     db::{HubUserOpKind, SolverJob, TronProofRow},
+    hub_cost::estimate_hub_cost_usd_from_userops,
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
     policy::{BreakerQuery, PolicyEngine},
@@ -247,9 +248,10 @@ impl Solver {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
+        let hub_cost_usd = self.estimate_hub_cost_usd().await?;
         let eval = self
             .policy
-            .evaluate_open_intent(row, now, &mut self.pricing)
+            .evaluate_open_intent(row, now, &mut self.pricing, hub_cost_usd)
             .await?;
         if !eval.allowed {
             if let Some(reason) = eval.reason.as_deref() {
@@ -266,6 +268,45 @@ impl Solver {
         }
 
         Ok(true)
+    }
+
+    async fn estimate_hub_cost_usd(&mut self) -> Result<f64> {
+        if self.cfg.hub.tx_mode != HubTxMode::Safe4337 {
+            return Ok(self.cfg.policy.hub_cost_usd);
+        }
+
+        let eth_usd = match self.pricing.eth_usd().await {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(
+                    err = %err,
+                    "eth_usd unavailable; using SOLVER_HUB_COST_USD fallback"
+                );
+                return Ok(self.cfg.policy.hub_cost_usd);
+            }
+        };
+
+        let lookback = i64::try_from(self.cfg.policy.hub_cost_history_lookback).unwrap_or(50);
+        let claim = self
+            .db
+            .hub_userop_avg_actual_gas_cost_wei(HubUserOpKind::Claim, lookback)
+            .await?;
+        let prove = self
+            .db
+            .hub_userop_avg_actual_gas_cost_wei(HubUserOpKind::Prove, lookback)
+            .await?;
+
+        let (Some(claim), Some(prove)) = (claim, prove) else {
+            return Ok(self.cfg.policy.hub_cost_usd);
+        };
+
+        Ok(estimate_hub_cost_usd_from_userops(
+            eth_usd,
+            claim,
+            prove,
+            self.cfg.policy.hub_cost_headroom_ppm,
+        )
+        .unwrap_or(self.cfg.policy.hub_cost_usd))
     }
 
     async fn is_breaker_active(&self, _b: BreakerQuery) -> Result<bool> {
@@ -535,6 +576,8 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     b256_to_bytes32(tx_hash),
                                     receipt.block_number.map(|n| n as i64),
                                     success,
+                                    receipt.actual_gas_cost_wei,
+                                    receipt.actual_gas_used,
                                     &receipt_json,
                                 )
                                 .await?;
@@ -1069,6 +1112,8 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     b256_to_bytes32(tx_hash),
                                     receipt.block_number.map(|n| n as i64),
                                     success,
+                                    receipt.actual_gas_cost_wei,
+                                    receipt.actual_gas_used,
                                     &receipt_json,
                                 )
                                 .await?;

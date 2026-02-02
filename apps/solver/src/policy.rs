@@ -44,6 +44,7 @@ impl PolicyEngine {
         row: &PoolOpenIntentRow,
         now_unix_secs: i64,
         pricing: &mut Pricing,
+        hub_cost_usd: f64,
     ) -> Result<PolicyEvaluation> {
         let mut eval = PolicyEvaluation {
             allowed: false,
@@ -86,7 +87,7 @@ impl PolicyEngine {
 
         // Best-effort profitability gating.
         if let Some(reason) = self
-            .profitability_check(row, ty, pricing)
+            .profitability_check(row, ty, pricing, hub_cost_usd)
             .await
             .context("profitability_check")?
         {
@@ -310,6 +311,7 @@ impl PolicyEngine {
         row: &PoolOpenIntentRow,
         ty: IntentType,
         pricing: &mut Pricing,
+        hub_cost_usd: f64,
     ) -> Result<Option<String>> {
         if self.cfg.min_profit_usd <= 0.0 && !self.cfg.require_priced_escrow {
             return Ok(None);
@@ -333,7 +335,7 @@ impl PolicyEngine {
             Ok(v) => v,
             Err(_) => return Ok(Some("cost_estimate_failed".to_string())),
         };
-        let profit = revenue_usd - cost_usd - self.cfg.hub_cost_usd;
+        let profit = revenue_usd - cost_usd - hub_cost_usd;
         if profit < self.cfg.min_profit_usd {
             return Ok(Some("unprofitable".to_string()));
         }
@@ -411,6 +413,8 @@ mod tests {
             min_deadline_slack_secs: 0,
             min_profit_usd: 0.0,
             hub_cost_usd: 0.0,
+            hub_cost_history_lookback: 50,
+            hub_cost_headroom_ppm: 0,
             tron_fee_usd: 0.0,
             capital_lock_ppm_per_day: 0,
             require_priced_escrow: false,
@@ -503,10 +507,13 @@ mod tests {
             trx_usd_override: Some(0.3),
             trx_usd_ttl: std::time::Duration::from_secs(60),
             trx_usd_url: "http://example.invalid".to_string(),
+            eth_usd_override: Some(2_000.0),
+            eth_usd_ttl: std::time::Duration::from_secs(60),
+            eth_usd_url: "http://example.invalid".to_string(),
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0)
             .await
             .unwrap();
         assert!(!eval.allowed);
@@ -538,13 +545,53 @@ mod tests {
             trx_usd_override: Some(0.3),
             trx_usd_ttl: std::time::Duration::from_secs(60),
             trx_usd_url: "http://example.invalid".to_string(),
+            eth_usd_override: Some(2_000.0),
+            eth_usd_ttl: std::time::Duration::from_secs(60),
+            eth_usd_url: "http://example.invalid".to_string(),
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0)
             .await
             .unwrap();
         assert!(!eval.allowed);
         assert_eq!(eval.reason.as_deref(), Some("trigger_selector_missing"));
+    }
+
+    #[tokio::test]
+    async fn profitability_subtracts_hub_cost_override() {
+        let mut c = cfg();
+        c.enabled_intent_types = vec![IntentType::UsdtTransfer];
+        c.min_profit_usd = 0.1;
+        c.require_priced_escrow = true;
+        c.allowed_escrow_tokens = vec![Address::ZERO];
+        let p = PolicyEngine::new(c);
+
+        let now = 1_000_000i64;
+        let intent = USDTTransferIntent {
+            to: Address::ZERO,
+            amount: U256::ZERO,
+        };
+
+        let mut row = row_for(IntentType::UsdtTransfer, intent.abi_encode(), now + 10_000);
+        row.escrow_amount = "1000000".to_string(); // $1.00
+        row.escrow_token = Address::ZERO.to_string();
+
+        let mut pricing = Pricing::new(PricingConfig {
+            trx_usd_override: Some(0.3),
+            trx_usd_ttl: std::time::Duration::from_secs(60),
+            trx_usd_url: "http://example.invalid".to_string(),
+            eth_usd_override: Some(2_000.0),
+            eth_usd_ttl: std::time::Duration::from_secs(60),
+            eth_usd_url: "http://example.invalid".to_string(),
+        });
+
+        // $1.00 revenue - $0.00 tron - $0.95 hub = $0.05 profit < $0.10
+        let eval = p
+            .evaluate_open_intent(&row, now, &mut pricing, 0.95)
+            .await
+            .unwrap();
+        assert!(!eval.allowed);
+        assert_eq!(eval.reason.as_deref(), Some("unprofitable"));
     }
 }

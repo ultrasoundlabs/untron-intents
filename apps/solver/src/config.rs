@@ -22,7 +22,12 @@ pub struct PolicyConfig {
     pub enabled_intent_types: Vec<crate::types::IntentType>,
     pub min_deadline_slack_secs: u64,
     pub min_profit_usd: f64,
+    /// Fallback hub tx cost used when we don't have enough historical receipt data.
     pub hub_cost_usd: f64,
+    /// Number of recent included userops per kind used to estimate hub cost.
+    pub hub_cost_history_lookback: u64,
+    /// Extra headroom applied to the hub cost estimate (ppm, i.e. 100_000 = +10%).
+    pub hub_cost_headroom_ppm: u64,
     pub tron_fee_usd: f64,
     pub capital_lock_ppm_per_day: u64,
     pub require_priced_escrow: bool,
@@ -224,6 +229,12 @@ struct Env {
     solver_hub_cost_usd: f64,
 
     #[serde(default)]
+    solver_hub_cost_history_lookback: u64,
+
+    #[serde(default)]
+    solver_hub_cost_headroom_ppm: u64,
+
+    #[serde(default)]
     solver_tron_fee_usd: f64,
 
     #[serde(default)]
@@ -275,6 +286,15 @@ struct Env {
     solver_trx_usd_url: String,
 
     #[serde(default)]
+    solver_eth_usd_override: Option<f64>,
+
+    #[serde(default)]
+    solver_eth_usd_ttl_secs: u64,
+
+    #[serde(default)]
+    solver_eth_usd_url: String,
+
+    #[serde(default)]
     solver_instance_id: String,
 }
 
@@ -323,6 +343,8 @@ impl Default for Env {
             solver_instance_id: String::new(),
             solver_min_profit_usd: 0.0,
             solver_hub_cost_usd: 0.0,
+            solver_hub_cost_history_lookback: 50,
+            solver_hub_cost_headroom_ppm: 200_000,
             solver_tron_fee_usd: 0.0,
             solver_capital_lock_ppm_per_day: 0,
             solver_require_priced_escrow: false,
@@ -341,6 +363,11 @@ impl Default for Env {
             solver_trx_usd_ttl_secs: 60,
             solver_trx_usd_url:
                 "https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd"
+                    .to_string(),
+            solver_eth_usd_override: None,
+            solver_eth_usd_ttl_secs: 60,
+            solver_eth_usd_url:
+                "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
                     .to_string(),
         }
     }
@@ -684,6 +711,8 @@ pub fn load_config() -> Result<AppConfig> {
             min_deadline_slack_secs: env.solver_min_deadline_slack_secs,
             min_profit_usd: env.solver_min_profit_usd,
             hub_cost_usd: env.solver_hub_cost_usd,
+            hub_cost_history_lookback: env.solver_hub_cost_history_lookback.max(1),
+            hub_cost_headroom_ppm: env.solver_hub_cost_headroom_ppm.min(1_000_000),
             tron_fee_usd: env.solver_tron_fee_usd,
             capital_lock_ppm_per_day: env.solver_capital_lock_ppm_per_day.min(1_000_000),
             require_priced_escrow: env.solver_require_priced_escrow,
@@ -714,6 +743,9 @@ pub fn load_config() -> Result<AppConfig> {
             trx_usd_override: env.solver_trx_usd_override,
             trx_usd_ttl: Duration::from_secs(env.solver_trx_usd_ttl_secs.max(1)),
             trx_usd_url: env.solver_trx_usd_url,
+            eth_usd_override: env.solver_eth_usd_override,
+            eth_usd_ttl: Duration::from_secs(env.solver_eth_usd_ttl_secs.max(1)),
+            eth_usd_url: env.solver_eth_usd_url,
         },
         db_url: env.solver_db_url,
         instance_id: if env.solver_instance_id.trim().is_empty() {

@@ -83,6 +83,8 @@ pub struct HubUserOpReceipt {
     pub tx_hash: Option<B256>,
     pub block_number: Option<u64>,
     pub success: Option<bool>,
+    pub actual_gas_cost_wei: Option<U256>,
+    pub actual_gas_used: Option<U256>,
     pub reason: Option<serde_json::Value>,
     /// Raw JSON-RPC `result` object returned by `eth_getUserOperationReceipt`.
     pub raw: serde_json::Value,
@@ -592,11 +594,31 @@ impl HubSafe4337Client {
             i = i.wrapping_add(1);
 
             if let Some(raw) = self.query_userop_receipt_raw(&url, userop_hash).await? {
-                let (tx_hash, block_number, success, reason) = extract_userop_receipt_fields(&raw)?;
+                let (tx_hash, block_number, success, actual_gas_cost_wei, actual_gas_used, reason) =
+                    extract_userop_receipt_fields(&raw)?;
+                let (actual_gas_cost_wei, actual_gas_used, raw) =
+                    if actual_gas_cost_wei.is_none() || actual_gas_used.is_none() {
+                        if let Some(fallback) = self
+                            .query_userop_receipt_from_entrypoint_log(userop_hash)
+                            .await?
+                        {
+                            (
+                                actual_gas_cost_wei.or(fallback.actual_gas_cost_wei),
+                                actual_gas_used.or(fallback.actual_gas_used),
+                                merge_userop_cost_fields(raw, &fallback.raw),
+                            )
+                        } else {
+                            (actual_gas_cost_wei, actual_gas_used, raw)
+                        }
+                    } else {
+                        (actual_gas_cost_wei, actual_gas_used, raw)
+                    };
                 return Ok(Some(HubUserOpReceipt {
                     tx_hash,
                     block_number,
                     success,
+                    actual_gas_cost_wei,
+                    actual_gas_used,
                     reason,
                     raw,
                 }));
@@ -651,28 +673,30 @@ impl HubSafe4337Client {
             .context("UserOperationEvent log missing transaction_hash")?;
         let block_number = log.block_number.map(|n| n as u64);
 
-        // Decode `success` from ABI-encoded data: (nonce, success, actualGasCost, actualGasUsed).
-        // - each is 32 bytes
-        // - success is the 2nd word.
+        // EntryPoint v0.7 ABI-encoded data: (nonce, success, actualGasCost, actualGasUsed).
         let data = log.data().data.as_ref();
-        let success = if data.len() >= 64 {
-            Some(data[63] == 1)
-        } else {
-            None
-        };
+        let nonce = abi_word_u256(data, 0);
+        let success = abi_word_bool(data, 1);
+        let actual_gas_cost_wei = abi_word_u256(data, 2);
+        let actual_gas_used = abi_word_u256(data, 3);
 
         let raw = json!({
             "source": "entrypoint_log",
             "userOpHash": format!("{userop_hash:#x}"),
             "transactionHash": format!("{tx_hash:#x}"),
             "blockNumber": block_number.map(|n| format!("0x{:x}", n)),
+            "nonce": nonce.map(|v| format!("{v:#x}")),
             "success": success,
+            "actualGasCost": actual_gas_cost_wei.map(|v| format!("{v:#x}")),
+            "actualGasUsed": actual_gas_used.map(|v| format!("{v:#x}")),
         });
 
         Ok(Some(HubUserOpReceipt {
             tx_hash: Some(tx_hash),
             block_number,
             success,
+            actual_gas_cost_wei,
+            actual_gas_used,
             reason: None,
             raw,
         }))
@@ -763,6 +787,8 @@ fn extract_userop_receipt_fields(
     Option<B256>,
     Option<u64>,
     Option<bool>,
+    Option<U256>,
+    Option<U256>,
     Option<serde_json::Value>,
 )> {
     // We keep this intentionally defensive: bundlers differ slightly in where fields appear.
@@ -792,9 +818,87 @@ fn extract_userop_receipt_fields(
         });
 
     let success = raw.get("success").and_then(|v| v.as_bool());
+    let actual_gas_cost_wei = extract_u256_field(raw, &["actualGasCost", "actual_gas_cost"]);
+    let actual_gas_used = extract_u256_field(raw, &["actualGasUsed", "actual_gas_used"]);
     let reason = raw.get("reason").cloned();
 
-    Ok((tx_hash, block_number, success, reason))
+    Ok((
+        tx_hash,
+        block_number,
+        success,
+        actual_gas_cost_wei,
+        actual_gas_used,
+        reason,
+    ))
+}
+
+fn extract_u256_field(raw: &serde_json::Value, keys: &[&str]) -> Option<U256> {
+    for k in keys {
+        if let Some(v) = raw.get(*k) {
+            if let Some(out) = parse_u256_json(v) {
+                return Some(out);
+            }
+        }
+    }
+    if let Some(r) = raw.get("receipt") {
+        for k in keys {
+            if let Some(v) = r.get(*k) {
+                if let Some(out) = parse_u256_json(v) {
+                    return Some(out);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_u256_json(v: &serde_json::Value) -> Option<U256> {
+    if let Some(s) = v.as_str() {
+        let s = s.trim();
+        if let Some(hex) = s.strip_prefix("0x") {
+            return U256::from_str_radix(hex, 16).ok();
+        }
+        return s.parse::<U256>().ok();
+    }
+    v.as_u64().map(U256::from)
+}
+
+fn abi_word_u256(data: &[u8], word_index: usize) -> Option<U256> {
+    let start = word_index.checked_mul(32)?;
+    let end = start.checked_add(32)?;
+    if data.len() < end {
+        return None;
+    }
+    Some(U256::from_be_slice(&data[start..end]))
+}
+
+fn abi_word_bool(data: &[u8], word_index: usize) -> Option<bool> {
+    let start = word_index.checked_mul(32)?;
+    let end = start.checked_add(32)?;
+    if data.len() < end {
+        return None;
+    }
+    Some(data[end - 1] == 1)
+}
+
+fn merge_userop_cost_fields(
+    mut bundler_raw: serde_json::Value,
+    entrypoint_raw: &serde_json::Value,
+) -> serde_json::Value {
+    // Best-effort: keep bundler-specific fields but prefer canonical cost numbers from EntryPoint.
+    let Some(b) = bundler_raw.as_object_mut() else {
+        return bundler_raw;
+    };
+    for k in ["actualGasCost", "actualGasUsed"] {
+        if let Some(v) = entrypoint_raw.get(k) {
+            b.insert(k.to_string(), v.clone());
+        }
+    }
+    b.insert(
+        "costSource".to_string(),
+        serde_json::Value::String("entrypoint_log".to_string()),
+    );
+    bundler_raw
 }
 
 #[cfg(test)]

@@ -194,7 +194,11 @@ async fn e2e_safe4337_works_when_bundler_receipts_are_missing() -> Result<()> {
     assert!(!rows.is_empty(), "expected solver.hub_userops rows");
     for r in rows {
         let receipt: serde_json::Value = r.try_get("receipt").unwrap_or(serde_json::Value::Null);
-        let src = receipt.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let src = receipt
+            .get("source")
+            .or_else(|| receipt.get("costSource"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         assert_eq!(src, "entrypoint_log");
     }
 
