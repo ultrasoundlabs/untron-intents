@@ -1,6 +1,6 @@
 use super::{
-    DelegateResourceIntent, TRXTransferIntent, TronExecution, USDTTransferIntent, empty_proof,
-    evm_to_tron_raw21, tron_sender_from_privkey_or_fallback,
+    DelegateResourceIntent, TRXTransferIntent, TriggerSmartContractIntent, TronExecution,
+    USDTTransferIntent, empty_proof, evm_to_tron_raw21, tron_sender_from_privkey_or_fallback,
 };
 use crate::{
     abi::encode_trc20_transfer,
@@ -35,6 +35,36 @@ pub async fn execute_trx_transfer(
     hub.mock_set_transfer_tx(reader, transfer)
         .await
         .context("mock setTransferTx")?;
+
+    Ok(TronExecution::ImmediateProof(empty_proof()))
+}
+
+pub async fn execute_trigger_smart_contract(
+    hub: &HubClient,
+    cfg: &TronConfig,
+    intent_id: B256,
+    intent_specs: &[u8],
+) -> Result<TronExecution> {
+    let reader = cfg
+        .mock_reader_address
+        .context("missing TRON_MOCK_READER_ADDRESS")?;
+    let intent = TriggerSmartContractIntent::abi_decode(intent_specs)
+        .context("abi_decode TriggerSmartContractIntent")?;
+    let tx_id = keccak256([intent_id.as_slice(), b":trigger"].concat());
+
+    let call = TriggerSmartContract {
+        txId: tx_id,
+        tronBlockNumber: U256::from(10u64),
+        tronBlockTimestamp: 10u32,
+        senderTron: tron_sender_from_privkey_or_fallback(cfg.private_key, hub),
+        toTron: evm_to_tron_raw21(intent.to),
+        callValueSun: intent.callValueSun,
+        data: intent.data,
+    };
+
+    hub.mock_set_trigger_tx(reader, call)
+        .await
+        .context("mock setTx")?;
 
     Ok(TronExecution::ImmediateProof(empty_proof()))
 }

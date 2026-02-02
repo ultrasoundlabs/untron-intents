@@ -21,6 +21,24 @@ pub enum TronMode {
 pub struct PolicyConfig {
     pub enabled_intent_types: Vec<crate::types::IntentType>,
     pub min_deadline_slack_secs: u64,
+    pub min_profit_usd: f64,
+    pub hub_cost_usd: f64,
+    pub tron_fee_usd: f64,
+    pub capital_lock_ppm_per_day: u64,
+    pub require_priced_escrow: bool,
+    pub allowed_escrow_tokens: Vec<Address>,
+
+    pub trigger_contract_allowlist: Vec<Address>,
+    pub trigger_contract_denylist: Vec<Address>,
+    pub trigger_selector_denylist: Vec<[u8; 4]>,
+    pub trigger_allow_fallback_calls: bool,
+
+    pub max_trx_transfer_sun: Option<u64>,
+    pub max_usdt_transfer_amount: Option<u64>,
+    pub max_delegate_balance_sun: Option<u64>,
+    pub max_delegate_lock_period_secs: Option<u64>,
+    pub max_trigger_call_value_sun: Option<u64>,
+    pub max_trigger_calldata_len: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,6 +55,7 @@ pub struct AppConfig {
     pub tron: TronConfig,
     pub jobs: JobConfig,
     pub policy: PolicyConfig,
+    pub pricing: crate::pricing::PricingConfig,
     pub db_url: String,
     pub instance_id: String,
 }
@@ -199,6 +218,63 @@ struct Env {
     solver_min_deadline_slack_secs: u64,
 
     #[serde(default)]
+    solver_min_profit_usd: f64,
+
+    #[serde(default)]
+    solver_hub_cost_usd: f64,
+
+    #[serde(default)]
+    solver_tron_fee_usd: f64,
+
+    #[serde(default)]
+    solver_capital_lock_ppm_per_day: u64,
+
+    #[serde(default)]
+    solver_require_priced_escrow: bool,
+
+    #[serde(default)]
+    solver_allowed_escrow_tokens_csv: String,
+
+    #[serde(default)]
+    solver_trigger_contract_allowlist_csv: String,
+
+    #[serde(default)]
+    solver_trigger_contract_denylist_csv: String,
+
+    #[serde(default)]
+    solver_trigger_selector_denylist_csv: String,
+
+    #[serde(default)]
+    solver_trigger_allow_fallback_calls: bool,
+
+    #[serde(default)]
+    solver_max_trx_transfer_sun: u64,
+
+    #[serde(default)]
+    solver_max_usdt_transfer_amount: u64,
+
+    #[serde(default)]
+    solver_max_delegate_balance_sun: u64,
+
+    #[serde(default)]
+    solver_max_delegate_lock_period_secs: u64,
+
+    #[serde(default)]
+    solver_max_trigger_call_value_sun: u64,
+
+    #[serde(default)]
+    solver_max_trigger_calldata_len: u64,
+
+    #[serde(default)]
+    solver_trx_usd_override: Option<f64>,
+
+    #[serde(default)]
+    solver_trx_usd_ttl_secs: u64,
+
+    #[serde(default)]
+    solver_trx_usd_url: String,
+
+    #[serde(default)]
     solver_instance_id: String,
 }
 
@@ -245,6 +321,27 @@ impl Default for Env {
             solver_enabled_intent_types: "trx_transfer,delegate_resource".to_string(),
             solver_min_deadline_slack_secs: 30,
             solver_instance_id: String::new(),
+            solver_min_profit_usd: 0.0,
+            solver_hub_cost_usd: 0.0,
+            solver_tron_fee_usd: 0.0,
+            solver_capital_lock_ppm_per_day: 0,
+            solver_require_priced_escrow: false,
+            solver_allowed_escrow_tokens_csv: String::new(),
+            solver_trigger_contract_allowlist_csv: String::new(),
+            solver_trigger_contract_denylist_csv: String::new(),
+            solver_trigger_selector_denylist_csv: "0x095ea7b3,0x39509351".to_string(),
+            solver_trigger_allow_fallback_calls: false,
+            solver_max_trx_transfer_sun: 0,
+            solver_max_usdt_transfer_amount: 0,
+            solver_max_delegate_balance_sun: 0,
+            solver_max_delegate_lock_period_secs: 0,
+            solver_max_trigger_call_value_sun: 0,
+            solver_max_trigger_calldata_len: 0,
+            solver_trx_usd_override: None,
+            solver_trx_usd_ttl_secs: 60,
+            solver_trx_usd_url:
+                "https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd"
+                    .to_string(),
         }
     }
 }
@@ -289,6 +386,42 @@ fn parse_csv(label: &str, s: &str) -> Result<Vec<String>> {
         anyhow::bail!("{label} must be non-empty");
     }
     Ok(urls)
+}
+
+fn parse_addresses_csv(label: &str, s: &str) -> Result<Vec<Address>> {
+    let mut out = Vec::new();
+    for raw in s.split(',') {
+        let v = raw.trim();
+        if v.is_empty() {
+            continue;
+        }
+        out.push(parse_address(label, v)?);
+    }
+    Ok(out)
+}
+
+fn parse_selectors_csv(label: &str, s: &str) -> Result<Vec<[u8; 4]>> {
+    let mut out = Vec::new();
+    for raw in s.split(',') {
+        let v = raw.trim();
+        if v.is_empty() {
+            continue;
+        }
+        let v = v.strip_prefix("0x").unwrap_or(v);
+        let bytes =
+            hex::decode(v).with_context(|| format!("invalid selector hex in {label}: {v}"))?;
+        if bytes.len() != 4 {
+            anyhow::bail!("{label} entries must be 4 bytes (got {})", bytes.len());
+        }
+        let mut sel = [0u8; 4];
+        sel.copy_from_slice(&bytes);
+        out.push(sel);
+    }
+    Ok(out)
+}
+
+fn opt_u64(v: u64) -> Option<u64> {
+    if v == 0 { None } else { Some(v) }
 }
 
 fn parse_paymasters_json(s: &str) -> Result<Vec<PaymasterServiceConfig>> {
@@ -405,6 +538,18 @@ pub fn load_config() -> Result<AppConfig> {
     };
 
     let enabled_intent_types = parse_intent_types(&env.solver_enabled_intent_types)?;
+
+    let trigger_contract_allowlist = parse_addresses_csv(
+        "SOLVER_TRIGGER_CONTRACT_ALLOWLIST_CSV",
+        &env.solver_trigger_contract_allowlist_csv,
+    )?;
+    if enabled_intent_types.contains(&crate::types::IntentType::TriggerSmartContract)
+        && trigger_contract_allowlist.is_empty()
+    {
+        anyhow::bail!(
+            "TRIGGER_SMART_CONTRACT enabled but SOLVER_TRIGGER_CONTRACT_ALLOWLIST_CSV is empty"
+        );
+    }
 
     if env.hub_signer_private_key_hex.trim().is_empty() {
         anyhow::bail!("HUB_SIGNER_PRIVATE_KEY_HEX must be set");
@@ -537,6 +682,38 @@ pub fn load_config() -> Result<AppConfig> {
         policy: PolicyConfig {
             enabled_intent_types,
             min_deadline_slack_secs: env.solver_min_deadline_slack_secs,
+            min_profit_usd: env.solver_min_profit_usd,
+            hub_cost_usd: env.solver_hub_cost_usd,
+            tron_fee_usd: env.solver_tron_fee_usd,
+            capital_lock_ppm_per_day: env.solver_capital_lock_ppm_per_day.min(1_000_000),
+            require_priced_escrow: env.solver_require_priced_escrow,
+            allowed_escrow_tokens: parse_addresses_csv(
+                "SOLVER_ALLOWED_ESCROW_TOKENS_CSV",
+                &env.solver_allowed_escrow_tokens_csv,
+            )?,
+
+            trigger_contract_allowlist: trigger_contract_allowlist,
+            trigger_contract_denylist: parse_addresses_csv(
+                "SOLVER_TRIGGER_CONTRACT_DENYLIST_CSV",
+                &env.solver_trigger_contract_denylist_csv,
+            )?,
+            trigger_selector_denylist: parse_selectors_csv(
+                "SOLVER_TRIGGER_SELECTOR_DENYLIST_CSV",
+                &env.solver_trigger_selector_denylist_csv,
+            )?,
+            trigger_allow_fallback_calls: env.solver_trigger_allow_fallback_calls,
+
+            max_trx_transfer_sun: opt_u64(env.solver_max_trx_transfer_sun),
+            max_usdt_transfer_amount: opt_u64(env.solver_max_usdt_transfer_amount),
+            max_delegate_balance_sun: opt_u64(env.solver_max_delegate_balance_sun),
+            max_delegate_lock_period_secs: opt_u64(env.solver_max_delegate_lock_period_secs),
+            max_trigger_call_value_sun: opt_u64(env.solver_max_trigger_call_value_sun),
+            max_trigger_calldata_len: opt_u64(env.solver_max_trigger_calldata_len),
+        },
+        pricing: crate::pricing::PricingConfig {
+            trx_usd_override: env.solver_trx_usd_override,
+            trx_usd_ttl: Duration::from_secs(env.solver_trx_usd_ttl_secs.max(1)),
+            trx_usd_url: env.solver_trx_usd_url,
         },
         db_url: env.solver_db_url,
         instance_id: if env.solver_instance_id.trim().is_empty() {

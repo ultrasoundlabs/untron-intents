@@ -36,6 +36,46 @@ pub async fn broadcast_trx_transfer(
     Ok(txid)
 }
 
+pub async fn broadcast_trigger_smart_contract(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    intent_specs: &[u8],
+) -> Result<[u8; 32]> {
+    let intent = super::TriggerSmartContractIntent::abi_decode(intent_specs)
+        .context("abi_decode TriggerSmartContractIntent")?;
+
+    let to = TronAddress::from_evm(intent.to);
+    let call_value_i64 =
+        i64::try_from(intent.callValueSun).context("callValueSun out of i64 range")?;
+
+    let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+
+    let fee_policy = tron::sender::FeePolicy {
+        fee_limit_cap_sun: cfg.fee_limit_cap_sun,
+        fee_limit_headroom_ppm: cfg.fee_limit_headroom_ppm,
+    };
+
+    let started = std::time::Instant::now();
+    let txid = wallet
+        .broadcast_trigger_smart_contract(
+            &mut grpc,
+            to,
+            intent.data.to_vec(),
+            call_value_i64,
+            fee_policy,
+        )
+        .await
+        .context("broadcast_trigger_smart_contract")?;
+    telemetry.tron_grpc_ms(
+        "broadcast_trigger_smart_contract",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+
+    Ok(txid)
+}
+
 pub async fn broadcast_delegate_resource(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,

@@ -280,6 +280,18 @@ impl HubClient {
         Ok(res.context("UntronIntents.V3")?)
     }
 
+    pub async fn hub_block_number(&self) -> Result<u64> {
+        let (provider, telemetry) = match &self.inner {
+            HubClientInner::Eoa(c) => (c.provider.clone(), c.telemetry.clone()),
+            HubClientInner::Safe4337(c) => (c.provider.clone(), c.telemetry.clone()),
+        };
+        let started = Instant::now();
+        let res = provider.get_block_number().await;
+        let ok = res.is_ok();
+        telemetry.hub_rpc_ms("eth_blockNumber", ok, started.elapsed().as_millis() as u64);
+        Ok(res.context("eth_blockNumber")?)
+    }
+
     pub async fn v3_tron_usdt(&self) -> Result<Address> {
         let v3 = self.pool_v3().await?;
         let provider = match &self.inner {

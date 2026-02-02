@@ -10,6 +10,12 @@ mod grpc;
 mod mock;
 
 alloy::sol! {
+    struct TriggerSmartContractIntent {
+        address to;
+        uint256 callValueSun;
+        bytes data;
+    }
+
     struct TRXTransferIntent {
         address to;
         uint256 amountSun;
@@ -63,6 +69,29 @@ impl TronBackend {
                 let txid = grpc::broadcast_trx_transfer(&self.cfg, &self.telemetry, intent_specs)
                     .await
                     .context("grpc transfer")?;
+                Ok(TronExecution::BroadcastedTx { txid })
+            }
+        }
+    }
+
+    pub async fn execute_trigger_smart_contract(
+        &self,
+        hub: &HubClient,
+        intent_id: B256,
+        intent_specs: &[u8],
+    ) -> Result<TronExecution> {
+        match self.cfg.mode {
+            TronMode::Mock => {
+                mock::execute_trigger_smart_contract(hub, &self.cfg, intent_id, intent_specs).await
+            }
+            TronMode::Grpc => {
+                let txid = grpc::broadcast_trigger_smart_contract(
+                    &self.cfg,
+                    &self.telemetry,
+                    intent_specs,
+                )
+                .await
+                .context("grpc trigger_smart_contract")?;
                 Ok(TronExecution::BroadcastedTx { txid })
             }
         }

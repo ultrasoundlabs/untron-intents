@@ -9,6 +9,7 @@ use e2e::{
         run_forge_create_mock_untron_v3, run_forge_create_untron_intents_with_args,
     },
     http::wait_for_http_ok,
+    pool_db::fetch_current_intents,
     pool_db::{wait_for_intents_solved_and_settled, wait_for_pool_current_intents_count},
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
@@ -111,6 +112,25 @@ async fn e2e_solver_leases_jobs_single_winner_and_restart_resumes() -> Result<()
         &mock_reader,
         "solver2",
     )?);
+
+    // Ensure the solver is actually ingesting open intents into its own DB (faster diagnosis on failure).
+    let intent_id = fetch_current_intents(&db_url).await?[0].id.clone();
+    let start = std::time::Instant::now();
+    let mut last_state: Option<String> = None;
+    while start.elapsed() < Duration::from_secs(30) {
+        match fetch_job_by_intent_id(&db_url, &intent_id).await {
+            Ok(job) => {
+                last_state = Some(job.state);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
+        }
+    }
+    if last_state.is_none() {
+        anyhow::bail!(
+            "solver did not create a job for intent {intent_id} within 30s (postgrest_url={postgrest_url})"
+        );
+    }
 
     let rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(180)).await?;
     let intent_id = rows[0].id.clone();

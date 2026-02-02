@@ -4,17 +4,39 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Instant;
 
+fn de_string_or_number<'de, D>(d: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(d)?;
+    match v {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        other => Err(serde::de::Error::custom(format!(
+            "expected string/number, got {other:?}"
+        ))),
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PoolOpenIntentRow {
     pub id: String,
     pub intent_type: i16,
     pub intent_specs: String,
+    pub escrow_token: String,
+    #[serde(deserialize_with = "de_string_or_number")]
+    pub escrow_amount: String,
     #[serde(default)]
     pub solver: Option<String>,
     pub deadline: i64,
     pub solved: bool,
     pub funded: bool,
     pub closed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EventBlockRow {
+    pub block_number: u64,
 }
 
 pub struct IndexerClient {
@@ -72,5 +94,31 @@ impl IndexerClient {
         }
         let rows: Vec<PoolOpenIntentRow> = resp.json().await.context("decode open intents")?;
         Ok(rows)
+    }
+
+    pub async fn latest_indexed_pool_block_number(&self) -> Result<Option<u64>> {
+        // Derive lag from the highest indexed pool event block. This is robust across schema changes
+        // because it's sourced from the canonical `api.event_appended` view.
+        let url = format!(
+            "{}/event_appended?stream=eq.pool&order=block_number.desc&limit=1&select=block_number",
+            self.base_url
+        );
+        let started = Instant::now();
+        let resp = self.http.get(&url).send().await;
+        let ok = resp
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        self.telemetry.indexer_http_ms(
+            "event_appended_latest_pool_block",
+            ok,
+            started.elapsed().as_millis() as u64,
+        );
+        let resp = resp.context("GET /event_appended (latest pool block)")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("indexer /event_appended failed: {}", resp.status());
+        }
+        let rows: Vec<EventBlockRow> = resp.json().await.context("decode event_appended")?;
+        Ok(rows.first().map(|r| r.block_number))
     }
 }

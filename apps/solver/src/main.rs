@@ -4,6 +4,8 @@ mod db;
 mod hub;
 mod indexer;
 mod metrics;
+mod policy;
+mod pricing;
 mod runner;
 mod tron_backend;
 mod types;

@@ -4,6 +4,8 @@ use crate::{
     db::{HubUserOpKind, SolverJob, TronProofRow},
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
+    policy::{BreakerQuery, PolicyEngine},
+    pricing::Pricing,
     tron_backend::TronBackend,
     tron_backend::TronExecution,
     types::{IntentType, parse_b256, parse_hex_bytes},
@@ -26,6 +28,8 @@ pub struct Solver {
     indexer: IndexerClient,
     hub: HubClient,
     tron: TronBackend,
+    pricing: Pricing,
+    policy: PolicyEngine,
     instance_id: String,
 }
 
@@ -100,6 +104,8 @@ impl Solver {
         );
 
         let tron = TronBackend::new(cfg.tron.clone(), cfg.jobs.clone(), telemetry.clone());
+        let pricing = Pricing::new(cfg.pricing.clone());
+        let policy = PolicyEngine::new(cfg.policy.clone());
 
         Ok(Self {
             instance_id: cfg.instance_id.clone(),
@@ -109,6 +115,8 @@ impl Solver {
             indexer,
             hub,
             tron,
+            pricing,
+            policy,
         })
     }
 
@@ -142,13 +150,36 @@ impl Solver {
 
     async fn tick(&mut self) -> Result<()> {
         self.indexer.health().await?;
+
+        // Indexer lag guard: do not claim if we're too far behind head.
+        match self.indexer.latest_indexed_pool_block_number().await {
+            Ok(Some(indexed)) => {
+                let head = self.hub.hub_block_number().await?;
+                let lag = head.saturating_sub(indexed);
+                if lag > self.cfg.indexer.max_head_lag_blocks {
+                    tracing::warn!(
+                        head,
+                        indexed,
+                        lag,
+                        max_lag = self.cfg.indexer.max_head_lag_blocks,
+                        "indexer lag too high; skipping tick"
+                    );
+                    return Ok(());
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(err = %err, "failed to query indexer lag; continuing without lag guard");
+            }
+        }
+
         let rows = self
             .indexer
             .fetch_open_intents(self.cfg.jobs.fill_max_claims)
             .await?;
 
         for row in rows {
-            if !self.should_attempt(&row)? {
+            if !self.should_attempt(&row).await? {
                 continue;
             }
             let id = parse_b256(&row.id)?;
@@ -181,28 +212,34 @@ impl Solver {
         Ok(())
     }
 
-    fn should_attempt(&self, row: &PoolOpenIntentRow) -> Result<bool> {
-        if row.closed || row.solved {
-            return Ok(false);
-        }
-        if !row.funded {
-            return Ok(false);
-        }
-        if row.solver.is_some() {
-            return Ok(false);
-        }
-
+    async fn should_attempt(&mut self, row: &PoolOpenIntentRow) -> Result<bool> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        let slack = i64::try_from(self.cfg.policy.min_deadline_slack_secs).unwrap_or(i64::MAX);
-        if row.deadline.saturating_sub(now) < slack {
+        let eval = self
+            .policy
+            .evaluate_open_intent(row, now, &mut self.pricing)
+            .await?;
+        if !eval.allowed {
+            if let Some(reason) = eval.reason.as_deref() {
+                tracing::debug!(id = %row.id, intent_type = row.intent_type, reason, "skip intent");
+            }
             return Ok(false);
         }
 
-        let ty = IntentType::from_i16(row.intent_type)?;
-        Ok(self.cfg.policy.enabled_intent_types.contains(&ty))
+        // Dynamic breaker (if applicable).
+        if let Some(b) = eval.breaker {
+            if self.is_breaker_active(b).await? {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    async fn is_breaker_active(&self, _b: BreakerQuery) -> Result<bool> {
+        self.db.breaker_is_active(_b.contract, _b.selector).await
     }
 
     async fn process_job(&mut self, job: SolverJob) -> Result<()> {
@@ -481,23 +518,59 @@ impl Solver {
             }
             "claimed" => {
                 tracing::info!(id = %id, "executing tron tx");
-                let exec = match ty {
+                let exec_res = match ty {
+                    IntentType::TriggerSmartContract => self
+                        .tron
+                        .execute_trigger_smart_contract(&self.hub, id, &job.intent_specs)
+                        .await
+                        .context("execute trigger smart contract"),
                     IntentType::TrxTransfer => self
                         .tron
                         .execute_trx_transfer(&self.hub, id, &job.intent_specs)
                         .await
-                        .context("execute trx transfer")?,
+                        .context("execute trx transfer"),
                     IntentType::UsdtTransfer => self
                         .tron
                         .execute_usdt_transfer(&self.hub, id, &job.intent_specs)
                         .await
-                        .context("execute usdt transfer")?,
+                        .context("execute usdt transfer"),
                     IntentType::DelegateResource => self
                         .tron
                         .execute_delegate_resource(&self.hub, id, &job.intent_specs)
                         .await
-                        .context("execute delegate resource")?,
-                    _ => unreachable!(),
+                        .context("execute delegate resource"),
+                };
+
+                let exec = match exec_res {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let msg = err.to_string();
+
+                        // If this is a trigger smart contract, record a breaker on likely-deterministic failures.
+                        if ty == IntentType::TriggerSmartContract
+                            && !looks_like_tron_server_busy(&msg)
+                            && looks_like_tron_contract_failure(&msg)
+                        {
+                            if let Some((contract, selector)) =
+                                decode_trigger_contract_and_selector(&job.intent_specs)
+                            {
+                                let _ = self
+                                    .db
+                                    .breaker_record_failure(contract, selector, &msg)
+                                    .await;
+                            }
+                        }
+
+                        self.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &self.instance_id,
+                                &msg,
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
                 };
 
                 match exec {
@@ -546,7 +619,21 @@ impl Solver {
                     return Ok(());
                 };
                 tracing::info!(id = %id, "building tron proof");
-                let tron = self.tron.build_proof(txid).await?;
+                let tron = match self.tron.build_proof(txid).await {
+                    Ok(v) => v,
+                    Err(err) => {
+                        let msg = err.to_string();
+                        self.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &self.instance_id,
+                                &msg,
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                };
                 let proof_row = TronProofRow {
                     blocks: tron.blocks.into_iter().collect(),
                     encoded_tx: tron.encoded_tx,
@@ -588,21 +675,30 @@ impl Solver {
                 };
                 tracing::info!(id = %id, "submitting proveIntentFill");
                 match self.cfg.hub.tx_mode {
-                    HubTxMode::Eoa => {
-                        let receipt = self
-                            .hub
-                            .prove_intent_fill(id, tron)
-                            .await
-                            .context("proveIntentFill")?;
-                        self.db
-                            .record_prove(
-                                job.job_id,
-                                &self.instance_id,
-                                b256_to_bytes32(receipt.transaction_hash),
-                            )
-                            .await?;
-                        Ok(())
-                    }
+                    HubTxMode::Eoa => match self.hub.prove_intent_fill(id, tron).await {
+                        Ok(receipt) => {
+                            self.db
+                                .record_prove(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    b256_to_bytes32(receipt.transaction_hash),
+                                )
+                                .await?;
+                            Ok(())
+                        }
+                        Err(err) => {
+                            let msg = err.to_string();
+                            self.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &self.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            Ok(())
+                        }
+                    },
                     HubTxMode::Safe4337 => {
                         let kind = HubUserOpKind::Prove;
                         let mut row = self.db.get_hub_userop(job.job_id, kind).await?;
@@ -813,4 +909,35 @@ fn b256_to_bytes32(v: B256) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(v.as_slice());
     out
+}
+
+fn looks_like_tron_server_busy(msg: &str) -> bool {
+    msg.contains("SERVER_BUSY")
+}
+
+fn looks_like_tron_contract_failure(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("revert")
+        || m.contains("contract_validate_error")
+        || m.contains("contract validate error")
+        || m.contains("out_of_energy")
+        || m.contains("out of energy")
+        || m.contains("validate")
+}
+
+fn decode_trigger_contract_and_selector(
+    intent_specs: &[u8],
+) -> Option<(alloy::primitives::Address, Option<[u8; 4]>)> {
+    use alloy::sol_types::SolValue;
+
+    let intent = crate::tron_backend::TriggerSmartContractIntent::abi_decode(intent_specs).ok()?;
+    let data = intent.data.as_ref();
+    let selector = if data.len() >= 4 {
+        let mut out = [0u8; 4];
+        out.copy_from_slice(&data[..4]);
+        Some(out)
+    } else {
+        None
+    };
+    Some((intent.to, selector))
 }
