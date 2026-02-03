@@ -18,6 +18,25 @@ pub struct PreparedTronTx {
     pub tx_size_bytes: Option<i64>,
 }
 
+pub async fn fetch_transaction_info(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    txid: [u8; 32],
+) -> Result<tron::protocol::TransactionInfo> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let started = std::time::Instant::now();
+    let info = grpc
+        .get_transaction_info_by_id(txid)
+        .await
+        .context("GetTransactionInfoById")?;
+    telemetry.tron_grpc_ms(
+        "get_transaction_info_by_id",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+    Ok(info)
+}
+
 pub async fn prepare_trx_transfer(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
@@ -439,8 +458,6 @@ async fn emulate_trigger_smart_contract(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn emulation_revert_marker_is_stable() {
         let msg = anyhow::anyhow!("emulation_revert: code=3 msg_hex=0x00 msg_utf8=oops");

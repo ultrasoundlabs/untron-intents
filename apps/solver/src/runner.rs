@@ -1,7 +1,7 @@
 use crate::{
     config::{AppConfig, HubTxMode, TronMode},
     db::SolverDb,
-    db::{HubUserOpKind, SolverJob, TronProofRow},
+    db::{HubUserOpKind, SolverJob, TronProofRow, TronTxCostsRow},
     hub_cost::estimate_hub_cost_usd_from_userops,
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
@@ -249,11 +249,23 @@ impl Solver {
             .unwrap()
             .as_secs() as i64;
         let hub_cost_usd = self.estimate_hub_cost_usd().await?;
+        let tron_fee_usd = self.estimate_tron_fee_usd(row.intent_type).await?;
         let eval = self
             .policy
-            .evaluate_open_intent(row, now, &mut self.pricing, hub_cost_usd)
+            .evaluate_open_intent(row, now, &mut self.pricing, hub_cost_usd, tron_fee_usd)
             .await?;
         if !eval.allowed {
+            if let Ok(id) = parse_b256(&row.id) {
+                let _ = self
+                    .db
+                    .upsert_intent_skip(
+                        b256_to_bytes32(id),
+                        row.intent_type,
+                        eval.reason.as_deref().unwrap_or("policy_reject"),
+                        None,
+                    )
+                    .await;
+            }
             if let Some(reason) = eval.reason.as_deref() {
                 tracing::debug!(id = %row.id, intent_type = row.intent_type, reason, "skip intent");
             }
@@ -263,6 +275,17 @@ impl Solver {
         // Dynamic breaker (if applicable).
         if let Some(b) = eval.breaker {
             if self.is_breaker_active(b).await? {
+                if let Ok(id) = parse_b256(&row.id) {
+                    let _ = self
+                        .db
+                        .upsert_intent_skip(
+                            b256_to_bytes32(id),
+                            row.intent_type,
+                            "breaker_active",
+                            None,
+                        )
+                        .await;
+                }
                 return Ok(false);
             }
         }
@@ -280,6 +303,17 @@ impl Solver {
                     .precheck_emulation(self.hub.as_ref(), ty, &specs)
                     .await;
                 if !emu.ok {
+                    if let Ok(id) = parse_b256(&row.id) {
+                        let _ = self
+                            .db
+                            .upsert_intent_skip(
+                                b256_to_bytes32(id),
+                                row.intent_type,
+                                emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
+                                None,
+                            )
+                            .await;
+                    }
                     tracing::debug!(
                         id = %row.id,
                         intent_type = row.intent_type,
@@ -335,6 +369,26 @@ impl Solver {
 
     async fn is_breaker_active(&self, _b: BreakerQuery) -> Result<bool> {
         self.db.breaker_is_active(_b.contract, _b.selector).await
+    }
+
+    async fn estimate_tron_fee_usd(&mut self, intent_type: i16) -> Result<f64> {
+        let trx_usd = match self.pricing.trx_usd().await {
+            Ok(v) => v,
+            Err(_) => return Ok(self.cfg.policy.tron_fee_usd),
+        };
+
+        let lookback = i64::try_from(self.cfg.policy.tron_fee_history_lookback).unwrap_or(50);
+        let fee_sun = self
+            .db
+            .tron_tx_costs_avg_fee_sun(intent_type, lookback)
+            .await?
+            .unwrap_or(0);
+        if fee_sun <= 0 {
+            return Ok(self.cfg.policy.tron_fee_usd);
+        }
+        let mut usd = (fee_sun as f64 / 1e6) * trx_usd;
+        usd *= 1.0 + (self.cfg.policy.tron_fee_headroom_ppm as f64 / 1e6);
+        Ok(usd)
     }
 }
 
@@ -909,6 +963,23 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 index_dec: tron.index.to_string(),
             };
             ctx.db.save_tron_proof(txid, &proof_row).await?;
+
+            if let Ok(Some(info)) = ctx.tron.fetch_transaction_info(txid).await {
+                let receipt = info.receipt.as_ref();
+                let costs = TronTxCostsRow {
+                    fee_sun: Some(info.fee),
+                    energy_usage_total: receipt.map(|r| r.energy_usage_total),
+                    net_usage: receipt.map(|r| r.net_usage),
+                    energy_fee_sun: receipt.map(|r| r.energy_fee),
+                    net_fee_sun: receipt.map(|r| r.net_fee),
+                    block_number: Some(info.block_number),
+                    block_timestamp: Some(info.block_time_stamp),
+                    result_code: Some(info.result),
+                    result_message: Some(String::from_utf8_lossy(&info.res_message).into_owned()),
+                };
+                let _ = ctx.db.upsert_tron_tx_costs(job.job_id, txid, &costs).await;
+            }
+
             ctx.db
                 .record_proof_built(job.job_id, &ctx.instance_id)
                 .await?;

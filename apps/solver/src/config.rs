@@ -29,6 +29,10 @@ pub struct PolicyConfig {
     /// Extra headroom applied to the hub cost estimate (ppm, i.e. 100_000 = +10%).
     pub hub_cost_headroom_ppm: u64,
     pub tron_fee_usd: f64,
+    /// Number of recent confirmed Tron txs per intent type used to estimate Tron fees.
+    pub tron_fee_history_lookback: u64,
+    /// Extra headroom applied to the Tron fee estimate (ppm, i.e. 100_000 = +10%).
+    pub tron_fee_headroom_ppm: u64,
     pub capital_lock_ppm_per_day: u64,
     pub require_priced_escrow: bool,
     pub allowed_escrow_tokens: Vec<Address>,
@@ -244,6 +248,12 @@ struct Env {
     solver_tron_fee_usd: f64,
 
     #[serde(default)]
+    solver_tron_fee_history_lookback: u64,
+
+    #[serde(default)]
+    solver_tron_fee_headroom_ppm: u64,
+
+    #[serde(default)]
     solver_capital_lock_ppm_per_day: u64,
 
     #[serde(default)]
@@ -353,6 +363,8 @@ impl Default for Env {
             solver_hub_cost_history_lookback: 50,
             solver_hub_cost_headroom_ppm: 200_000,
             solver_tron_fee_usd: 0.0,
+            solver_tron_fee_history_lookback: 50,
+            solver_tron_fee_headroom_ppm: 200_000,
             solver_capital_lock_ppm_per_day: 0,
             solver_require_priced_escrow: false,
             solver_allowed_escrow_tokens_csv: String::new(),
@@ -722,6 +734,8 @@ pub fn load_config() -> Result<AppConfig> {
             hub_cost_history_lookback: env.solver_hub_cost_history_lookback.max(1),
             hub_cost_headroom_ppm: env.solver_hub_cost_headroom_ppm.min(1_000_000),
             tron_fee_usd: env.solver_tron_fee_usd,
+            tron_fee_history_lookback: env.solver_tron_fee_history_lookback.max(1),
+            tron_fee_headroom_ppm: env.solver_tron_fee_headroom_ppm.min(1_000_000),
             capital_lock_ppm_per_day: env.solver_capital_lock_ppm_per_day.min(1_000_000),
             require_priced_escrow: env.solver_require_priced_escrow,
             allowed_escrow_tokens: parse_addresses_csv(

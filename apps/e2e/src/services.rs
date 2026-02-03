@@ -39,6 +39,28 @@ pub fn spawn_solver_mock(
     mock_reader: &str,
     instance_id: &str,
 ) -> Result<Child> {
+    spawn_solver_mock_with_enabled_types(
+        db_url,
+        postgrest_url,
+        rpc_url,
+        pool_contract,
+        solver_private_key,
+        mock_reader,
+        instance_id,
+        "trx_transfer,delegate_resource,usdt_transfer",
+    )
+}
+
+pub fn spawn_solver_mock_with_enabled_types(
+    db_url: &str,
+    postgrest_url: &str,
+    rpc_url: &str,
+    pool_contract: &str,
+    solver_private_key: &str,
+    mock_reader: &str,
+    instance_id: &str,
+    enabled_intent_types: &str,
+) -> Result<Child> {
     let root = repo_root();
     let mut cmd = Command::new(root.join("target/debug/solver"));
     cmd.current_dir(&root)
@@ -51,10 +73,7 @@ pub fn spawn_solver_mock(
         .env("TRON_MODE", "mock")
         .env("TRON_MOCK_READER_ADDRESS", mock_reader)
         .env("SOLVER_INSTANCE_ID", instance_id)
-        .env(
-            "SOLVER_ENABLED_INTENT_TYPES",
-            "trx_transfer,delegate_resource,usdt_transfer",
-        )
+        .env("SOLVER_ENABLED_INTENT_TYPES", enabled_intent_types)
         .env("SOLVER_TICK_INTERVAL_SECS", "1")
         .env("RUST_LOG", "info")
         .stdout(Stdio::inherit())

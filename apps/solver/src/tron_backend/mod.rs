@@ -249,6 +249,18 @@ impl TronBackend {
             TronMode::Grpc => grpc::broadcast_signed_tx(&self.cfg, &self.telemetry, tx_bytes).await,
         }
     }
+
+    pub async fn fetch_transaction_info(
+        &self,
+        txid: [u8; 32],
+    ) -> Result<Option<tron::protocol::TransactionInfo>> {
+        match self.cfg.mode {
+            TronMode::Mock => Ok(None),
+            TronMode::Grpc => Ok(Some(
+                grpc::fetch_transaction_info(&self.cfg, &self.telemetry, txid).await?,
+            )),
+        }
+    }
 }
 
 pub(super) fn empty_proof() -> crate::hub::TronProof {

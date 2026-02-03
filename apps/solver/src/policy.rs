@@ -45,6 +45,7 @@ impl PolicyEngine {
         now_unix_secs: i64,
         pricing: &mut Pricing,
         hub_cost_usd: f64,
+        tron_fee_usd: f64,
     ) -> Result<PolicyEvaluation> {
         let mut eval = PolicyEvaluation {
             allowed: false,
@@ -87,7 +88,7 @@ impl PolicyEngine {
 
         // Best-effort profitability gating.
         if let Some(reason) = self
-            .profitability_check(row, ty, pricing, hub_cost_usd)
+            .profitability_check(row, ty, pricing, hub_cost_usd, tron_fee_usd)
             .await
             .context("profitability_check")?
         {
@@ -312,6 +313,7 @@ impl PolicyEngine {
         ty: IntentType,
         pricing: &mut Pricing,
         hub_cost_usd: f64,
+        tron_fee_usd: f64,
     ) -> Result<Option<String>> {
         if self.cfg.min_profit_usd <= 0.0 && !self.cfg.require_priced_escrow {
             return Ok(None);
@@ -335,7 +337,7 @@ impl PolicyEngine {
             Ok(v) => v,
             Err(_) => return Ok(Some("cost_estimate_failed".to_string())),
         };
-        let profit = revenue_usd - cost_usd - hub_cost_usd;
+        let profit = revenue_usd - cost_usd - hub_cost_usd - tron_fee_usd;
         if profit < self.cfg.min_profit_usd {
             return Ok(Some("unprofitable".to_string()));
         }
@@ -365,25 +367,24 @@ pub fn estimate_cost_usd(
     trx_usd: f64,
 ) -> Result<f64> {
     let specs = crate::types::parse_hex_bytes(intent_specs_hex)?;
-    let base_fee = cfg.tron_fee_usd;
     let cost = match ty {
         IntentType::TriggerSmartContract => {
             let intent = TriggerSmartContractIntent::abi_decode(&specs)
                 .context("decode TriggerSmartContractIntent")?;
             let sun: f64 = intent.callValueSun.to_string().parse().unwrap_or(0.0);
-            base_fee + (sun / 1e6) * trx_usd
+            (sun / 1e6) * trx_usd
         }
         IntentType::TrxTransfer => {
             let intent =
                 TRXTransferIntent::abi_decode(&specs).context("decode TRXTransferIntent")?;
             let sun: f64 = intent.amountSun.to_string().parse().unwrap_or(0.0);
-            base_fee + (sun / 1e6) * trx_usd
+            (sun / 1e6) * trx_usd
         }
         IntentType::UsdtTransfer => {
             let intent =
                 USDTTransferIntent::abi_decode(&specs).context("decode USDTTransferIntent")?;
             let amt: f64 = intent.amount.to_string().parse().unwrap_or(0.0);
-            base_fee + (amt / 1e6)
+            amt / 1e6
         }
         IntentType::DelegateResource => {
             let intent = DelegateResourceIntent::abi_decode(&specs)
@@ -393,7 +394,7 @@ pub fn estimate_cost_usd(
             let principal_usd = (sun / 1e6) * trx_usd;
             let day_frac = lock / 86400.0;
             let lock_cost = principal_usd * (cfg.capital_lock_ppm_per_day as f64 / 1e6) * day_frac;
-            base_fee + lock_cost
+            lock_cost
         }
     };
     Ok(cost)
@@ -416,6 +417,8 @@ mod tests {
             hub_cost_history_lookback: 50,
             hub_cost_headroom_ppm: 0,
             tron_fee_usd: 0.0,
+            tron_fee_history_lookback: 50,
+            tron_fee_headroom_ppm: 0,
             capital_lock_ppm_per_day: 0,
             require_priced_escrow: false,
             allowed_escrow_tokens: vec![],
@@ -513,7 +516,7 @@ mod tests {
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.0)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0)
             .await
             .unwrap();
         assert!(!eval.allowed);
@@ -551,7 +554,7 @@ mod tests {
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.0)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0)
             .await
             .unwrap();
         assert!(!eval.allowed);
@@ -588,7 +591,7 @@ mod tests {
 
         // $1.00 revenue - $0.00 tron - $0.95 hub = $0.05 profit < $0.10
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.95)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.95, 0.0)
             .await
             .unwrap();
         assert!(!eval.allowed);

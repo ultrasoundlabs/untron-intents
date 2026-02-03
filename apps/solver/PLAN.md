@@ -83,7 +83,7 @@ Keep the implementation modular, but don’t prematurely over-abstract. The solv
    - Tracks receipts and handles retries safely.
 
 8) **Price oracle + cache**
-   - TRX/USD (and potentially other inputs) from a trusted API (e.g. Coingecko) with:
+   - TRX/USD and ETH/USD from a trusted API (e.g. Coingecko) with:
      - short timeouts, TTL caching, and env override fallback.
 
 ### Suggested job model (state machine)
@@ -179,7 +179,8 @@ The solver should only fill when expected profit clears thresholds:
   - escrow payment (in hub token) minus any expected protocol fees (depending on intent flow).
 - `expected_costs`:
   - Tron: transferred principal (TRX/USDT/callValue), expected fees/energy/bandwidth, consolidation costs.
-  - Hub: AA execution costs for `claim` + `prove` (+ any follow-ups).
+  - Hub: AA execution costs for `claim` + `prove` (+ any follow-ups). For Safe4337 mode we should
+    prefer empirical costs derived from recent `UserOperationEvent.actualGasCost` over a static constant.
   - Risk buffer: slippage for fee estimation, price volatility, and “unknown unknowns”.
 
 Recommended thresholds:
@@ -302,7 +303,7 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 ### Phase 0: Foundations
 
 - [x] Decide solver DB location (same Postgres instance + `solver` schema).
-- [~] Add solver DB migrations + a migration runner.
+- [x] Add solver DB migrations + a migration runner.
   - Implemented as idempotent schema init in code (`apps/solver/src/db.rs`) rather than `sqlx` migrations.
 - [~] Define persisted job state machine and idempotency rules.
   - Job rows + leases + retry/backoff exist; remaining work is multi-step planning (pre-txs) and stricter
@@ -314,13 +315,13 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 ### Phase 1: Minimal reliable loop (no Tron yet)
 
 - [~] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
-  - Jobs are persisted in `solver.jobs`; remaining work is richer terminal states + skip reason persistence.
-- [~] Apply static policy filters + record `SKIPPED_*` reasons.
-  - Policy is centralized (`apps/solver/src/policy.rs`) but skip reasons are only logged today.
+  - Jobs are persisted in `solver.jobs`; remaining work is richer terminal states (less “ready/claimed/...”-centric).
+- [x] Apply static policy filters + record `SKIPPED_*` reasons.
+  - Skip reasons are persisted in `solver.intent_skips` (intent_id PK, reason/details + counters) for postmortems.
 - [x] Acquire leases and mark `ACQUIRED`.
   - Implemented via `solver.jobs.leased_by/lease_until` selection and renewal.
 - [~] Submit claim tx for a chosen intent; persist submission metadata.
-  - Claim exists, persisted minimally (tx hash).
+  - Claim exists in both EOA and Safe4337 modes. In Safe4337 mode we persist userOp JSON + userOpHash + receipts.
 - [~] Confirm claim and mark `CLAIMED`.
   - Claim receipt wait exists.
 
@@ -339,7 +340,11 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [ ] Add optional consolidation planning for USDT with strict limits.
 - [x] Proof builder for `TriggerSmartContract` fills.
 - [~] Profitability model expanded to include TRX/USD.
-  - Implemented as best-effort price cache + intent-type cost estimation; needs AA gas estimation + buffers.
+  - Implemented as best-effort TRX/USD cache + intent-type cost estimation.
+  - Hub costs: implemented for Safe4337 via ETH/USD + rolling average of `actualGasCost` from persisted AA receipts
+    (with lookback + headroom + fallback constant).
+  - Tron costs: realized `TransactionInfo.fee` (+ receipt breakdown) are persisted in `solver.tron_tx_costs` and fed back
+    into profitability as a rolling `fee_sun` average with headroom (fallback to `SOLVER_TRON_FEE_USD` if empty).
 
 ### Phase 4: Resource delegation
 
@@ -353,12 +358,15 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Implement strict allowlist (contract + optional selector).
 - [x] Add selector denylist defaults.
 - [x] Add contract-level dynamic breaker and persistence.
-- [ ] Optional: Tron simulation preflight + “simulation-success but onchain-fail” breaker escalation.
+- [x] Optional: Tron simulation preflight (gRPC `EstimateEnergy`) to skip likely-reverting intents before claim.
+- [ ] Optional: “simulation-success but onchain-fail” breaker escalation (mismatch classification).
 
 ### Phase 6: Hardening
 
 - [x] Restart/recovery tests: kill solver mid-flight and ensure it resumes without double-send.
 - [x] Multi-instance tests: two solvers sharing DB should not double-claim/fill the same intent.
+- [x] AA e2e coverage with Alto bundler (Safe4337 + crash/restart).
+- [x] Bundler receipt-loss fallback coverage (EntryPoint log fallback).
 - [ ] Rate limiting and global circuit breakers.
 - [ ] Better observability: structured logs + metrics for state transitions and failure causes.
 

@@ -22,18 +22,17 @@ pub struct Pricing {
 }
 
 #[derive(Debug, Deserialize)]
-struct CoingeckoSimplePrice {
-    tron: CoingeckoTron,
-    ethereum: CoingeckoEthereum,
+struct CoingeckoSimplePriceTron {
+    tron: CoingeckoUsd,
 }
 
 #[derive(Debug, Deserialize)]
-struct CoingeckoTron {
-    usd: f64,
+struct CoingeckoSimplePriceEthereum {
+    ethereum: CoingeckoUsd,
 }
 
 #[derive(Debug, Deserialize)]
-struct CoingeckoEthereum {
+struct CoingeckoUsd {
     usd: f64,
 }
 
@@ -73,7 +72,7 @@ impl Pricing {
 
         // Default URL is Coingecko's simple price endpoint:
         //   https://api.coingecko.com/api/v3/simple/price?ids=tron&vs_currencies=usd
-        let body: CoingeckoSimplePrice = resp.json().await.context("decode trx_usd json")?;
+        let body: CoingeckoSimplePriceTron = resp.json().await.context("decode trx_usd json")?;
         let price = body.tron.usd;
         if !(price.is_finite()) || price <= 0.0 {
             anyhow::bail!("invalid trx usd price: {price}");
@@ -105,12 +104,31 @@ impl Pricing {
 
         // Default URL is Coingecko's simple price endpoint:
         //   https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd
-        let body: CoingeckoSimplePrice = resp.json().await.context("decode eth_usd json")?;
+        let body: CoingeckoSimplePriceEthereum = resp.json().await.context("decode eth_usd json")?;
         let price = body.ethereum.usd;
         if !(price.is_finite()) || price <= 0.0 {
             anyhow::bail!("invalid eth usd price: {price}");
         }
         self.cached_eth = Some((price, Instant::now()));
         Ok(price)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_coingecko_eth_only_matches_real_shape() {
+        let s = r#"{"ethereum":{"usd":2371.25}}"#;
+        let body: CoingeckoSimplePriceEthereum = serde_json::from_str(s).unwrap();
+        assert_eq!(body.ethereum.usd, 2371.25);
+    }
+
+    #[test]
+    fn parse_coingecko_trx_only_matches_real_shape() {
+        let s = r#"{"tron":{"usd":0.29}}"#;
+        let body: CoingeckoSimplePriceTron = serde_json::from_str(s).unwrap();
+        assert_eq!(body.tron.usd, 0.29);
     }
 }
