@@ -47,6 +47,26 @@ fn docker_unpause(name: &str) -> Result<()> {
     Ok(())
 }
 
+async fn wait_for_job_count_for_intent(db_url: &str, intent_id_hex: &str, expected: i64, timeout: Duration) -> Result<()> {
+    let pool = sqlx::PgPool::connect(db_url).await?;
+    let start = std::time::Instant::now();
+    loop {
+        let n: i64 = sqlx::query_scalar(
+            "select count(*)::bigint from solver.jobs where intent_id = decode($1,'hex')",
+        )
+        .bind(intent_id_hex.trim_start_matches("0x"))
+        .fetch_one(&pool)
+        .await?;
+        if n == expected {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            anyhow::bail!("timed out waiting for solver.jobs count={expected} for intent_id={intent_id_hex}, got {n}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_solver_recovers_from_postgrest_outage() -> Result<()> {
     if !require_bins(&["docker", "anvil", "forge", "cast"]) {
@@ -108,6 +128,12 @@ async fn e2e_solver_recovers_from_postgrest_outage() -> Result<()> {
     let to = "0x00000000000000000000000000000000000000aa";
     let _ = run_cast_create_trx_transfer_intent(&rpc_url, pk0, &intents_addr, to, "1234", 1)?;
     wait_for_pool_current_intents_count(&db_url, 1, Duration::from_secs(45)).await?;
+    let intent1_id = e2e::pool_db::fetch_current_intents(&db_url)
+        .await?
+        .first()
+        .context("missing intent row")?
+        .id
+        .clone();
 
     // PostgREST.
     let pgrst_pw = "pgrst_pw";
@@ -136,15 +162,38 @@ async fn e2e_solver_recovers_from_postgrest_outage() -> Result<()> {
         &[],
     )?);
 
-    // Pause PostgREST for a bit, then resume it. Using pause/unpause avoids changing port mappings
-    // (which would break the running solver's INDEXER_API_BASE_URL).
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Let the solver complete the first intent while PostgREST is healthy.
+    let _ = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(120)).await?;
+
+    // Pause PostgREST, create a new intent while it's down, then resume it.
+    // Using pause/unpause avoids changing port mappings (which would break the running solver's
+    // INDEXER_API_BASE_URL).
     docker_pause(&pgrst_name)?;
+
+    // Create a second intent while PostgREST is down. The solver cannot discover it until PostgREST
+    // comes back up, so we can assert "recovery and continues" deterministically.
+    let _ = run_cast_create_trx_transfer_intent(&rpc_url, pk0, &intents_addr, to, "4321", 1)?;
+    wait_for_pool_current_intents_count(&db_url, 2, Duration::from_secs(45)).await?;
+    let intent2_id = e2e::pool_db::fetch_current_intents(&db_url)
+        .await?
+        .get(1)
+        .context("missing second intent row")?
+        .id
+        .clone();
+
+    // While PostgREST is paused, the solver should not have a job row for the new intent.
+    // This ensures the outage actually affected progress.
     tokio::time::sleep(Duration::from_secs(3)).await;
+    wait_for_job_count_for_intent(&db_url, &intent2_id, 0, Duration::from_secs(5)).await?;
+
     docker_unpause(&pgrst_name)?;
     wait_for_http_ok(&format!("{postgrest_url}/health"), Duration::from_secs(60)).await?;
 
     // Solver should eventually recover and complete.
-    let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(180)).await?;
+    let _rows = wait_for_intents_solved_and_settled(&db_url, 2, Duration::from_secs(240)).await?;
+
+    // Harden: no duplicate jobs per intent (unique constraint), and both intents were processed.
+    wait_for_job_count_for_intent(&db_url, &intent1_id, 1, Duration::from_secs(5)).await?;
+    wait_for_job_count_for_intent(&db_url, &intent2_id, 1, Duration::from_secs(5)).await?;
     Ok(())
 }

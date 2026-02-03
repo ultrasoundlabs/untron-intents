@@ -35,7 +35,7 @@ Conventions:
   - Done when: the test validates both hub settlement *and* Tron-side tx fields match intent specs.
   - Note: this uses a TRC20-like stub token (no storage writes) so it does not assert receiver balance changes.
 
-- [ ] **Multi-key Tron inventory + consolidation plan is correct and restart-safe**
+- [x] **Multi-key Tron inventory + consolidation plan is correct and restart-safe**
   - [x] Add test `apps/e2e/tests/solver_tron_consolidation.rs`
   - [x] Configure `TRON_PRIVATE_KEYS_HEX_CSV` with ≥2 keys, and set `SOLVER_CONSOLIDATION_*` caps.
   - [x] Create TRX transfer intent that requires consolidation (no single key has enough funds).
@@ -78,10 +78,10 @@ Conventions:
   - [x] Assert solver logs “indexer lag too high” and does not claim (via absence of `solver.jobs`).
   - Done when: the solver resumes claiming once lag is below threshold (or after indexer catches up).
 
-- [ ] **PostgREST outage / flakiness handling**
+- [x] **PostgREST outage / flakiness handling**
   - [x] Add test `apps/e2e/tests/solver_postgrest_outage.rs`
-  - [ ] Kill PostgREST during run; keep solver running; restart PostgREST.
-  - [ ] Assert solver recovers and continues (no permanent fatal, no duplicate fills).
+  - [x] Kill PostgREST during run; keep solver running; restart PostgREST.
+  - [x] Assert solver recovers and continues (no permanent fatal, no duplicate fills).
   - Done when: jobs still reach `done` and errors remain retryable.
 
 ## P1 — Tron error handling / fee mechanics

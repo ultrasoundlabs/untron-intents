@@ -14,10 +14,12 @@ use e2e::{
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
     services::{spawn_indexer, spawn_solver_tron_grpc_custom},
+    solver_db::fetch_job_by_intent_id,
     tronbox::{decode_hex32, wait_for_tronbox_accounts, wait_for_tronbox_admin},
     util::{find_free_port, require_bins},
 };
 use sqlx::Row;
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
@@ -26,6 +28,48 @@ use testcontainers::{GenericImage, ImageExt};
 fn is_missing_relation(err: &sqlx::Error) -> bool {
     let s = err.to_string();
     s.contains("does not exist") && (s.contains("solver.") || s.contains("schema \"solver\""))
+}
+
+async fn tron_tx_is_known(grpc: &mut tron::TronGrpc, txid: [u8; 32]) -> bool {
+    match grpc.get_transaction_info_by_id(txid).await {
+        Ok(info) => {
+            let confirmed = info.block_number > 0;
+            let id_matches = info.id.len() == 32 && info.id.as_slice() == txid;
+            confirmed || id_matches
+        }
+        Err(_) => false,
+    }
+}
+
+async fn tx_receipt_status(rpc_url: &str, tx_hash: &str) -> Result<Option<bool>> {
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_getTransactionReceipt",
+        "params": [tx_hash]
+    });
+    let resp = client
+        .post(rpc_url)
+        .json(&payload)
+        .send()
+        .await
+        .context("eth_getTransactionReceipt")?;
+    let val = resp.json::<serde_json::Value>().await.context("decode receipt json")?;
+    let Some(r) = val.get("result") else {
+        return Ok(None);
+    };
+    if r.is_null() {
+        return Ok(None);
+    }
+    let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    if status.eq_ignore_ascii_case("0x1") {
+        return Ok(Some(true));
+    }
+    if status.eq_ignore_ascii_case("0x0") {
+        return Ok(Some(false));
+    }
+    Ok(None)
 }
 
 async fn fetch_tron_balance_sun(grpc: &mut tron::TronGrpc, addr: tron::TronAddress) -> Result<i64> {
@@ -344,6 +388,38 @@ async fn e2e_solver_tron_consolidation_is_restart_safe() -> Result<()> {
     let (job_id, plan) =
         wait_for_tron_plan_persisted(&db_url, &intent_id, Duration::from_secs(120)).await?;
 
+    // Harden: the final tx must not be broadcast (i.e. become known onchain) before the hub claim is
+    // confirmed. We only enforce this for the *final* tx (pre-txs are consolidation).
+    let final_txid = plan
+        .iter()
+        .find(|(s, _)| s == "final")
+        .map(|(_, t)| *t)
+        .context("missing final tx in plan")?;
+    let start = Instant::now();
+    loop {
+        let job = fetch_job_by_intent_id(&db_url, &intent_id).await?;
+        let claim_confirmed = match job.claim_tx_hash.as_deref() {
+            None => false,
+            Some(txh) => match tx_receipt_status(&rpc_url, txh).await? {
+                Some(true) => true,
+                Some(false) => anyhow::bail!("hub claim tx reverted: {txh}"),
+                None => false,
+            },
+        };
+
+        let final_known = tron_tx_is_known(&mut grpc, final_txid).await;
+        if final_known && !claim_confirmed {
+            anyhow::bail!("final tron tx became known before hub claim was confirmed");
+        }
+        if claim_confirmed {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(120) {
+            anyhow::bail!("timed out waiting for hub claim confirmation");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
     // Kill the solver after the first pre-tx becomes known onchain, before it can finish the plan.
     // On restart, it should not get stuck or double-send in a way that prevents completion.
     let pre0 = plan
@@ -374,6 +450,30 @@ async fn e2e_solver_tron_consolidation_is_restart_safe() -> Result<()> {
             ("SOLVER_CONSOLIDATION_MAX_PER_TX_TRX_PULL_SUN", "0"),
         ],
     )?);
+
+    // Harden: ensure the persisted plan does not change across restart (no new txids are generated).
+    let plan2 = {
+        let start = Instant::now();
+        loop {
+            let p = fetch_tron_plan(&db_url, job_id).await?;
+            if p.len() >= 2 {
+                break p;
+            }
+            if start.elapsed() > Duration::from_secs(60) {
+                anyhow::bail!("timed out waiting for tron_signed_txs after restart");
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    };
+    let txids0 = plan.iter().map(|(_, t)| *t).collect::<BTreeSet<_>>();
+    let txids1 = plan2.iter().map(|(_, t)| *t).collect::<BTreeSet<_>>();
+    if txids0 != txids1 {
+        anyhow::bail!(
+            "tron plan txids changed across restart: before={:?} after={:?}",
+            txids0,
+            txids1
+        );
+    }
 
     let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(420)).await?;
 
