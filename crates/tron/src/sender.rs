@@ -234,7 +234,7 @@ impl TronWallet {
         let owner = self.address.prefixed_bytes().to_vec();
         let contract_addr = contract.prefixed_bytes().to_vec();
 
-        let energy_required_i64 = grpc
+        let est = grpc
             .estimate_energy(TriggerSmartContract {
                 owner_address: owner.clone(),
                 contract_address: contract_addr.clone(),
@@ -243,8 +243,32 @@ impl TronWallet {
                 call_token_value: 0,
                 token_id: 0,
             })
-            .await?
-            .energy_required;
+            .await?;
+        if let Some(ret) = est.result.as_ref() {
+            if !ret.result {
+                let msg_utf8 = String::from_utf8_lossy(&ret.message).into_owned();
+                match super::protocol::r#return::ResponseCode::try_from(ret.code) {
+                    Ok(super::protocol::r#return::ResponseCode::ContractValidateError)
+                    | Ok(super::protocol::r#return::ResponseCode::ContractExeError) => {
+                        anyhow::bail!(
+                            "contract_validate_error: code={} msg_hex=0x{} msg_utf8={}",
+                            ret.code,
+                            hex::encode(&ret.message),
+                            msg_utf8
+                        );
+                    }
+                    _ => {
+                        anyhow::bail!(
+                            "estimate_energy_failed: code={} msg_hex=0x{} msg_utf8={}",
+                            ret.code,
+                            hex::encode(&ret.message),
+                            msg_utf8
+                        );
+                    }
+                }
+            }
+        }
+        let energy_required_i64 = est.energy_required;
         let mut energy_required =
             u64::try_from(energy_required_i64).context("energy_required out of range")?;
         // Some private Tron networks return `energy_required=0` even for state-changing calls.

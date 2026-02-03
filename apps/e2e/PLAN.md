@@ -18,10 +18,10 @@ Conventions:
   - [x] Assert skip reason is persisted (e.g. `solver.intent_skips`) and job does not advance past `ready`.
   - Done when: we have both “fills” and “rejects” cases, and the failure case never submits a hub-chain claim.
 
-- [ ] **TriggerSmartContract circuit breaker trips on repeated onchain failures**
+- [x] **TriggerSmartContract circuit breaker trips on repeated onchain failures**
   - [x] Add test `apps/e2e/tests/solver_trigger_breaker.rs`
-  - [ ] Use a deliberately failing trigger call (e.g., contract that always reverts).
-  - [ ] Assert `solver.circuit_breakers` is updated with `(contract, selector)` and becomes active.
+  - [x] Use a deliberately failing trigger call (e.g., contract that always reverts).
+  - [x] Assert `solver.circuit_breakers` is updated with `(contract, selector)` and becomes active.
   - [x] Create a second intent with same `(contract, selector)` and assert it is skipped without claiming.
   - Done when: breaker activation + suppression is deterministic and persisted across solver restart.
 
@@ -45,10 +45,10 @@ Conventions:
 
 ## P0 — Safe4337 correctness (AA nonces/receipts/failure modes)
 
-- [ ] **Safe4337: nonce-floor / “AA25 invalid account nonce” recovery**
+- [x] **Safe4337: nonce-floor / “AA25 invalid account nonce” recovery**
   - [x] Add test `apps/e2e/tests/solver_safe4337_nonce_recovery.rs`
-  - [ ] Force a stale prepared userop scenario (sleep/backoff or inject extra userop externally).
-  - [ ] Assert solver deletes stale prepared ops and re-prepares with a valid nonce.
+  - [x] Force a stale prepared userop scenario (sleep/backoff or inject extra userop externally).
+  - [x] Assert solver deletes stale prepared ops and re-prepares with a valid nonce.
   - Done when: the job completes without manual intervention and receipts are persisted.
 
 - [x] **Safe4337: “AlreadyClaimed” and other hub reverts are fatal and stop retries**

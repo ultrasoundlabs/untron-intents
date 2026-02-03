@@ -1246,7 +1246,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 let exec = match exec_res {
                     Ok(v) => v,
                     Err(err) => {
-                        let msg = err.to_string();
+                        let msg = format!("{err:#}");
 
                         // If this is a trigger smart contract, record a breaker on likely-deterministic failures.
                         if ty == IntentType::TriggerSmartContract
@@ -1394,7 +1394,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 let exec = match exec_res {
                     Ok(v) => v,
                     Err(err) => {
-                        let msg = err.to_string();
+                        let msg = format!("{err:#}");
                         if ty == IntentType::TriggerSmartContract
                             && !looks_like_tron_server_busy(&msg)
                             && looks_like_tron_contract_failure(&msg)
