@@ -31,6 +31,8 @@ pub struct PoolOpenIntentRow {
     pub deadline: i64,
     pub solved: bool,
     pub funded: bool,
+    #[serde(default)]
+    pub settled: bool,
     pub closed: bool,
 }
 
@@ -39,6 +41,7 @@ struct EventBlockRow {
     pub block_number: u64,
 }
 
+#[derive(Clone)]
 pub struct IndexerClient {
     base_url: String,
     http: Client,
@@ -94,6 +97,24 @@ impl IndexerClient {
         }
         let rows: Vec<PoolOpenIntentRow> = resp.json().await.context("decode open intents")?;
         Ok(rows)
+    }
+
+    pub async fn fetch_intent(&self, id: &str) -> Result<Option<PoolOpenIntentRow>> {
+        let url = format!("{}/pool_intents?id=eq.{}&limit=1", self.base_url, id);
+        let started = Instant::now();
+        let resp = self.http.get(&url).send().await;
+        let ok = resp
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        self.telemetry
+            .indexer_http_ms("pool_intents_by_id", ok, started.elapsed().as_millis() as u64);
+        let resp = resp.context("GET /pool_intents (by id)")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("indexer /pool_intents failed: {}", resp.status());
+        }
+        let rows: Vec<PoolOpenIntentRow> = resp.json().await.context("decode pool_intents")?;
+        Ok(rows.into_iter().next())
     }
 
     pub async fn latest_indexed_pool_block_number(&self) -> Result<Option<u64>> {

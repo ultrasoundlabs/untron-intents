@@ -363,6 +363,15 @@ pub async fn prepare_delegate_resource(
     telemetry: &SolverTelemetry,
     intent_specs: &[u8],
 ) -> Result<PreparedTronTx> {
+    prepare_delegate_resource_with_key(cfg, telemetry, cfg.private_key, intent_specs).await
+}
+
+pub async fn prepare_delegate_resource_with_key(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    private_key: [u8; 32],
+    intent_specs: &[u8],
+) -> Result<PreparedTronTx> {
     let intent = super::DelegateResourceIntent::abi_decode(intent_specs)
         .context("abi_decode DelegateResourceIntent")?;
 
@@ -380,7 +389,7 @@ pub async fn prepare_delegate_resource(
 
     let receiver = TronAddress::from_evm(intent.receiver);
 
-    let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
+    let wallet = TronWallet::new(private_key).context("init TronWallet")?;
     let mut grpc = connect_grpc(cfg).await?;
 
     let started = std::time::Instant::now();

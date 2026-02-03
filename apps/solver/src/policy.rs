@@ -446,6 +446,7 @@ mod tests {
             deadline,
             solved: false,
             funded: true,
+            settled: false,
             closed: false,
         }
     }
@@ -482,6 +483,23 @@ mod tests {
 
         assert!(!p.is_trigger_contract_allowed(denied));
         assert!(p.is_trigger_contract_allowed(Address::ZERO));
+    }
+
+    #[test]
+    fn delegate_lock_cost_scales_with_lock_period_and_principal() {
+        let mut c = cfg();
+        c.capital_lock_ppm_per_day = 100_000; // 10% / day (intentionally large for test)
+
+        let intent = DelegateResourceIntent {
+            receiver: Address::ZERO,
+            resource: 1,
+            balanceSun: U256::from(1_000_000u64), // 1 TRX (1e6 sun)
+            lockPeriod: U256::from(86_400u64),    // 1 day
+        };
+        let specs_hex = format!("0x{}", hex::encode(intent.abi_encode()));
+        let cost = estimate_cost_usd(&c, IntentType::DelegateResource, &specs_hex, 0.5).unwrap();
+        // principal = $0.50; 10%/day => $0.05
+        assert!((cost - 0.05).abs() < 1e-9, "cost={cost}");
     }
 
     #[tokio::test]

@@ -15,13 +15,43 @@ use std::time::Instant;
 use url::Url;
 
 alloy::sol! {
-    #[sol(rpc)]
-    interface IUntronIntents {
-        function USDT() external view returns (address);
-        function V3() external view returns (address);
-        function claimIntent(bytes32 id) external;
-        function proveIntentFill(bytes32 id, bytes[20] calldata blocks, bytes calldata encodedTx, bytes32[] calldata proof, uint256 index) external;
-    }
+	    struct Intent {
+	        uint8 intentType;
+	        bytes intentSpecs;
+	        address refundBeneficiary;
+	        address token;
+	        uint256 amount;
+	    }
+
+	    struct IntentState {
+	        Intent intent;
+	        uint256 solverClaimedAt;
+	        uint256 deadline;
+	        address solver;
+	        bool solved;
+	        bool funded;
+	        bool settled;
+	    }
+
+	    #[sol(rpc)]
+	    interface IUntronIntents {
+	        function USDT() external view returns (address);
+	        function V3() external view returns (address);
+	        function claimIntent(bytes32 id) external;
+	        function proveIntentFill(bytes32 id, bytes[20] calldata blocks, bytes calldata encodedTx, bytes32[] calldata proof, uint256 index) external;
+	        function intents(bytes32 id)
+	            external
+	            view
+	            returns (
+	                Intent intent,
+	                uint256 solverClaimedAt,
+	                uint256 deadline,
+	                address solver,
+	                bool solved,
+	                bool funded,
+	                bool settled
+	            );
+	    }
 
     #[sol(rpc)]
     interface IUntronV3 {
@@ -76,6 +106,14 @@ alloy::sol! {
 
 pub struct HubClient {
     inner: HubClientInner,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct HubIntentStatus {
+    pub closed: bool,
+    pub solved: bool,
+    pub funded: bool,
+    pub settled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -481,6 +519,26 @@ impl HubClient {
                     .await
             }
         }
+    }
+
+    pub async fn intent_status(&self, id: B256) -> Result<HubIntentStatus> {
+        let (pool, provider, telemetry) = match &self.inner {
+            HubClientInner::Eoa(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+            HubClientInner::Safe4337(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+        };
+        let pool = IUntronIntents::new(pool, provider);
+        let started = Instant::now();
+        let res = pool.intents(id).call().await;
+        let ok = res.is_ok();
+        telemetry.hub_rpc_ms("intent_state", ok, started.elapsed().as_millis() as u64);
+        let state = res.context("IUntronIntents.intents")?;
+
+        Ok(HubIntentStatus {
+            closed: state.deadline.is_zero(),
+            solved: state.solved,
+            funded: state.funded,
+            settled: state.settled,
+        })
     }
 
     pub async fn mock_set_transfer_tx(

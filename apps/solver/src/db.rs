@@ -25,6 +25,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
         11,
         include_str!("../db/migrations/0011_tron_tx_costs_intent_type.sql"),
     ),
+    (12, include_str!("../db/migrations/0012_ops_safety.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,31 @@ pub struct TronSignedTxRow {
     pub fee_limit_sun: Option<i64>,
     pub energy_required: Option<i64>,
     pub tx_size_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IntentSkipSummaryRow {
+    pub reason: String,
+    pub intent_type: Option<i16>,
+    pub skips: i64,
+    pub last_seen_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct IntentEmulationRow {
+    pub ok: bool,
+    pub reason: Option<String>,
+    pub contract: Option<Vec<u8>>,
+    pub selector: Option<Vec<u8>>,
+    pub checked_at_unix: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DelegateReservationRow {
+    pub owner_address: Vec<u8>,
+    pub resource: i16,
+    pub amount_sun: i64,
+    pub expires_in_secs: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,7 +232,16 @@ impl SolverDb {
                 select job_id \
                 from solver.jobs \
                 where \
-                    state in ('ready', 'claimed', 'tron_prepared', 'tron_sent', 'proof_built') \
+                    state in ( \
+                        'ready', \
+                        'claimed', \
+                        'tron_prepared', \
+                        'tron_sent', \
+                        'proof_built', \
+                        'proved', \
+                        'proved_waiting_funding', \
+                        'proved_waiting_settlement' \
+                    ) \
                     and next_retry_at <= now() \
                     and ( \
                         (lease_until is null or lease_until < now()) \
@@ -488,7 +523,7 @@ impl SolverDb {
         prove_tx_hash: [u8; 32],
     ) -> Result<()> {
         let n = sqlx::query(
-            "update solver.jobs set state='done', prove_tx_hash=$1, updated_at=now() \
+            "update solver.jobs set state='proved', prove_tx_hash=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now()",
         )
         .bind(prove_tx_hash.to_vec())
@@ -502,6 +537,14 @@ impl SolverDb {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }
         Ok(())
+    }
+
+    pub async fn record_job_state(&self, job_id: i64, leased_by: &str, state: &str) -> Result<()> {
+        self.update_job_state(job_id, leased_by, state).await
+    }
+
+    pub async fn record_done(&self, job_id: i64, leased_by: &str) -> Result<()> {
+        self.update_job_state(job_id, leased_by, "done").await
     }
 
     pub async fn record_retryable_error(
@@ -555,6 +598,264 @@ impl SolverDb {
             anyhow::bail!("lost job lease for job_id={job_id}");
         }
         Ok(())
+    }
+
+    pub async fn global_pause_active(&self) -> Result<Option<(i64, Option<String>)>> {
+        let row = sqlx::query(
+            "select \
+                extract(epoch from (pause_until - now()))::bigint as secs_left, \
+                reason \
+             from solver.global_pause \
+             where id = 1 and pause_until > now()",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.global_pause")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let secs_left: i64 = row.try_get("secs_left")?;
+        let reason: Option<String> = row.try_get("reason")?;
+        Ok(Some((secs_left.max(1), reason)))
+    }
+
+    pub async fn set_global_pause_for_secs(&self, secs: i64, reason: &str) -> Result<()> {
+        let secs = secs.max(1);
+        sqlx::query(
+            "insert into solver.global_pause(id, pause_until, reason, updated_at) \
+             values (1, now() + make_interval(secs => $1), $2, now()) \
+             on conflict (id) do update set \
+                pause_until = excluded.pause_until, \
+                reason = excluded.reason, \
+                updated_at = now()",
+        )
+        .bind(secs)
+        .bind(reason)
+        .execute(&self.pool)
+        .await
+        .context("upsert solver.global_pause")?;
+        Ok(())
+    }
+
+    pub async fn count_recent_fatal_errors(&self, window_secs: i64) -> Result<i64> {
+        let window_secs = window_secs.max(1);
+        let row = sqlx::query(
+            "select count(*)::bigint as n \
+             from solver.jobs \
+             where state = 'failed_fatal' \
+               and updated_at > now() - make_interval(secs => $1)",
+        )
+        .bind(window_secs)
+        .fetch_one(&self.pool)
+        .await
+        .context("count_recent_fatal_errors")?;
+        Ok(row.try_get::<i64, _>("n")?)
+    }
+
+    pub async fn rate_limit_claim_per_minute(
+        &self,
+        key: &str,
+        limit: u64,
+    ) -> Result<Option<i64>> {
+        if limit == 0 {
+            return Ok(None);
+        }
+        let limit_i64: i64 = limit.try_into().unwrap_or(i64::MAX);
+        let row = sqlx::query(
+            "with upsert as ( \
+                insert into solver.rate_limits(key, window_start, count, updated_at) \
+                values ($1, date_trunc('minute', now()), 1, now()) \
+                on conflict (key, window_start) do update set \
+                    count = solver.rate_limits.count + 1, \
+                    updated_at = now() \
+                returning count \
+             ), wait as ( \
+                select extract(epoch from (date_trunc('minute', now()) + interval '1 minute' - now()))::bigint as wait_secs \
+             ) \
+             select \
+                (select count from upsert) as count, \
+                (select wait_secs from wait) as wait_secs",
+        )
+        .bind(key)
+        .fetch_one(&self.pool)
+        .await
+        .context("rate_limit_claim_per_minute")?;
+        let count: i64 = row.try_get("count")?;
+        let wait_secs: i64 = row.try_get("wait_secs")?;
+        if count > limit_i64 {
+            return Ok(Some(wait_secs.max(1)));
+        }
+        Ok(None)
+    }
+
+    pub async fn upsert_intent_emulation(
+        &self,
+        intent_id: [u8; 32],
+        intent_type: i16,
+        ok: bool,
+        reason: Option<&str>,
+        contract: Option<&[u8]>,
+        selector: Option<&[u8]>,
+    ) -> Result<()> {
+        sqlx::query(
+            "insert into solver.intent_emulations(intent_id, intent_type, ok, reason, contract, selector, checked_at, updated_at) \
+             values ($1, $2, $3, $4, $5, $6, now(), now()) \
+             on conflict (intent_id) do update set \
+                intent_type = excluded.intent_type, \
+                ok = excluded.ok, \
+                reason = excluded.reason, \
+                contract = excluded.contract, \
+                selector = excluded.selector, \
+                checked_at = now(), \
+                updated_at = now()",
+        )
+        .bind(intent_id.to_vec())
+        .bind(intent_type)
+        .bind(ok)
+        .bind(reason)
+        .bind(contract.map(|b| b.to_vec()))
+        .bind(selector.map(|b| b.to_vec()))
+        .execute(&self.pool)
+        .await
+        .context("upsert solver.intent_emulations")?;
+        Ok(())
+    }
+
+    pub async fn get_intent_emulation(
+        &self,
+        intent_id: [u8; 32],
+    ) -> Result<Option<IntentEmulationRow>> {
+        let row = sqlx::query(
+            "select \
+                ok, \
+                reason, \
+                contract, \
+                selector, \
+                extract(epoch from checked_at)::bigint as checked_at_unix \
+             from solver.intent_emulations \
+             where intent_id = $1",
+        )
+        .bind(intent_id.to_vec())
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.intent_emulations")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(IntentEmulationRow {
+            ok: row.try_get("ok")?,
+            reason: row.try_get("reason")?,
+            contract: row.try_get("contract")?,
+            selector: row.try_get("selector")?,
+            checked_at_unix: row.try_get("checked_at_unix")?,
+        }))
+    }
+
+    pub async fn cleanup_expired_delegate_reservations(&self) -> Result<u64> {
+        let n = sqlx::query("delete from solver.delegate_reservations where expires_at <= now()")
+            .execute(&self.pool)
+            .await
+            .context("cleanup_expired_delegate_reservations")?
+            .rows_affected();
+        Ok(n)
+    }
+
+    pub async fn get_delegate_reservation_for_job(
+        &self,
+        job_id: i64,
+    ) -> Result<Option<DelegateReservationRow>> {
+        let row = sqlx::query(
+            "select \
+                owner_address, \
+                resource, \
+                amount_sun, \
+                extract(epoch from (expires_at - now()))::bigint as expires_in_secs \
+             from solver.delegate_reservations \
+             where job_id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.delegate_reservations by job_id")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let expires_in_secs: i64 = row.try_get("expires_in_secs")?;
+        Ok(Some(DelegateReservationRow {
+            owner_address: row.try_get("owner_address")?,
+            resource: row.try_get("resource")?,
+            amount_sun: row.try_get("amount_sun")?,
+            expires_in_secs: expires_in_secs.max(0),
+        }))
+    }
+
+    pub async fn upsert_delegate_reservation_for_job(
+        &self,
+        job_id: i64,
+        owner_address: &[u8],
+        resource: i16,
+        amount_sun: i64,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        let ttl_secs = ttl_secs.max(1);
+        sqlx::query(
+            "insert into solver.delegate_reservations(job_id, owner_address, resource, amount_sun, expires_at, updated_at) \
+             values ($1, $2, $3, $4, now() + make_interval(secs => $5), now()) \
+             on conflict (job_id) do update set \
+                owner_address = excluded.owner_address, \
+                resource = excluded.resource, \
+                amount_sun = excluded.amount_sun, \
+                expires_at = excluded.expires_at, \
+                updated_at = now()",
+        )
+        .bind(job_id)
+        .bind(owner_address.to_vec())
+        .bind(resource)
+        .bind(amount_sun)
+        .bind(ttl_secs)
+        .execute(&self.pool)
+        .await
+        .context("upsert solver.delegate_reservations")?;
+        Ok(())
+    }
+
+    pub async fn release_delegate_reservation_for_job(&self, job_id: i64) -> Result<()> {
+        sqlx::query("delete from solver.delegate_reservations where job_id = $1")
+            .bind(job_id)
+            .execute(&self.pool)
+            .await
+            .context("delete solver.delegate_reservations by job_id")?;
+        Ok(())
+    }
+
+    pub async fn sum_delegate_reserved_sun_by_owner(
+        &self,
+        resource: i16,
+    ) -> Result<Vec<(Vec<u8>, i64)>> {
+        let rows = sqlx::query(
+            "select owner_address, sum(amount_sun)::bigint as reserved_sun \
+             from solver.delegate_reservations \
+             where expires_at > now() and resource = $1 \
+             group by owner_address",
+        )
+        .bind(resource)
+        .fetch_all(&self.pool)
+        .await
+        .context("sum_delegate_reserved_sun_by_owner")?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let owner: Vec<u8> = r.try_get("owner_address")?;
+            let reserved: i64 = r.try_get("reserved_sun")?;
+            out.push((owner, reserved));
+        }
+        Ok(out)
     }
 
     pub async fn get_hub_userop(
@@ -937,6 +1238,43 @@ impl SolverDb {
         Ok(())
     }
 
+    pub async fn intent_skip_summary(
+        &self,
+        since_secs: i64,
+        limit: i64,
+    ) -> Result<Vec<IntentSkipSummaryRow>> {
+        let since_secs = since_secs.max(1).min(365 * 24 * 3600);
+        let limit = limit.max(1).min(1_000);
+        let rows = sqlx::query(
+            "select \
+                reason, \
+                intent_type, \
+                sum(skip_count)::bigint as skips, \
+                extract(epoch from max(last_seen_at))::bigint as last_seen_unix \
+             from solver.intent_skips \
+             where last_seen_at > now() - make_interval(secs => $1) \
+             group by reason, intent_type \
+             order by skips desc, last_seen_unix desc \
+             limit $2",
+        )
+        .bind(since_secs)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .context("intent_skip_summary")?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(IntentSkipSummaryRow {
+                reason: r.try_get("reason")?,
+                intent_type: r.try_get("intent_type")?,
+                skips: r.try_get("skips")?,
+                last_seen_unix: r.try_get("last_seen_unix")?,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn upsert_tron_tx_costs(
         &self,
         job_id: i64,
@@ -1060,6 +1398,18 @@ impl SolverDb {
         selector: Option<[u8; 4]>,
         error: &str,
     ) -> Result<(i32, i64)> {
+        self.breaker_record_failure_weighted(contract, selector, error, 1)
+            .await
+    }
+
+    pub async fn breaker_record_failure_weighted(
+        &self,
+        contract: Address,
+        selector: Option<[u8; 4]>,
+        error: &str,
+        weight: i32,
+    ) -> Result<(i32, i64)> {
+        let weight = weight.clamp(1, 100);
         let selector = selector.map(|s| s.to_vec());
         let mut tx = self.pool.begin().await.context("begin breaker tx")?;
 
@@ -1073,7 +1423,7 @@ impl SolverDb {
         .await
         .context("select breaker fail_count")?;
 
-        let next = current.unwrap_or(0).saturating_add(1);
+        let next = current.unwrap_or(0).saturating_add(weight);
         let cooldown_secs = breaker_backoff_secs(next);
 
         sqlx::query(

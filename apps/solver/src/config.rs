@@ -151,6 +151,25 @@ pub struct JobConfig {
     /// Maximum USDT pulled in a single pre-transaction (token base units). 0 = unlimited.
     pub consolidation_max_per_tx_usdt_pull_amount: u64,
 
+    /// Rate limit: max claim submissions per minute (global). 0 = unlimited.
+    pub rate_limit_claims_per_minute_global: u64,
+    /// Rate limit: max claim submissions per minute per intent type. 0 = unlimited.
+    pub rate_limit_claims_per_minute_trx_transfer: u64,
+    pub rate_limit_claims_per_minute_usdt_transfer: u64,
+    pub rate_limit_claims_per_minute_delegate_resource: u64,
+    pub rate_limit_claims_per_minute_trigger_smart_contract: u64,
+
+    /// Optional auto-pause when fatal errors spike. 0 disables auto-pause.
+    pub global_pause_fatal_threshold: u64,
+    pub global_pause_window_secs: u64,
+    pub global_pause_duration_secs: u64,
+
+    /// If Tron emulation says "ok" but tx fails onchain, apply this multiplier to breaker fail_count.
+    pub breaker_mismatch_penalty: u64,
+
+    /// Capacity reservation TTL for delegate jobs (seconds).
+    pub delegate_reservation_ttl_secs: u64,
+
     pub controller_rebalance_threshold_usdt: String,
     pub controller_rebalance_keep_usdt: String,
 
@@ -274,6 +293,30 @@ struct Env {
     solver_consolidation_max_total_usdt_pull_amount: u64,
     #[serde(default)]
     solver_consolidation_max_per_tx_usdt_pull_amount: u64,
+
+    #[serde(default)]
+    solver_rate_limit_claims_per_minute_global: u64,
+    #[serde(default)]
+    solver_rate_limit_claims_per_minute_trx_transfer: u64,
+    #[serde(default)]
+    solver_rate_limit_claims_per_minute_usdt_transfer: u64,
+    #[serde(default)]
+    solver_rate_limit_claims_per_minute_delegate_resource: u64,
+    #[serde(default)]
+    solver_rate_limit_claims_per_minute_trigger_smart_contract: u64,
+
+    #[serde(default)]
+    solver_global_pause_fatal_threshold: u64,
+    #[serde(default)]
+    solver_global_pause_window_secs: u64,
+    #[serde(default)]
+    solver_global_pause_duration_secs: u64,
+
+    #[serde(default)]
+    solver_breaker_mismatch_penalty: u64,
+
+    #[serde(default)]
+    solver_delegate_reservation_ttl_secs: u64,
 
     controller_rebalance_threshold_usdt: String,
 
@@ -419,6 +462,16 @@ impl Default for Env {
             solver_consolidation_max_per_tx_trx_pull_sun: 0,
             solver_consolidation_max_total_usdt_pull_amount: 0,
             solver_consolidation_max_per_tx_usdt_pull_amount: 0,
+            solver_rate_limit_claims_per_minute_global: 0,
+            solver_rate_limit_claims_per_minute_trx_transfer: 0,
+            solver_rate_limit_claims_per_minute_usdt_transfer: 0,
+            solver_rate_limit_claims_per_minute_delegate_resource: 0,
+            solver_rate_limit_claims_per_minute_trigger_smart_contract: 0,
+            solver_global_pause_fatal_threshold: 0,
+            solver_global_pause_window_secs: 300,
+            solver_global_pause_duration_secs: 300,
+            solver_breaker_mismatch_penalty: 2,
+            solver_delegate_reservation_ttl_secs: 600,
             controller_rebalance_threshold_usdt: "0".to_string(),
             controller_rebalance_keep_usdt: "1".to_string(),
             pull_liquidity_ppm: 500_000,
@@ -855,6 +908,20 @@ pub fn load_config() -> Result<AppConfig> {
                 .solver_consolidation_max_total_usdt_pull_amount,
             consolidation_max_per_tx_usdt_pull_amount: env
                 .solver_consolidation_max_per_tx_usdt_pull_amount,
+            rate_limit_claims_per_minute_global: env.solver_rate_limit_claims_per_minute_global,
+            rate_limit_claims_per_minute_trx_transfer: env
+                .solver_rate_limit_claims_per_minute_trx_transfer,
+            rate_limit_claims_per_minute_usdt_transfer: env
+                .solver_rate_limit_claims_per_minute_usdt_transfer,
+            rate_limit_claims_per_minute_delegate_resource: env
+                .solver_rate_limit_claims_per_minute_delegate_resource,
+            rate_limit_claims_per_minute_trigger_smart_contract: env
+                .solver_rate_limit_claims_per_minute_trigger_smart_contract,
+            global_pause_fatal_threshold: env.solver_global_pause_fatal_threshold,
+            global_pause_window_secs: env.solver_global_pause_window_secs.max(1),
+            global_pause_duration_secs: env.solver_global_pause_duration_secs.max(1),
+            breaker_mismatch_penalty: env.solver_breaker_mismatch_penalty.max(1).min(100),
+            delegate_reservation_ttl_secs: env.solver_delegate_reservation_ttl_secs.max(30),
             controller_rebalance_threshold_usdt: env.controller_rebalance_threshold_usdt,
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
             pull_liquidity_ppm: env.pull_liquidity_ppm.min(1_000_000),

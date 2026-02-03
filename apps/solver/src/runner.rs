@@ -45,6 +45,7 @@ pub struct Solver {
 struct JobCtx {
     cfg: AppConfig,
     db: SolverDb,
+    indexer: IndexerClient,
     hub: Arc<HubClient>,
     tron: TronBackend,
     instance_id: String,
@@ -211,6 +212,7 @@ impl Solver {
 
     async fn tick(&mut self) -> Result<()> {
         self.indexer.health().await?;
+        let _ = self.db.cleanup_expired_delegate_reservations().await;
 
         // Indexer lag guard: do not claim if we're too far behind head.
         match self.indexer.latest_indexed_pool_block_number().await {
@@ -264,6 +266,7 @@ impl Solver {
         let ctx = JobCtx {
             cfg: self.cfg.clone(),
             db: self.db.clone(),
+            indexer: self.indexer.clone(),
             hub: self.hub.clone(),
             tron: self.tron.clone(),
             instance_id: self.instance_id.clone(),
@@ -407,6 +410,27 @@ impl Solver {
                     .tron
                     .precheck_emulation(self.hub.as_ref(), ty, &specs)
                     .await;
+                if let Ok(id) = parse_b256(&row.id) {
+                    let (contract, selector) = match ty {
+                        IntentType::TriggerSmartContract => decode_trigger_contract_and_selector(&specs)
+                            .map(|(c, s)| (Some(c), s))
+                            .unwrap_or((None, None)),
+                        _ => (None, None),
+                    };
+                    let contract_bytes = contract.map(|c| c.as_slice().to_vec());
+                    let selector_bytes = selector.map(|s| s.to_vec());
+                    let _ = self
+                        .db
+                        .upsert_intent_emulation(
+                            b256_to_bytes32(id),
+                            row.intent_type,
+                            emu.ok,
+                            emu.reason.as_deref(),
+                            contract_bytes.as_deref(),
+                            selector_bytes.as_deref(),
+                        )
+                        .await;
+                }
                 if !emu.ok {
                     if let Ok(id) = parse_b256(&row.id) {
                         let _ = self
@@ -444,28 +468,64 @@ impl Solver {
                     _ => tron::protocol::ResourceCode::Energy,
                 };
 
-                if let Ok(Some(available)) = self.tron.delegated_resource_available_sun(rc).await {
-                    let needed = i64::try_from(intent.balanceSun).unwrap_or(i64::MAX);
-                    if available < needed {
-                        if let Ok(id) = parse_b256(&row.id) {
-                            let details = serde_json::json!({
-                                "available_sun": available,
-                                "needed_sun": needed,
-                                "resource": intent.resource,
-                            })
-                            .to_string();
-                            let _ = self
-                                .db
-                                .upsert_intent_skip(
-                                    b256_to_bytes32(id),
-                                    row.intent_type,
-                                    "delegate_capacity_insufficient",
-                                    Some(&details),
-                                )
-                                .await;
-                        }
-                        return Ok(false);
+                let needed = i64::try_from(intent.balanceSun).unwrap_or(i64::MAX);
+                let by_key = match self.tron.delegate_available_sun_by_key(rc).await {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(err = %err, "delegate capacity check failed; continuing");
+                        return Ok(true);
                     }
+                };
+                let reserved = match self
+                    .db
+                    .sum_delegate_reserved_sun_by_owner(i16::from(intent.resource))
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(err = %err, "delegate reservation sum failed; continuing");
+                        return Ok(true);
+                    }
+                };
+                let mut reserved_map = std::collections::HashMap::<Vec<u8>, i64>::new();
+                for (owner, amt) in reserved {
+                    reserved_map.insert(owner, amt);
+                }
+
+                let mut owners = Vec::with_capacity(by_key.len());
+                let mut avail = Vec::with_capacity(by_key.len());
+                let mut resv = Vec::with_capacity(by_key.len());
+                for (addr, a) in &by_key {
+                    let owner = addr.prefixed_bytes().to_vec();
+                    let r = *reserved_map.get(&owner).unwrap_or(&0);
+                    owners.push(hex::encode(&owner));
+                    avail.push(*a);
+                    resv.push(r);
+                }
+
+                if crate::tron_backend::select_delegate_executor_index(&avail, &resv, needed)
+                    .is_none()
+                {
+                    if let Ok(id) = parse_b256(&row.id) {
+                        let details = serde_json::json!({
+                            "needed_sun": needed,
+                            "resource": intent.resource,
+                            "owners": owners,
+                            "available_sun": avail,
+                            "reserved_sun": resv,
+                        })
+                        .to_string();
+                        let _ = self
+                            .db
+                            .upsert_intent_skip(
+                                b256_to_bytes32(id),
+                                row.intent_type,
+                                "delegate_capacity_insufficient",
+                                Some(&details),
+                            )
+                            .await;
+                    }
+                    return Ok(false);
                 }
             }
         }
@@ -537,6 +597,178 @@ impl Solver {
     }
 }
 
+async fn record_fatal(ctx: &JobCtx, job: &SolverJob, msg: &str) -> Result<()> {
+    ctx.db
+        .record_fatal_error(job.job_id, &ctx.instance_id, msg)
+        .await?;
+    let _ = ctx
+        .db
+        .release_delegate_reservation_for_job(job.job_id)
+        .await;
+
+    if ctx.cfg.jobs.global_pause_fatal_threshold > 0 {
+        let window = i64::try_from(ctx.cfg.jobs.global_pause_window_secs).unwrap_or(300);
+        let n = ctx.db.count_recent_fatal_errors(window).await.unwrap_or(0);
+        if n >= i64::try_from(ctx.cfg.jobs.global_pause_fatal_threshold).unwrap_or(i64::MAX) {
+            let secs = i64::try_from(ctx.cfg.jobs.global_pause_duration_secs).unwrap_or(300);
+            let reason = format!("auto_pause_fatal_threshold_exceeded n={n}");
+            let _ = ctx.db.set_global_pause_for_secs(secs, &reason).await;
+        }
+    }
+
+    Ok(())
+}
+
+async fn enforce_claim_rate_limits(ctx: &JobCtx, ty: IntentType) -> Result<Option<i64>> {
+    if let Some(wait) = ctx
+        .db
+        .rate_limit_claim_per_minute(
+            "claim:global",
+            ctx.cfg.jobs.rate_limit_claims_per_minute_global,
+        )
+        .await?
+    {
+        ctx.telemetry.claim_rate_limited("claim:global");
+        return Ok(Some(wait));
+    }
+
+    let (k, limit) = match ty {
+        IntentType::TrxTransfer => (
+            "claim:trx_transfer",
+            ctx.cfg.jobs.rate_limit_claims_per_minute_trx_transfer,
+        ),
+        IntentType::UsdtTransfer => (
+            "claim:usdt_transfer",
+            ctx.cfg.jobs.rate_limit_claims_per_minute_usdt_transfer,
+        ),
+        IntentType::DelegateResource => (
+            "claim:delegate_resource",
+            ctx.cfg.jobs.rate_limit_claims_per_minute_delegate_resource,
+        ),
+        IntentType::TriggerSmartContract => (
+            "claim:trigger_smart_contract",
+            ctx.cfg.jobs.rate_limit_claims_per_minute_trigger_smart_contract,
+        ),
+    };
+    if let Some(wait) = ctx.db.rate_limit_claim_per_minute(k, limit).await? {
+        ctx.telemetry.claim_rate_limited(k);
+        return Ok(Some(wait));
+    }
+    Ok(None)
+}
+
+async fn ensure_delegate_reservation(ctx: &JobCtx, job: &SolverJob) -> Result<[u8; 32]> {
+    let intent = crate::tron_backend::DelegateResourceIntent::abi_decode(&job.intent_specs)
+        .context("decode DelegateResourceIntent")?;
+    let needed = i64::try_from(intent.balanceSun).unwrap_or(i64::MAX);
+    let resource_i16 = i16::from(intent.resource);
+    let rc = match intent.resource {
+        0 => tron::protocol::ResourceCode::Bandwidth,
+        1 => tron::protocol::ResourceCode::Energy,
+        2 => tron::protocol::ResourceCode::TronPower,
+        other => anyhow::bail!("unsupported DelegateResourceIntent.resource: {other}"),
+    };
+
+    // If already reserved, just refresh TTL and return the chosen key.
+    if let Some(existing) = ctx.db.get_delegate_reservation_for_job(job.job_id).await? {
+        ctx.db
+            .upsert_delegate_reservation_for_job(
+                job.job_id,
+                &existing.owner_address,
+                existing.resource,
+                existing.amount_sun,
+                i64::try_from(ctx.cfg.jobs.delegate_reservation_ttl_secs).unwrap_or(600),
+            )
+            .await?;
+        return ctx
+            .tron
+            .private_key_for_owner(&existing.owner_address)
+            .context("delegate reservation owner not in configured keys");
+    }
+
+    let by_key = ctx.tron.delegate_available_sun_by_key(rc).await?;
+    let reserved = ctx
+        .db
+        .sum_delegate_reserved_sun_by_owner(resource_i16)
+        .await?;
+    let mut reserved_map = std::collections::HashMap::<Vec<u8>, i64>::new();
+    for (owner, amt) in reserved {
+        reserved_map.insert(owner, amt);
+    }
+
+    let mut owners = Vec::with_capacity(by_key.len());
+    let mut avail = Vec::with_capacity(by_key.len());
+    let mut resv = Vec::with_capacity(by_key.len());
+    for (addr, a) in &by_key {
+        let owner = addr.prefixed_bytes().to_vec();
+        let r = *reserved_map.get(&owner).unwrap_or(&0);
+        owners.push(owner);
+        avail.push(*a);
+        resv.push(r);
+    }
+
+    let Some(idx) = crate::tron_backend::select_delegate_executor_index(&avail, &resv, needed)
+    else {
+        ctx.telemetry.delegate_reservation_conflict();
+        anyhow::bail!("delegate_capacity_insufficient");
+    };
+
+    let owner = owners[idx].clone();
+    ctx.db
+        .upsert_delegate_reservation_for_job(
+            job.job_id,
+            &owner,
+            resource_i16,
+            needed,
+            i64::try_from(ctx.cfg.jobs.delegate_reservation_ttl_secs).unwrap_or(600),
+        )
+        .await?;
+    ctx.tron
+        .private_key_for_owner(&owner)
+        .context("delegate reservation owner not in configured keys")
+}
+
+async fn finalize_after_prove(ctx: &JobCtx, job: &SolverJob) -> Result<()> {
+    let id = B256::from_slice(&job.intent_id);
+    // After proving, the hub state is the source of truth. Poll briefly so downstream tooling/tests
+    // don't depend on “one extra solver tick”.
+    for _ in 0..25 {
+        match ctx.hub.intent_status(id).await {
+            Ok(status) => {
+                if status.closed || (status.solved && status.funded && status.settled) {
+                    ctx.db.record_done(job.job_id, &ctx.instance_id).await?;
+                    ctx.telemetry
+                        .job_state_transition(job.intent_type, "proved", "done");
+                    return Ok(());
+                }
+                if status.solved && !status.funded {
+                    ctx.db
+                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
+                        .await?;
+                    ctx.telemetry
+                        .job_state_transition(job.intent_type, "proved", "proved_waiting_funding");
+                    return Ok(());
+                }
+                if status.solved && status.funded && !status.settled {
+                    ctx.db
+                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
+                        .await?;
+                    ctx.telemetry
+                        .job_state_transition(job.intent_type, "proved", "proved_waiting_settlement");
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
     let id = B256::from_slice(&job.intent_id);
     let ty = IntentType::from_i16(job.intent_type)?;
@@ -551,6 +783,22 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
     match job.state.as_str() {
         "ready" => {
             tracing::info!(id = %id, intent_type = job.intent_type, "claiming intent");
+            if let Some((secs_left, reason)) = ctx.db.global_pause_active().await? {
+                ctx.telemetry.global_paused();
+                let msg = format!(
+                    "global_pause: {}",
+                    reason.unwrap_or_else(|| "paused".to_string())
+                );
+                ctx.db
+                    .record_retryable_error(
+                        job.job_id,
+                        &ctx.instance_id,
+                        &msg,
+                        std::time::Duration::from_secs(u64::try_from(secs_left).unwrap_or(1)),
+                    )
+                    .await?;
+                return Ok(());
+            }
             // Ensure claim deposit can be pulled. We do this here (rather than at startup) so:
             // - the solver starts even if AA infrastructure is temporarily down
             // - retries are controlled by the job state machine
@@ -590,37 +838,66 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 return Ok(());
             }
             match ctx.cfg.hub.tx_mode {
-                HubTxMode::Eoa => match ctx.hub.claim_intent(id).await {
-                    Ok(receipt) => {
-                        ctx.db
-                            .record_claim(
-                                job.job_id,
-                                &ctx.instance_id,
-                                b256_to_bytes32(receipt.transaction_hash),
-                            )
-                            .await?;
-                        Ok(())
-                    }
-                    Err(err) => {
-                        let msg = err.to_string();
-                        // If already claimed, don't keep retrying.
-                        if msg.contains("AlreadyClaimed") {
-                            ctx.db
-                                .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
-                                .await?;
-                            return Ok(());
-                        }
+                HubTxMode::Eoa => {
+                    if let Some(wait) = enforce_claim_rate_limits(&ctx, ty).await? {
                         ctx.db
                             .record_retryable_error(
                                 job.job_id,
                                 &ctx.instance_id,
-                                &msg,
-                                retry_in(job.attempts),
+                                "claim_rate_limited",
+                                std::time::Duration::from_secs(u64::try_from(wait).unwrap_or(60)),
                             )
                             .await?;
-                        Ok(())
+                        return Ok(());
                     }
-                },
+                    if ty == IntentType::DelegateResource && ctx.cfg.tron.mode == TronMode::Grpc {
+                        if let Err(err) = ensure_delegate_reservation(&ctx, &job).await {
+                            let msg = format!("delegate reservation failed: {err:#}");
+                            ctx.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &ctx.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+
+                    match ctx.hub.claim_intent(id).await {
+                        Ok(receipt) => {
+                            ctx.db
+                                .record_claim(
+                                    job.job_id,
+                                    &ctx.instance_id,
+                                    b256_to_bytes32(receipt.transaction_hash),
+                                )
+                                .await?;
+                            ctx.telemetry
+                                .job_state_transition(job.intent_type, "ready", "claimed");
+                            Ok(())
+                        }
+                        Err(err) => {
+                            let msg = err.to_string();
+                            // If already claimed, don't keep retrying.
+                        if msg.contains("AlreadyClaimed") {
+                                ctx.telemetry.job_state_transition(job.intent_type, "ready", "failed_fatal");
+                                record_fatal(&ctx, &job, &msg).await?;
+                                return Ok(());
+                        }
+                            ctx.db
+                                .record_retryable_error(
+                                    job.job_id,
+                                    &ctx.instance_id,
+                                    &msg,
+                                    retry_in(job.attempts),
+                                )
+                                .await?;
+                            Ok(())
+                        }
+                    }
+                }
                 HubTxMode::Safe4337 => {
                     let kind = HubUserOpKind::Claim;
                     let mut row = ctx.db.get_hub_userop(job.job_id, kind).await?;
@@ -648,6 +925,33 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
 
                     match row {
                         None => {
+                            if let Some(wait) = enforce_claim_rate_limits(&ctx, ty).await? {
+                                ctx.db
+                                    .record_retryable_error(
+                                        job.job_id,
+                                        &ctx.instance_id,
+                                        "claim_rate_limited",
+                                        std::time::Duration::from_secs(
+                                            u64::try_from(wait).unwrap_or(60),
+                                        ),
+                                    )
+                                    .await?;
+                                return Ok(());
+                            }
+                            if ty == IntentType::DelegateResource && ctx.cfg.tron.mode == TronMode::Grpc {
+                                if let Err(err) = ensure_delegate_reservation(&ctx, &job).await {
+                                    let msg = format!("delegate reservation failed: {err:#}");
+                                    ctx.db
+                                        .record_retryable_error(
+                                            job.job_id,
+                                            &ctx.instance_id,
+                                            &msg,
+                                            retry_in(job.attempts),
+                                        )
+                                        .await?;
+                                    return Ok(());
+                                }
+                            }
                             let _permit = ctx
                                 .hub_userop_submit_sem
                                 .acquire()
@@ -732,6 +1036,35 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                         }
                         Some(r) => {
                             if r.userop_hash.is_none() && r.state == "prepared" {
+                                if let Some(wait) = enforce_claim_rate_limits(&ctx, ty).await? {
+                                    ctx.db
+                                        .record_retryable_error(
+                                            job.job_id,
+                                            &ctx.instance_id,
+                                            "claim_rate_limited",
+                                            std::time::Duration::from_secs(
+                                                u64::try_from(wait).unwrap_or(60),
+                                            ),
+                                        )
+                                        .await?;
+                                    return Ok(());
+                                }
+                                if ty == IntentType::DelegateResource && ctx.cfg.tron.mode == TronMode::Grpc {
+                                    if let Err(err) =
+                                        ensure_delegate_reservation(&ctx, &job).await
+                                    {
+                                        let msg = format!("delegate reservation failed: {err:#}");
+                                        ctx.db
+                                            .record_retryable_error(
+                                                job.job_id,
+                                                &ctx.instance_id,
+                                                &msg,
+                                                retry_in(job.attempts),
+                                            )
+                                            .await?;
+                                        return Ok(());
+                                    }
+                                }
                                 let _permit = ctx
                                     .hub_userop_submit_sem
                                     .acquire()
@@ -838,6 +1171,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         b256_to_bytes32(tx_hash),
                                     )
                                     .await?;
+                                ctx.telemetry.job_state_transition(job.intent_type, "ready", "claimed");
                             } else {
                                 let msg = format!(
                                     "claim userop failed: {:?}",
@@ -852,9 +1186,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     )
                                     .await
                                     .ok();
-                                ctx.db
-                                    .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
-                                    .await?;
+                                record_fatal(&ctx, &job, &msg).await?;
                             }
                             Ok(())
                         }
@@ -1025,11 +1357,37 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                         .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs)
                         .await
                         .context("prepare trigger smart contract"),
-                    IntentType::DelegateResource => ctx
-                        .tron
-                        .prepare_delegate_resource(ctx.hub.as_ref(), id, &job.intent_specs)
-                        .await
-                        .context("prepare delegate resource"),
+                    IntentType::DelegateResource => {
+                        let pk = match ctx.db.get_delegate_reservation_for_job(job.job_id).await? {
+                            Some(r) => {
+                                // Refresh TTL while in-flight.
+                                let _ = ctx
+                                    .db
+                                    .upsert_delegate_reservation_for_job(
+                                        job.job_id,
+                                        &r.owner_address,
+                                        r.resource,
+                                        r.amount_sun,
+                                        i64::try_from(ctx.cfg.jobs.delegate_reservation_ttl_secs)
+                                            .unwrap_or(600),
+                                    )
+                                    .await;
+                                ctx.tron
+                                    .private_key_for_owner(&r.owner_address)
+                                    .context("delegate reservation owner not in configured keys")?
+                            }
+                            None => ensure_delegate_reservation(&ctx, &job).await?,
+                        };
+                        ctx.tron
+                            .prepare_delegate_resource_with_key(
+                                ctx.hub.as_ref(),
+                                id,
+                                pk,
+                                &job.intent_specs,
+                            )
+                            .await
+                            .context("prepare delegate resource (reserved key)")
+                    }
                     _ => unreachable!(),
                 };
 
@@ -1204,6 +1562,13 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 }
             }
 
+            if ty == IntentType::DelegateResource {
+                let _ = ctx
+                    .db
+                    .release_delegate_reservation_for_job(job.job_id)
+                    .await;
+            }
+
             ctx.db
                 .record_tron_txid(job.job_id, &ctx.instance_id, final_txid)
                 .await?;
@@ -1253,37 +1618,38 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                             };
 
                             if contract != alloy::primitives::Address::ZERO {
-                                let mut penalty = 1;
-                                if ctx.cfg.tron.emulation_enabled
-                                    && ctx.cfg.tron.mode == TronMode::Grpc
+                                let mut mismatch = false;
+                                if ctx.cfg.tron.emulation_enabled && ctx.cfg.tron.mode == TronMode::Grpc
                                 {
-                                    let emu = ctx
-                                        .tron
-                                        .precheck_emulation(ctx.hub.as_ref(), ty, &job.intent_specs)
-                                        .await;
-                                    if emu.ok {
-                                        penalty = 2;
+                                    if let Ok(Some(emu)) = ctx.db.get_intent_emulation(job.intent_id).await
+                                    {
+                                        mismatch = emu.ok;
                                     }
                                 }
+                                if mismatch {
+                                    ctx.telemetry.emulation_mismatch();
+                                }
 
-                                let err_msg = if penalty > 1 {
+                                let weight: i32 = if mismatch {
+                                    i32::try_from(ctx.cfg.jobs.breaker_mismatch_penalty)
+                                        .unwrap_or(2)
+                                        .max(1)
+                                } else {
+                                    1
+                                };
+                                let err_msg = if mismatch {
                                     format!("onchain_fail_after_emulation_ok: {msg}")
                                 } else {
                                     msg.clone()
                                 };
-
-                                for _ in 0..penalty {
-                                    let _ = ctx
-                                        .db
-                                        .breaker_record_failure(contract, selector, &err_msg)
-                                        .await;
-                                }
+                                let _ = ctx
+                                    .db
+                                    .breaker_record_failure_weighted(contract, selector, &err_msg, weight)
+                                    .await;
                             }
                         }
 
-                        ctx.db
-                            .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
-                            .await?;
+                        record_fatal(&ctx, &job, &msg).await?;
                         return Ok(());
                     }
                     ctx.db
@@ -1333,6 +1699,8 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
             ctx.db
                 .record_proof_built(job.job_id, &ctx.instance_id)
                 .await?;
+            ctx.telemetry
+                .job_state_transition(job.intent_type, "tron_sent", "proof_built");
             Ok(())
         }
         "proof_built" => {
@@ -1369,6 +1737,9 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                 b256_to_bytes32(receipt.transaction_hash),
                             )
                             .await?;
+                        ctx.telemetry
+                            .job_state_transition(job.intent_type, "proof_built", "proved");
+                        let _ = finalize_after_prove(&ctx, &job).await;
                         Ok(())
                     }
                     Err(err) => {
@@ -1602,6 +1973,9 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         b256_to_bytes32(tx_hash),
                                     )
                                     .await?;
+                                ctx.telemetry
+                                    .job_state_transition(job.intent_type, "proof_built", "proved");
+                                let _ = finalize_after_prove(&ctx, &job).await;
                             } else {
                                 let msg = format!(
                                     "prove userop failed: {:?}",
@@ -1616,9 +1990,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     )
                                     .await
                                     .ok();
-                                ctx.db
-                                    .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
-                                    .await?;
+                                record_fatal(&ctx, &job, &msg).await?;
                             }
                             Ok(())
                         }
@@ -1649,15 +2021,64 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 }
             }
         }
+        "proved" | "proved_waiting_funding" | "proved_waiting_settlement" => {
+            // A proved intent may not be paid immediately (virtual receiver intents), or may require
+            // a separate settle. We use indexer truth to decide when we're really "done".
+            let intent_id_hex = format!("0x{}", hex::encode(job.intent_id));
+            match ctx.indexer.fetch_intent(&intent_id_hex).await {
+                Ok(Some(row)) => {
+                    let from_state: &'static str = match job.state.as_str() {
+                        "proved" => "proved",
+                        "proved_waiting_funding" => "proved_waiting_funding",
+                        "proved_waiting_settlement" => "proved_waiting_settlement",
+                        _ => "proved",
+                    };
+                    if row.closed {
+                        ctx.db.record_done(job.job_id, &ctx.instance_id).await?;
+                        ctx.telemetry
+                            .job_state_transition(job.intent_type, from_state, "done");
+                        return Ok(());
+                    }
+                    if row.solved && row.funded && row.settled {
+                        ctx.db.record_done(job.job_id, &ctx.instance_id).await?;
+                        ctx.telemetry
+                            .job_state_transition(job.intent_type, from_state, "done");
+                        return Ok(());
+                    }
+                    if row.solved && !row.funded {
+                        if job.state != "proved_waiting_funding" {
+                            ctx.db
+                                .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
+                                .await?;
+                            ctx.telemetry
+                                .job_state_transition(job.intent_type, from_state, "proved_waiting_funding");
+                        }
+                        return Ok(());
+                    }
+                    if row.solved && row.funded && !row.settled {
+                        if job.state != "proved_waiting_settlement" {
+                            ctx.db
+                                .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
+                                .await?;
+                            ctx.telemetry
+                                .job_state_transition(job.intent_type, from_state, "proved_waiting_settlement");
+                        }
+                        return Ok(());
+                    }
+                    Ok(())
+                }
+                Ok(None) => Ok(()),
+                Err(err) => {
+                    tracing::warn!(err = %err, "failed to query pool_intents for proved job; keeping state");
+                    Ok(())
+                }
+            }
+        }
         "done" | "failed_fatal" => Ok(()),
         other => {
-            ctx.db
-                .record_fatal_error(
-                    job.job_id,
-                    &ctx.instance_id,
-                    &format!("unknown job state: {other}"),
-                )
-                .await?;
+            ctx.telemetry
+                .job_state_transition(job.intent_type, "unknown", "failed_fatal");
+            record_fatal(&ctx, &job, &format!("unknown job state: {other}")).await?;
             Ok(())
         }
     }

@@ -163,6 +163,37 @@ impl TronBackend {
         }
     }
 
+    pub async fn prepare_delegate_resource_with_key(
+        &self,
+        hub: &HubClient,
+        intent_id: B256,
+        private_key: [u8; 32],
+        intent_specs: &[u8],
+    ) -> Result<TronExecution> {
+        match self.cfg.mode {
+            TronMode::Mock => {
+                mock::execute_delegate_resource(hub, &self.cfg, intent_id, intent_specs).await
+            }
+            TronMode::Grpc => {
+                let p = grpc::prepare_delegate_resource_with_key(
+                    &self.cfg,
+                    &self.telemetry,
+                    private_key,
+                    intent_specs,
+                )
+                .await
+                .context("grpc prepare delegate (with key)")?;
+                Ok(TronExecution::PreparedTx(TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                }))
+            }
+        }
+    }
+
     pub async fn prepare_trx_transfer_plan(&self, intent_specs: &[u8]) -> Result<TronPreparedPlan> {
         if self.cfg.mode != TronMode::Grpc {
             anyhow::bail!("prepare_trx_transfer_plan is only available in TRON_MODE=grpc");
@@ -675,6 +706,58 @@ impl TronBackend {
         }
     }
 
+    pub fn tron_key_addresses(&self) -> Result<Vec<tron::TronAddress>> {
+        let keys = if !self.cfg.private_keys.is_empty() {
+            self.cfg.private_keys.clone()
+        } else if self.cfg.private_key != [0u8; 32] {
+            vec![self.cfg.private_key]
+        } else {
+            Vec::new()
+        };
+
+        let mut out = Vec::with_capacity(keys.len());
+        for pk in keys {
+            let w = tron::TronWallet::new(pk).context("init TronWallet")?;
+            out.push(w.address());
+        }
+        Ok(out)
+    }
+
+    pub fn private_key_for_owner(&self, owner_address_prefixed: &[u8]) -> Option<[u8; 32]> {
+        for pk in &self.cfg.private_keys {
+            if let Ok(w) = tron::TronWallet::new(*pk) {
+                if w.address().prefixed_bytes().as_slice() == owner_address_prefixed {
+                    return Some(*pk);
+                }
+            }
+        }
+        if let Ok(w) = tron::TronWallet::new(self.cfg.private_key) {
+            if w.address().prefixed_bytes().as_slice() == owner_address_prefixed {
+                return Some(self.cfg.private_key);
+            }
+        }
+        None
+    }
+
+    pub async fn delegate_available_sun_by_key(
+        &self,
+        resource: tron::protocol::ResourceCode,
+    ) -> Result<Vec<(tron::TronAddress, i64)>> {
+        if self.cfg.mode != TronMode::Grpc {
+            return Ok(Vec::new());
+        }
+
+        let addrs = self.tron_key_addresses().context("tron_key_addresses")?;
+        let mut out = Vec::with_capacity(addrs.len());
+        for a in addrs {
+            let account = grpc::fetch_account(&self.cfg, &self.telemetry, a)
+                .await
+                .context("fetch_account")?;
+            out.push((a, grpc::delegated_resource_available_sun(&account, resource)));
+        }
+        Ok(out)
+    }
+
     pub async fn build_proof(&self, txid: [u8; 32]) -> Result<crate::hub::TronProof> {
         match self.cfg.mode {
             TronMode::Mock => anyhow::bail!("build_proof is not available in TRON_MODE=mock"),
@@ -776,4 +859,47 @@ fn validate_trc20_consolidation_caps(
         anyhow::bail!("consolidation max_per_tx_usdt_pull_amount exceeded");
     }
     Ok(())
+}
+
+pub fn select_delegate_executor_index(
+    available_sun: &[i64],
+    reserved_sun: &[i64],
+    needed_sun: i64,
+) -> Option<usize> {
+    if available_sun.len() != reserved_sun.len() {
+        return None;
+    }
+    let mut best: Option<(usize, i64)> = None;
+    for (i, (&a, &r)) in available_sun.iter().zip(reserved_sun).enumerate() {
+        let effective = a.saturating_sub(r).max(0);
+        if effective < needed_sun {
+            continue;
+        }
+        match best {
+            None => best = Some((i, effective)),
+            Some((_, cur)) if effective > cur => best = Some((i, effective)),
+            _ => {}
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod delegate_selection_tests {
+    use super::select_delegate_executor_index;
+
+    #[test]
+    fn select_delegate_executor_picks_best_effective_capacity() {
+        let available = [100, 200, 150];
+        let reserved = [0, 50, 0];
+        assert_eq!(select_delegate_executor_index(&available, &reserved, 120), Some(1));
+        assert_eq!(select_delegate_executor_index(&available, &reserved, 180), None);
+    }
+
+    #[test]
+    fn select_delegate_executor_handles_reservations() {
+        let available = [500, 500];
+        let reserved = [450, 0];
+        assert_eq!(select_delegate_executor_index(&available, &reserved, 100), Some(1));
+    }
 }

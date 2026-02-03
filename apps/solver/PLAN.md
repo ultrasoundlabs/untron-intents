@@ -104,7 +104,9 @@ Example states (names flexible; persistence is the point):
 - `PROOF_READY`: have `blocks[20]`, `encodedTx`, `proof[]`, `index`.
 - `PROVE_SUBMITTED`: hub-chain prove AA op submitted.
 - `PROVED`: prove confirmed; intent should now be solved onchain.
-- `DONE`: terminal state once we’ve verified settlement (or recorded that it’s pending externally).
+- `PROVED_WAITING_FUNDING`: proved but not funded yet (virtual intents).
+- `PROVED_WAITING_SETTLEMENT`: solved+funded but not settled yet.
+- `DONE`: terminal state once we’ve verified settlement (or decided it’s closed).
 
 We also need terminal failure states:
 - `SKIPPED_POLICY`: permanently rejected by policy.
@@ -305,25 +307,25 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Decide solver DB location (same Postgres instance + `solver` schema).
 - [x] Add solver DB migrations + a migration runner.
   - Implemented as idempotent schema init in code (`apps/solver/src/db.rs`) rather than `sqlx` migrations.
-- [~] Define persisted job state machine and idempotency rules.
-  - Job rows + leases + retry/backoff exist; remaining work is multi-step planning (pre-txs) and stricter
-    “persist every external artifact” discipline for all paths.
+- [x] Define persisted job state machine and idempotency rules.
+  - Job rows + leases + retry/backoff exist; multi-step planning (pre-txs) and “persist every artifact” discipline are in place,
+    including post-prove terminalization driven by indexer truth (`funded/settled/closed`).
 - [x] Implement PostgREST client primitives (GET + filters).
 - [x] Implement “indexer lag” health gating.
   - Guard uses `api.event_appended` head vs hub `eth_blockNumber`, but is best-effort (does not hard-stop on API blips).
 
 ### Phase 1: Minimal reliable loop (no Tron yet)
 
-- [~] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
-  - Jobs are persisted in `solver.jobs`; remaining work is richer terminal states (less “ready/claimed/...”-centric).
+- [x] Poll `api.pool_open_intents` and create local jobs (`DISCOVERED`).
+  - Jobs are persisted in `solver.jobs`; terminalization includes post-prove “waiting funding/settlement” states.
 - [x] Apply static policy filters + record `SKIPPED_*` reasons.
   - Skip reasons are persisted in `solver.intent_skips` (intent_id PK, reason/details + counters) for postmortems.
 - [x] Acquire leases and mark `ACQUIRED`.
   - Implemented via `solver.jobs.leased_by/lease_until` selection and renewal.
-- [~] Submit claim tx for a chosen intent; persist submission metadata.
+- [x] Submit claim tx for a chosen intent; persist submission metadata.
   - Claim exists in both EOA and Safe4337 modes. In Safe4337 mode we persist userOp JSON + userOpHash + receipts.
-- [~] Confirm claim and mark `CLAIMED`.
-  - Claim receipt wait exists.
+- [x] Confirm claim and mark `CLAIMED`.
+  - Claim receipt wait exists in both modes; claiming is gated by DB-backed per-minute rate limits and optional global pause.
 
 ### Phase 2: Tron execution (start with simplest)
 
@@ -346,7 +348,7 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
   - Caps: `SOLVER_CONSOLIDATION_MAX_{TOTAL,PER_TX}_USDT_PULL_AMOUNT` + `SOLVER_CONSOLIDATION_MAX_PRE_TXS`.
   - Profitability: Tron fee estimate scales with `(1 + required_pre_txs)` computed during pre-claim inventory check.
 - [x] Proof builder for `TriggerSmartContract` fills.
-- [~] Profitability model expanded to include TRX/USD.
+- [x] Profitability model expanded to include TRX/USD.
   - Implemented as best-effort TRX/USD cache + intent-type cost estimation.
   - Hub costs: implemented for Safe4337 via ETH/USD + rolling average of `actualGasCost` from persisted AA receipts
     (with lookback + headroom + fallback constant).
@@ -358,11 +360,12 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 ### Phase 4: Resource delegation
 
 - [x] Implement `DelegateResourceContract` execution.
-- [~] Implement profitability model for lock-period/capital lock (simple version acceptable).
-  - Implemented as a configurable “capital lock ppm/day” cost term; needs calibration and better Tron cost modeling.
-- [~] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
+- [x] Implement profitability model for lock-period/capital lock (simple version acceptable).
+  - Implemented as a configurable “capital lock ppm/day” opportunity cost term applied over `lockPeriod` (unit-tested).
+  - Calibration (ppm/day) remains operator-controlled and should be tuned with production observations.
+- [x] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
   - Implemented as a best-effort pre-claim check (gRPC `GetAccount` + stake2.0 `frozen_v2` parsing) for `DELEGATE_RESOURCE`.
-  - Not yet a full reservation system across concurrent jobs; rely on per-type concurrency limits for now.
+  - Implemented a restart-safe DB reservation layer (`solver.delegate_reservations`) to prevent concurrent jobs (or multiple solver instances) from overcommitting the same staked inventory before inclusion.
 
 ### Phase 5: TRIGGER_SMART_CONTRACT (strictly gated)
 
@@ -370,7 +373,8 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Add selector denylist defaults.
 - [x] Add contract-level dynamic breaker and persistence.
 - [x] Optional: Tron simulation preflight (gRPC `EstimateEnergy`) to skip likely-reverting intents before claim.
-- [ ] Optional: “simulation-success but onchain-fail” breaker escalation (mismatch classification).
+- [x] Optional: “simulation-success but onchain-fail” breaker escalation (mismatch classification).
+  - Implemented by persisting emulation results in `solver.intent_emulations` and applying a weighted breaker increment on onchain failure after emulation-ok.
 
 ### Phase 6: Hardening
 
@@ -378,12 +382,11 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Multi-instance tests: two solvers sharing DB should not double-claim/fill the same intent.
 - [x] AA e2e coverage with Alto bundler (Safe4337 + crash/restart).
 - [x] Bundler receipt-loss fallback coverage (EntryPoint log fallback).
-- [~] Rate limiting and global circuit breakers.
+- [x] Rate limiting and global circuit breakers.
   - Implemented: `SOLVER_MAX_IN_FLIGHT_JOBS` + per-intent-type concurrency + `SOLVER_CONCURRENCY_TRON_BROADCAST`.
-  - Remaining: explicit rate-per-time window limits and “global pause” breakers.
-- [~] Better observability: structured logs + metrics for state transitions and failure causes.
-  - Implemented: metrics around AA userop submission + Tron broadcast + proof build, plus persisted skip reasons and costs.
-  - Remaining: richer state-transition metrics and a “why skipped” dashboard query.
+  - Implemented: per-minute claim submission rate limits (DB-backed) + a DB-backed global pause (`solver.global_pause`) and optional auto-pause on fatal error spikes.
+- [x] Better observability: structured logs + metrics for state transitions and failure causes.
+  - Implemented: metrics around AA userop submission + Tron broadcast + proof build, best-effort job state transition metrics, and a DB query helper for top skip reasons (`intent_skip_summary`).
 
 ## Open questions (capture here; don’t block early progress)
 

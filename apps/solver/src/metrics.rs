@@ -16,6 +16,11 @@ struct Inner {
     hub_userop_errors_total: Counter<u64>,
     tron_txs_total: Counter<u64>,
     tron_tx_errors_total: Counter<u64>,
+    claim_rate_limited_total: Counter<u64>,
+    global_paused_total: Counter<u64>,
+    emulation_mismatch_total: Counter<u64>,
+    delegate_reservation_conflicts_total: Counter<u64>,
+    job_state_transitions_total: Counter<u64>,
 
     job_ms: Histogram<u64>,
     hub_submit_ms: Histogram<u64>,
@@ -53,6 +58,26 @@ impl SolverTelemetry {
         let tron_tx_errors_total = meter
             .u64_counter("solver.tron_tx_errors_total")
             .with_description("Total Tron transaction errors")
+            .build();
+        let claim_rate_limited_total = meter
+            .u64_counter("solver.claim_rate_limited_total")
+            .with_description("Total claim rate-limited events")
+            .build();
+        let global_paused_total = meter
+            .u64_counter("solver.global_paused_total")
+            .with_description("Total times global pause blocked claiming")
+            .build();
+        let emulation_mismatch_total = meter
+            .u64_counter("solver.emulation_mismatch_total")
+            .with_description("Total onchain failures after emulation-ok")
+            .build();
+        let delegate_reservation_conflicts_total = meter
+            .u64_counter("solver.delegate_reservation_conflicts_total")
+            .with_description("Total delegate reservation conflicts/insufficient capacity")
+            .build();
+        let job_state_transitions_total = meter
+            .u64_counter("solver.job_state_transitions_total")
+            .with_description("Total job state transitions (best-effort)")
             .build();
 
         let job_ms = meter
@@ -105,6 +130,11 @@ impl SolverTelemetry {
                 hub_userop_errors_total,
                 tron_txs_total,
                 tron_tx_errors_total,
+                claim_rate_limited_total,
+                global_paused_total,
+                emulation_mismatch_total,
+                delegate_reservation_conflicts_total,
+                job_state_transitions_total,
                 job_ms,
                 hub_submit_ms,
                 tron_broadcast_ms,
@@ -145,6 +175,32 @@ impl SolverTelemetry {
 
     pub fn tron_tx_err(&self) {
         self.inner.tron_tx_errors_total.add(1, &[]);
+    }
+
+    pub fn claim_rate_limited(&self, key: &'static str) {
+        let attrs = [KeyValue::new("key", key)];
+        self.inner.claim_rate_limited_total.add(1, &attrs);
+    }
+
+    pub fn global_paused(&self) {
+        self.inner.global_paused_total.add(1, &[]);
+    }
+
+    pub fn emulation_mismatch(&self) {
+        self.inner.emulation_mismatch_total.add(1, &[]);
+    }
+
+    pub fn delegate_reservation_conflict(&self) {
+        self.inner.delegate_reservation_conflicts_total.add(1, &[]);
+    }
+
+    pub fn job_state_transition(&self, intent_type: i16, from: &'static str, to: &'static str) {
+        let attrs = [
+            KeyValue::new("intent_type", intent_type as i64),
+            KeyValue::new("from", from),
+            KeyValue::new("to", to),
+        ];
+        self.inner.job_state_transitions_total.add(1, &attrs);
     }
 
     pub fn hub_submit_ms(&self, name: &'static str, ok: bool, ms: u64) {
