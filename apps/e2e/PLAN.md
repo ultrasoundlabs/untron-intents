@@ -35,11 +35,11 @@ Conventions:
   - Done when: the test validates both hub settlement *and* Tron-side tx fields match intent specs.
 
 - [ ] **Multi-key Tron inventory + consolidation plan is correct and restart-safe**
-  - [ ] Add test `apps/e2e/tests/solver_tron_consolidation.rs`
-  - [ ] Configure `TRON_PRIVATE_KEYS_HEX_CSV` with ≥2 keys, and set `SOLVER_CONSOLIDATION_*` caps.
-  - [ ] Create TRX transfer intent that requires consolidation (no single key has enough funds).
-  - [ ] Assert `solver.tron_signed_txs` contains ordered `pre:*` steps + `final`.
-  - [ ] Kill the solver after some `pre:*` txs are broadcast; restart; ensure it resumes idempotently.
+  - [x] Add test `apps/e2e/tests/solver_tron_consolidation.rs`
+  - [x] Configure `TRON_PRIVATE_KEYS_HEX_CSV` with ≥2 keys, and set `SOLVER_CONSOLIDATION_*` caps.
+  - [x] Create TRX transfer intent that requires consolidation (no single key has enough funds).
+  - [x] Assert `solver.tron_signed_txs` contains ordered `pre:*` steps + `final`.
+  - [x] Kill the solver after some `pre:*` txs are broadcast; restart; ensure it resumes idempotently.
   - Done when: no duplicate broadcasts and the final tx is never broadcast before hub claim is confirmed.
 
 ## P0 — Safe4337 correctness (AA nonces/receipts/failure modes)

@@ -151,6 +151,50 @@ pub fn spawn_solver_tron_grpc(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn spawn_solver_tron_grpc_custom(
+    db_url: &str,
+    postgrest_url: &str,
+    rpc_url: &str,
+    pool_contract: &str,
+    hub_solver_private_key: &str,
+    tron_grpc_url: &str,
+    tron_private_key_hex: &str,
+    tron_private_keys_hex_csv: &str,
+    tron_controller_address: &str,
+    instance_id: &str,
+    enabled_intent_types: &str,
+    extra_env: &[(&str, &str)],
+) -> Result<Child> {
+    let root = repo_root();
+    let mut cmd = Command::new(root.join("target/debug/solver"));
+    cmd.current_dir(&root)
+        .env("SOLVER_DB_URL", db_url)
+        .env("INDEXER_API_BASE_URL", postgrest_url)
+        .env("HUB_RPC_URL", rpc_url)
+        .env("HUB_POOL_ADDRESS", pool_contract)
+        .env("HUB_TX_MODE", "eoa")
+        .env("HUB_SIGNER_PRIVATE_KEY_HEX", hub_solver_private_key)
+        .env("TRON_MODE", "grpc")
+        .env("TRON_GRPC_URL", tron_grpc_url)
+        .env("TRON_PRIVATE_KEY_HEX", tron_private_key_hex)
+        .env("TRON_PRIVATE_KEYS_HEX_CSV", tron_private_keys_hex_csv)
+        .env("TRON_CONTROLLER_ADDRESS", tron_controller_address)
+        .env("SOLVER_INSTANCE_ID", instance_id)
+        .env("SOLVER_ENABLED_INTENT_TYPES", enabled_intent_types)
+        .env("SOLVER_TICK_INTERVAL_SECS", "1")
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
+    null_stdio(&mut cmd);
+    cmd.spawn().context("spawn solver (tron grpc custom)")
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_solver_safe4337_mock(
     db_url: &str,
     postgrest_url: &str,
@@ -237,7 +281,8 @@ pub fn spawn_solver_safe4337_mock_custom(
     }
 
     null_stdio(&mut cmd);
-    cmd.spawn().context("spawn solver (safe4337 + mock tron custom)")
+    cmd.spawn()
+        .context("spawn solver (safe4337 + mock tron custom)")
 }
 
 #[allow(clippy::too_many_arguments)]
