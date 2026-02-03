@@ -104,7 +104,8 @@ impl Pricing {
 
         // Default URL is Coingecko's simple price endpoint:
         //   https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd
-        let body: CoingeckoSimplePriceEthereum = resp.json().await.context("decode eth_usd json")?;
+        let body: CoingeckoSimplePriceEthereum =
+            resp.json().await.context("decode eth_usd json")?;
         let price = body.ethereum.usd;
         if !(price.is_finite()) || price <= 0.0 {
             anyhow::bail!("invalid eth usd price: {price}");

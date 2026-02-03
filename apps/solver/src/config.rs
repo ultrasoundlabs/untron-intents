@@ -125,6 +125,15 @@ pub struct JobConfig {
 
     pub process_controller_max_events: u64,
     pub fill_max_claims: u64,
+    pub max_in_flight_jobs: u64,
+
+    /// Max concurrent jobs per intent type (best-effort backpressure).
+    pub concurrency_trx_transfer: u64,
+    pub concurrency_usdt_transfer: u64,
+    pub concurrency_delegate_resource: u64,
+    pub concurrency_trigger_smart_contract: u64,
+    /// Max concurrent Tron broadcasts (avoid ref-block collisions / node overload).
+    pub concurrency_tron_broadcast: u64,
 
     pub controller_rebalance_threshold_usdt: String,
     pub controller_rebalance_keep_usdt: String,
@@ -219,6 +228,20 @@ struct Env {
     process_controller_max_events: u64,
 
     fill_max_claims: u64,
+
+    #[serde(default)]
+    solver_max_in_flight_jobs: u64,
+
+    #[serde(default)]
+    solver_concurrency_trx_transfer: u64,
+    #[serde(default)]
+    solver_concurrency_usdt_transfer: u64,
+    #[serde(default)]
+    solver_concurrency_delegate_resource: u64,
+    #[serde(default)]
+    solver_concurrency_trigger_smart_contract: u64,
+    #[serde(default)]
+    solver_concurrency_tron_broadcast: u64,
 
     controller_rebalance_threshold_usdt: String,
 
@@ -351,6 +374,12 @@ impl Default for Env {
             tron_tip_proof_resend_blocks: 20,
             process_controller_max_events: 100,
             fill_max_claims: 50,
+            solver_max_in_flight_jobs: 50,
+            solver_concurrency_trx_transfer: 4,
+            solver_concurrency_usdt_transfer: 2,
+            solver_concurrency_delegate_resource: 1,
+            solver_concurrency_trigger_smart_contract: 1,
+            solver_concurrency_tron_broadcast: 1,
             controller_rebalance_threshold_usdt: "0".to_string(),
             controller_rebalance_keep_usdt: "1".to_string(),
             pull_liquidity_ppm: 500_000,
@@ -722,6 +751,17 @@ pub fn load_config() -> Result<AppConfig> {
             tip_proof_resend_blocks: env.tron_tip_proof_resend_blocks.max(1),
             process_controller_max_events: env.process_controller_max_events,
             fill_max_claims: env.fill_max_claims,
+            max_in_flight_jobs: env
+                .solver_max_in_flight_jobs
+                .max(1)
+                .min(env.fill_max_claims.max(1)),
+            concurrency_trx_transfer: env.solver_concurrency_trx_transfer.max(1),
+            concurrency_usdt_transfer: env.solver_concurrency_usdt_transfer.max(1),
+            concurrency_delegate_resource: env.solver_concurrency_delegate_resource.max(1),
+            concurrency_trigger_smart_contract: env
+                .solver_concurrency_trigger_smart_contract
+                .max(1),
+            concurrency_tron_broadcast: env.solver_concurrency_tron_broadcast.max(1),
             controller_rebalance_threshold_usdt: env.controller_rebalance_threshold_usdt,
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
             pull_liquidity_ppm: env.pull_liquidity_ppm.min(1_000_000),

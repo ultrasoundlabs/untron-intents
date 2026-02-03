@@ -227,6 +227,29 @@ impl TronBackend {
         }
     }
 
+    /// Returns the staked-but-not-yet-delegated TRX (in SUN) available to delegate for `resource`.
+    ///
+    /// This is a *best-effort safety check* meant to avoid claiming intents we cannot satisfy due
+    /// to insufficient staked inventory. It is not a perfect reservation system.
+    pub async fn delegated_resource_available_sun(
+        &self,
+        resource: tron::protocol::ResourceCode,
+    ) -> Result<Option<i64>> {
+        match self.cfg.mode {
+            TronMode::Mock => Ok(None),
+            TronMode::Grpc => {
+                let wallet = tron::TronWallet::new(self.cfg.private_key)
+                    .context("init TronWallet (capacity check)")?;
+                let account = grpc::fetch_account(&self.cfg, &self.telemetry, wallet.address())
+                    .await
+                    .context("fetch Tron account")?;
+                Ok(Some(grpc::delegated_resource_available_sun(
+                    &account, resource,
+                )))
+            }
+        }
+    }
+
     pub async fn build_proof(&self, txid: [u8; 32]) -> Result<crate::hub::TronProof> {
         match self.cfg.mode {
             TronMode::Mock => anyhow::bail!("build_proof is not available in TRON_MODE=mock"),

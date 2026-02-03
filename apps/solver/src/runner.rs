@@ -15,6 +15,7 @@ use crate::{hub::HubClient, hub::TronProof};
 use alloy::primitives::{B256, U256};
 use alloy::rpc::types::eth::erc4337::PackedUserOperation;
 use alloy::sol_types::SolCall;
+use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Instant;
@@ -36,6 +37,8 @@ pub struct Solver {
     policy: PolicyEngine,
     instance_id: String,
     hub_userop_submit_sem: Arc<Semaphore>,
+    tron_broadcast_sem: Arc<Semaphore>,
+    job_type_sems: Arc<JobTypeSems>,
 }
 
 #[derive(Clone)]
@@ -46,6 +49,27 @@ struct JobCtx {
     tron: TronBackend,
     instance_id: String,
     hub_userop_submit_sem: Arc<Semaphore>,
+    tron_broadcast_sem: Arc<Semaphore>,
+    job_type_sems: Arc<JobTypeSems>,
+    telemetry: SolverTelemetry,
+}
+
+struct JobTypeSems {
+    trx_transfer: Arc<Semaphore>,
+    usdt_transfer: Arc<Semaphore>,
+    delegate_resource: Arc<Semaphore>,
+    trigger_smart_contract: Arc<Semaphore>,
+}
+
+impl JobTypeSems {
+    fn for_intent_type(&self, ty: IntentType) -> Arc<Semaphore> {
+        match ty {
+            IntentType::TrxTransfer => Arc::clone(&self.trx_transfer),
+            IntentType::UsdtTransfer => Arc::clone(&self.usdt_transfer),
+            IntentType::DelegateResource => Arc::clone(&self.delegate_resource),
+            IntentType::TriggerSmartContract => Arc::clone(&self.trigger_smart_contract),
+        }
+    }
 }
 
 impl Solver {
@@ -123,6 +147,24 @@ impl Solver {
         let pricing = Pricing::new(cfg.pricing.clone());
         let policy = PolicyEngine::new(cfg.policy.clone());
 
+        let job_type_sems = Arc::new(JobTypeSems {
+            trx_transfer: Arc::new(Semaphore::new(
+                usize::try_from(cfg.jobs.concurrency_trx_transfer).unwrap_or(1),
+            )),
+            usdt_transfer: Arc::new(Semaphore::new(
+                usize::try_from(cfg.jobs.concurrency_usdt_transfer).unwrap_or(1),
+            )),
+            delegate_resource: Arc::new(Semaphore::new(
+                usize::try_from(cfg.jobs.concurrency_delegate_resource).unwrap_or(1),
+            )),
+            trigger_smart_contract: Arc::new(Semaphore::new(
+                usize::try_from(cfg.jobs.concurrency_trigger_smart_contract).unwrap_or(1),
+            )),
+        });
+        let tron_broadcast_sem = Arc::new(Semaphore::new(
+            usize::try_from(cfg.jobs.concurrency_tron_broadcast).unwrap_or(1),
+        ));
+
         Ok(Self {
             instance_id: cfg.instance_id.clone(),
             cfg,
@@ -134,6 +176,8 @@ impl Solver {
             pricing,
             policy,
             hub_userop_submit_sem: Arc::new(Semaphore::new(1)),
+            tron_broadcast_sem,
+            job_type_sems,
         })
     }
 
@@ -211,7 +255,7 @@ impl Solver {
             .lease_jobs(
                 &self.instance_id,
                 std::time::Duration::from_secs(LEASE_FOR_SECS),
-                i64::try_from(self.cfg.jobs.fill_max_claims)
+                i64::try_from(self.cfg.jobs.max_in_flight_jobs)
                     .unwrap_or(50)
                     .max(1),
             )
@@ -224,12 +268,29 @@ impl Solver {
             tron: self.tron.clone(),
             instance_id: self.instance_id.clone(),
             hub_userop_submit_sem: self.hub_userop_submit_sem.clone(),
+            tron_broadcast_sem: self.tron_broadcast_sem.clone(),
+            job_type_sems: self.job_type_sems.clone(),
+            telemetry: self.telemetry.clone(),
         };
 
         let mut set = JoinSet::new();
         for job in jobs {
             let ctx = ctx.clone();
             set.spawn(async move {
+                let ty = match IntentType::from_i16(job.intent_type) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(err = %err, "unknown intent type in job");
+                        return;
+                    }
+                };
+                let _permit = match ctx.job_type_sems.for_intent_type(ty).acquire_owned().await {
+                    Ok(p) => p,
+                    Err(err) => {
+                        tracing::warn!(err = %err, "failed to acquire job type permit");
+                        return;
+                    }
+                };
                 if let Err(err) = process_job(ctx, job).await {
                     tracing::warn!(err = %err, "job failed");
                 }
@@ -321,6 +382,46 @@ impl Solver {
                         "skip intent (tron emulation)"
                     );
                     return Ok(false);
+                }
+            }
+        }
+
+        // Best-effort capacity check for resource delegation: avoid claiming intents we cannot fill
+        // because we don't have enough staked TRX for the requested resource.
+        if self.cfg.tron.mode == TronMode::Grpc
+            && row.intent_type == IntentType::DelegateResource as i16
+        {
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            if let Ok(intent) = crate::tron_backend::DelegateResourceIntent::abi_decode(&specs) {
+                let rc = match intent.resource {
+                    0 => tron::protocol::ResourceCode::Bandwidth,
+                    1 => tron::protocol::ResourceCode::Energy,
+                    2 => tron::protocol::ResourceCode::TronPower,
+                    _ => tron::protocol::ResourceCode::Energy,
+                };
+
+                if let Ok(Some(available)) = self.tron.delegated_resource_available_sun(rc).await {
+                    let needed = i64::try_from(intent.balanceSun).unwrap_or(i64::MAX);
+                    if available < needed {
+                        if let Ok(id) = parse_b256(&row.id) {
+                            let details = serde_json::json!({
+                                "available_sun": available,
+                                "needed_sun": needed,
+                                "resource": intent.resource,
+                            })
+                            .to_string();
+                            let _ = self
+                                .db
+                                .upsert_intent_skip(
+                                    b256_to_bytes32(id),
+                                    row.intent_type,
+                                    "delegate_capacity_insufficient",
+                                    Some(&details),
+                                )
+                                .await;
+                        }
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -527,8 +628,15 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     &json,
                                 )
                                 .await?;
+                            let started = Instant::now();
                             match ctx.hub.safe4337_send_userop(userop).await {
                                 Ok(userop_hash) => {
+                                    ctx.telemetry.hub_userop_ok();
+                                    ctx.telemetry.hub_submit_ms(
+                                        "claim_userop",
+                                        true,
+                                        started.elapsed().as_millis() as u64,
+                                    );
                                     ctx.db
                                         .record_hub_userop_submitted(
                                             job.job_id,
@@ -539,6 +647,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         .await?;
                                 }
                                 Err(err) => {
+                                    ctx.telemetry.hub_userop_err();
+                                    ctx.telemetry.hub_submit_ms(
+                                        "claim_userop",
+                                        false,
+                                        started.elapsed().as_millis() as u64,
+                                    );
                                     let msg = err.to_string();
                                     if msg.contains("AA25 invalid account nonce") {
                                         ctx.db
@@ -581,8 +695,15 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     .context("acquire hub_userop_submit_sem (claim)")?;
                                 let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
                                     .context("deserialize claim userop")?;
+                                let started = Instant::now();
                                 match ctx.hub.safe4337_send_userop(u).await {
                                     Ok(userop_hash) => {
+                                        ctx.telemetry.hub_userop_ok();
+                                        ctx.telemetry.hub_submit_ms(
+                                            "claim_userop",
+                                            true,
+                                            started.elapsed().as_millis() as u64,
+                                        );
                                         ctx.db
                                             .record_hub_userop_submitted(
                                                 job.job_id,
@@ -593,6 +714,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                             .await?;
                                     }
                                     Err(err) => {
+                                        ctx.telemetry.hub_userop_err();
+                                        ctx.telemetry.hub_submit_ms(
+                                            "claim_userop",
+                                            false,
+                                            started.elapsed().as_millis() as u64,
+                                        );
                                         let msg = err.to_string();
                                         if msg.contains("AA25 invalid account nonce") {
                                             ctx.db
@@ -900,17 +1027,33 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
             }
 
             let tx_bytes = ctx.db.load_tron_signed_tx_bytes(txid).await?;
-            if let Err(err) = ctx.tron.broadcast_signed_tx(&tx_bytes).await {
-                let msg = err.to_string();
-                ctx.db
-                    .record_retryable_error(
-                        job.job_id,
-                        &ctx.instance_id,
-                        &msg,
-                        retry_in(job.attempts),
-                    )
-                    .await?;
-                return Ok(());
+            let _permit = ctx
+                .tron_broadcast_sem
+                .acquire_owned()
+                .await
+                .context("acquire tron_broadcast_sem")?;
+            let started = Instant::now();
+            let res = ctx.tron.broadcast_signed_tx(&tx_bytes).await;
+            let ms = started.elapsed().as_millis() as u64;
+            match res {
+                Ok(()) => {
+                    ctx.telemetry.tron_tx_ok();
+                    ctx.telemetry.tron_broadcast_ms(true, ms);
+                }
+                Err(err) => {
+                    ctx.telemetry.tron_tx_err();
+                    ctx.telemetry.tron_broadcast_ms(false, ms);
+                    let msg = err.to_string();
+                    ctx.db
+                        .record_retryable_error(
+                            job.job_id,
+                            &ctx.instance_id,
+                            &msg,
+                            retry_in(job.attempts),
+                        )
+                        .await?;
+                    return Ok(());
+                }
             }
 
             ctx.db
@@ -931,11 +1074,65 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 return Ok(());
             };
             tracing::info!(id = %id, "building tron proof");
+            let started = Instant::now();
             let tron = match ctx.tron.build_proof(txid).await {
                 Ok(v) => v,
                 Err(err) => {
+                    ctx.telemetry
+                        .tron_proof_ms(false, started.elapsed().as_millis() as u64);
                     let msg = err.to_string();
                     if msg.contains("tron_tx_failed:") {
+                        // If simulation was enabled and this tx still failed onchain, treat this as
+                        // especially suspicious and apply a stronger breaker backoff.
+                        if matches!(
+                            ty,
+                            IntentType::TriggerSmartContract | IntentType::UsdtTransfer
+                        ) {
+                            let (contract, selector) = match ty {
+                                IntentType::TriggerSmartContract => {
+                                    decode_trigger_contract_and_selector(&job.intent_specs)
+                                        .unwrap_or((alloy::primitives::Address::ZERO, None))
+                                }
+                                IntentType::UsdtTransfer => {
+                                    let contract = ctx
+                                        .hub
+                                        .v3_tron_usdt()
+                                        .await
+                                        .unwrap_or(alloy::primitives::Address::ZERO);
+                                    (contract, Some([0xa9, 0x05, 0x9c, 0xbb]))
+                                }
+                                _ => (alloy::primitives::Address::ZERO, None),
+                            };
+
+                            if contract != alloy::primitives::Address::ZERO {
+                                let mut penalty = 1;
+                                if ctx.cfg.tron.emulation_enabled
+                                    && ctx.cfg.tron.mode == TronMode::Grpc
+                                {
+                                    let emu = ctx
+                                        .tron
+                                        .precheck_emulation(ctx.hub.as_ref(), ty, &job.intent_specs)
+                                        .await;
+                                    if emu.ok {
+                                        penalty = 2;
+                                    }
+                                }
+
+                                let err_msg = if penalty > 1 {
+                                    format!("onchain_fail_after_emulation_ok: {msg}")
+                                } else {
+                                    msg.clone()
+                                };
+
+                                for _ in 0..penalty {
+                                    let _ = ctx
+                                        .db
+                                        .breaker_record_failure(contract, selector, &err_msg)
+                                        .await;
+                                }
+                            }
+                        }
+
                         ctx.db
                             .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
                             .await?;
@@ -952,6 +1149,8 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                     return Ok(());
                 }
             };
+            ctx.telemetry
+                .tron_proof_ms(true, started.elapsed().as_millis() as u64);
             let proof_row = TronProofRow {
                 blocks: tron.blocks.into_iter().collect(),
                 encoded_tx: tron.encoded_tx,
@@ -1087,8 +1286,15 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     &json,
                                 )
                                 .await?;
+                            let started = Instant::now();
                             match ctx.hub.safe4337_send_userop(userop).await {
                                 Ok(userop_hash) => {
+                                    ctx.telemetry.hub_userop_ok();
+                                    ctx.telemetry.hub_submit_ms(
+                                        "prove_userop",
+                                        true,
+                                        started.elapsed().as_millis() as u64,
+                                    );
                                     ctx.db
                                         .record_hub_userop_submitted(
                                             job.job_id,
@@ -1099,6 +1305,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         .await?;
                                 }
                                 Err(err) => {
+                                    ctx.telemetry.hub_userop_err();
+                                    ctx.telemetry.hub_submit_ms(
+                                        "prove_userop",
+                                        false,
+                                        started.elapsed().as_millis() as u64,
+                                    );
                                     let msg = err.to_string();
                                     if msg.contains("AA25 invalid account nonce") {
                                         ctx.db
@@ -1141,8 +1353,15 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                     .context("acquire hub_userop_submit_sem (prove)")?;
                                 let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
                                     .context("deserialize prove userop")?;
+                                let started = Instant::now();
                                 match ctx.hub.safe4337_send_userop(u).await {
                                     Ok(userop_hash) => {
+                                        ctx.telemetry.hub_userop_ok();
+                                        ctx.telemetry.hub_submit_ms(
+                                            "prove_userop",
+                                            true,
+                                            started.elapsed().as_millis() as u64,
+                                        );
                                         ctx.db
                                             .record_hub_userop_submitted(
                                                 job.job_id,
@@ -1153,6 +1372,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                             .await?;
                                     }
                                     Err(err) => {
+                                        ctx.telemetry.hub_userop_err();
+                                        ctx.telemetry.hub_submit_ms(
+                                            "prove_userop",
+                                            false,
+                                            started.elapsed().as_millis() as u64,
+                                        );
                                         let msg = err.to_string();
                                         if msg.contains("AA25 invalid account nonce") {
                                             ctx.db

@@ -18,6 +18,47 @@ pub struct PreparedTronTx {
     pub tx_size_bytes: Option<i64>,
 }
 
+pub async fn fetch_account(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    address: TronAddress,
+) -> Result<tron::protocol::Account> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let started = std::time::Instant::now();
+    let account = grpc
+        .get_account(address.prefixed_bytes().to_vec())
+        .await
+        .context("GetAccount")?;
+    telemetry.tron_grpc_ms("get_account", true, started.elapsed().as_millis() as u64);
+    Ok(account)
+}
+
+pub fn delegated_resource_available_sun(
+    account: &tron::protocol::Account,
+    resource: tron::protocol::ResourceCode,
+) -> i64 {
+    let mut staked: i64 = 0;
+    for f in &account.frozen_v2 {
+        if tron::protocol::ResourceCode::try_from(f.r#type).ok() == Some(resource) {
+            staked = staked.saturating_add(f.amount);
+        }
+    }
+
+    let delegated: i64 = match resource {
+        tron::protocol::ResourceCode::Energy => account
+            .account_resource
+            .as_ref()
+            .map(|r| r.delegated_frozen_v2_balance_for_energy)
+            .unwrap_or(0),
+        tron::protocol::ResourceCode::Bandwidth => {
+            account.delegated_frozen_v2_balance_for_bandwidth
+        }
+        tron::protocol::ResourceCode::TronPower => 0,
+    };
+
+    staked.saturating_sub(delegated).max(0)
+}
+
 pub async fn fetch_transaction_info(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,

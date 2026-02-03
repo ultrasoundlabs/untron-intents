@@ -351,7 +351,9 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Implement `DelegateResourceContract` execution.
 - [~] Implement profitability model for lock-period/capital lock (simple version acceptable).
   - Implemented as a configurable “capital lock ppm/day” cost term; needs calibration and better Tron cost modeling.
-- [ ] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
+- [~] Add per-account “capacity accounting” to avoid overcommitting staked TRX.
+  - Implemented as a best-effort pre-claim check (gRPC `GetAccount` + stake2.0 `frozen_v2` parsing) for `DELEGATE_RESOURCE`.
+  - Not yet a full reservation system across concurrent jobs; rely on per-type concurrency limits for now.
 
 ### Phase 5: TRIGGER_SMART_CONTRACT (strictly gated)
 
@@ -367,8 +369,12 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
 - [x] Multi-instance tests: two solvers sharing DB should not double-claim/fill the same intent.
 - [x] AA e2e coverage with Alto bundler (Safe4337 + crash/restart).
 - [x] Bundler receipt-loss fallback coverage (EntryPoint log fallback).
-- [ ] Rate limiting and global circuit breakers.
-- [ ] Better observability: structured logs + metrics for state transitions and failure causes.
+- [~] Rate limiting and global circuit breakers.
+  - Implemented: `SOLVER_MAX_IN_FLIGHT_JOBS` + per-intent-type concurrency + `SOLVER_CONCURRENCY_TRON_BROADCAST`.
+  - Remaining: explicit rate-per-time window limits and “global pause” breakers.
+- [~] Better observability: structured logs + metrics for state transitions and failure causes.
+  - Implemented: metrics around AA userop submission + Tron broadcast + proof build, plus persisted skip reasons and costs.
+  - Remaining: richer state-transition metrics and a “why skipped” dashboard query.
 
 ## Open questions (capture here; don’t block early progress)
 
