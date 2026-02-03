@@ -108,6 +108,9 @@ pub struct TronConfig {
     pub fee_limit_headroom_ppm: u64,
     /// Optional list of external energy rental providers.
     pub energy_rental_providers: Vec<JsonApiRentalProviderConfig>,
+
+    /// If true (and TRON_MODE=grpc), run pre-claim emulation checks for contract-call intents.
+    pub emulation_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +202,9 @@ struct Env {
 
     #[serde(default)]
     tron_energy_rental_apis_json: String,
+
+    #[serde(default)]
+    solver_tron_emulation_enabled: bool,
 
     solver_tick_interval_secs: u64,
 
@@ -329,6 +335,7 @@ impl Default for Env {
             tron_fee_limit_cap_sun: 200_000_000,
             tron_fee_limit_headroom_ppm: 100_000,
             tron_energy_rental_apis_json: String::new(),
+            solver_tron_emulation_enabled: true,
             solver_tick_interval_secs: 5,
             tron_finality_blocks: 19,
             tron_tip_proof_resend_blocks: 20,
@@ -695,6 +702,7 @@ pub fn load_config() -> Result<AppConfig> {
             energy_rental_providers: parse_tron_energy_rental_apis_json(
                 &env.tron_energy_rental_apis_json,
             )?,
+            emulation_enabled: env.solver_tron_emulation_enabled,
         },
         jobs: JobConfig {
             tick_interval: Duration::from_secs(env.solver_tick_interval_secs.max(1)),

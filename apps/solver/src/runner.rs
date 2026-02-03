@@ -267,6 +267,30 @@ impl Solver {
             }
         }
 
+        // Optional Tron emulation gating: avoid claiming intents we know will revert.
+        if self.cfg.tron.emulation_enabled && self.cfg.tron.mode == TronMode::Grpc {
+            let ty = IntentType::from_i16(row.intent_type)?;
+            if matches!(
+                ty,
+                IntentType::TriggerSmartContract | IntentType::UsdtTransfer
+            ) {
+                let specs = parse_hex_bytes(&row.intent_specs)?;
+                let emu = self
+                    .tron
+                    .precheck_emulation(self.hub.as_ref(), ty, &specs)
+                    .await;
+                if !emu.ok {
+                    tracing::debug!(
+                        id = %row.id,
+                        intent_type = row.intent_type,
+                        reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
+                        "skip intent (tron emulation)"
+                    );
+                    return Ok(false);
+                }
+            }
+        }
+
         Ok(true)
     }
 
@@ -857,6 +881,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 Ok(v) => v,
                 Err(err) => {
                     let msg = err.to_string();
+                    if msg.contains("tron_tx_failed:") {
+                        ctx.db
+                            .record_fatal_error(job.job_id, &ctx.instance_id, &msg)
+                            .await?;
+                        return Ok(());
+                    }
                     ctx.db
                         .record_retryable_error(
                             job.job_id,

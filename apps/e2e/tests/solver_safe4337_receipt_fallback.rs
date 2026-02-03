@@ -184,6 +184,27 @@ async fn e2e_safe4337_works_when_bundler_receipts_are_missing() -> Result<()> {
 
     // Assert we exercised the EntryPoint log fallback (not bundler receipts).
     let pool = sqlx::PgPool::connect(&db_url).await?;
+
+    // Indexer-settled does not imply the solver has already polled+persisted AA receipts.
+    // Wait until the solver has populated receipt JSON for all its tracked userops.
+    let start = std::time::Instant::now();
+    loop {
+        let missing: i64 = sqlx::query_scalar(
+            "select count(*) \
+             from solver.hub_userops \
+             where receipt is null",
+        )
+        .fetch_one(&pool)
+        .await?;
+        if missing == 0 {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            anyhow::bail!("timeout waiting for solver.hub_userops.receipt to be populated");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
     let rows = sqlx::query(
         "select receipt \
          from solver.hub_userops \
@@ -199,7 +220,7 @@ async fn e2e_safe4337_works_when_bundler_receipts_are_missing() -> Result<()> {
             .or_else(|| receipt.get("costSource"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        assert_eq!(src, "entrypoint_log");
+        assert_eq!(src, "entrypoint_log", "unexpected receipt json: {receipt}");
     }
 
     Ok(())

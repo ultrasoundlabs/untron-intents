@@ -67,6 +67,19 @@ pub async fn prepare_trigger_smart_contract(
     let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
     let mut grpc = connect_grpc(cfg).await?;
 
+    if cfg.emulation_enabled {
+        // Defensive: ensure the call is at least simulatable before we spend time broadcasting.
+        emulate_trigger_smart_contract(
+            &mut grpc,
+            telemetry,
+            &wallet,
+            to,
+            &intent.data,
+            call_value_i64,
+        )
+        .await?;
+    }
+
     let fee_policy = tron::sender::FeePolicy {
         fee_limit_cap_sun: cfg.fee_limit_cap_sun,
         fee_limit_headroom_ppm: cfg.fee_limit_headroom_ppm,
@@ -164,6 +177,17 @@ pub async fn prepare_usdt_transfer(
     let mut grpc = connect_grpc(cfg).await?;
 
     let data = crate::abi::encode_trc20_transfer(intent.to, intent.amount);
+    if cfg.emulation_enabled {
+        emulate_trigger_smart_contract(
+            &mut grpc,
+            telemetry,
+            &wallet,
+            TronAddress::from_evm(tron_usdt),
+            &alloy::primitives::Bytes::from(data.as_slice().to_vec()),
+            0,
+        )
+        .await?;
+    }
     let fee_policy = tron::sender::FeePolicy {
         fee_limit_cap_sun: cfg.fee_limit_cap_sun,
         fee_limit_headroom_ppm: cfg.fee_limit_headroom_ppm,
@@ -193,6 +217,54 @@ pub async fn prepare_usdt_transfer(
         energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
         tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
     })
+}
+
+pub async fn emulate_trigger_smart_contract_intent(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    intent_specs: &[u8],
+) -> Result<i64> {
+    let intent = super::TriggerSmartContractIntent::abi_decode(intent_specs)
+        .context("abi_decode TriggerSmartContractIntent")?;
+    let to = TronAddress::from_evm(intent.to);
+    let call_value_i64 =
+        i64::try_from(intent.callValueSun).context("callValueSun out of i64 range")?;
+
+    let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+    emulate_trigger_smart_contract(
+        &mut grpc,
+        telemetry,
+        &wallet,
+        to,
+        &intent.data,
+        call_value_i64,
+    )
+    .await
+}
+
+pub async fn emulate_usdt_transfer_intent(
+    hub: &crate::hub::HubClient,
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    intent_specs: &[u8],
+) -> Result<i64> {
+    let intent = super::USDTTransferIntent::abi_decode(intent_specs)
+        .context("abi_decode USDTTransferIntent")?;
+    let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+    let data = crate::abi::encode_trc20_transfer(intent.to, intent.amount);
+
+    let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+    emulate_trigger_smart_contract(
+        &mut grpc,
+        telemetry,
+        &wallet,
+        TronAddress::from_evm(tron_usdt),
+        &alloy::primitives::Bytes::from(data),
+        0,
+    )
+    .await
 }
 
 pub async fn build_proof(cfg: &TronConfig, jobs: &JobConfig, txid: [u8; 32]) -> Result<TronProof> {
@@ -280,6 +352,17 @@ async fn build_proof_with(
     loop {
         match builder.build(grpc, txid).await {
             Ok(bundle) => {
+                let info = grpc
+                    .get_transaction_info_by_id(txid)
+                    .await
+                    .context("get_transaction_info_by_id (post-finality)")?;
+                let failed = info.block_number > 0
+                    && info.result == tron::protocol::transaction_info::Code::Failed as i32;
+                if failed {
+                    let msg = String::from_utf8_lossy(&info.res_message).into_owned();
+                    anyhow::bail!("tron_tx_failed: {msg}");
+                }
+
                 let proof = bundle
                     .proof
                     .into_iter()
@@ -300,5 +383,67 @@ async fn build_proof_with(
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
         }
+    }
+}
+
+async fn emulate_trigger_smart_contract(
+    grpc: &mut TronGrpc,
+    telemetry: &SolverTelemetry,
+    wallet: &TronWallet,
+    contract: TronAddress,
+    data: &alloy::primitives::Bytes,
+    call_value_sun: i64,
+) -> Result<i64> {
+    let msg = tron::protocol::TriggerSmartContract {
+        owner_address: wallet.address().prefixed_bytes().to_vec(),
+        contract_address: contract.prefixed_bytes().to_vec(),
+        call_value: call_value_sun,
+        data: data.to_vec(),
+        call_token_value: 0,
+        token_id: 0,
+    };
+
+    let started = std::time::Instant::now();
+    let est = grpc.estimate_energy(msg).await.context("EstimateEnergy")?;
+    let ok = est.result.as_ref().map(|r| r.result).unwrap_or(false);
+    telemetry.tron_grpc_ms("estimate_energy", ok, started.elapsed().as_millis() as u64);
+
+    let Some(ret) = est.result else {
+        anyhow::bail!("emulation_failed: missing result");
+    };
+    if !ret.result {
+        let msg_utf8 = String::from_utf8_lossy(&ret.message).into_owned();
+        match tron::protocol::r#return::ResponseCode::try_from(ret.code) {
+            Ok(tron::protocol::r#return::ResponseCode::ContractValidateError)
+            | Ok(tron::protocol::r#return::ResponseCode::ContractExeError) => {
+                anyhow::bail!(
+                    "emulation_revert: code={} msg_hex=0x{} msg_utf8={}",
+                    ret.code,
+                    hex::encode(&ret.message),
+                    msg_utf8
+                );
+            }
+            _ => {
+                anyhow::bail!(
+                    "emulation_failed: code={} msg_hex=0x{} msg_utf8={}",
+                    ret.code,
+                    hex::encode(&ret.message),
+                    msg_utf8
+                );
+            }
+        }
+    }
+
+    Ok(est.energy_required)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emulation_revert_marker_is_stable() {
+        let msg = anyhow::anyhow!("emulation_revert: code=3 msg_hex=0x00 msg_utf8=oops");
+        assert!(msg.to_string().contains("emulation_revert:"));
     }
 }

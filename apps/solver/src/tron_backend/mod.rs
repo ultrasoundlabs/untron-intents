@@ -55,6 +55,12 @@ pub enum TronExecution {
     PreparedTx(TronPreparedTx),
 }
 
+#[derive(Debug, Clone)]
+pub struct EmulationCheck {
+    pub ok: bool,
+    pub reason: Option<String>,
+}
+
 impl TronBackend {
     pub fn new(cfg: TronConfig, jobs: JobConfig, telemetry: SolverTelemetry) -> Self {
         Self {
@@ -161,6 +167,62 @@ impl TronBackend {
                     energy_required: p.energy_required,
                     tx_size_bytes: p.tx_size_bytes,
                 }))
+            }
+        }
+    }
+
+    pub async fn precheck_emulation(
+        &self,
+        hub: &HubClient,
+        ty: crate::types::IntentType,
+        intent_specs: &[u8],
+    ) -> EmulationCheck {
+        if self.cfg.mode != TronMode::Grpc || !self.cfg.emulation_enabled {
+            return EmulationCheck {
+                ok: true,
+                reason: None,
+            };
+        }
+
+        let res = match ty {
+            crate::types::IntentType::TriggerSmartContract => {
+                grpc::emulate_trigger_smart_contract_intent(
+                    &self.cfg,
+                    &self.telemetry,
+                    intent_specs,
+                )
+                .await
+                .map(|_| ())
+            }
+            crate::types::IntentType::UsdtTransfer => {
+                grpc::emulate_usdt_transfer_intent(hub, &self.cfg, &self.telemetry, intent_specs)
+                    .await
+                    .map(|_| ())
+            }
+            _ => Ok(()),
+        };
+
+        match res {
+            Ok(()) => EmulationCheck {
+                ok: true,
+                reason: None,
+            },
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("emulation_revert:") {
+                    return EmulationCheck {
+                        ok: false,
+                        reason: Some("tron_emulation_revert".to_string()),
+                    };
+                }
+                tracing::warn!(
+                    err = %err,
+                    "tron emulation check failed; continuing without gating"
+                );
+                EmulationCheck {
+                    ok: true,
+                    reason: None,
+                }
             }
         }
     }
