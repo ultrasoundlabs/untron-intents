@@ -295,7 +295,7 @@ Important:
 
 ## Milestones / checkboxes
 
-Status note (as of 2026-02-02): The solver has an MVP that fills:
+Status note (as of 2026-02-03): The solver has an MVP that fills:
 - `TRX_TRANSFER`, `USDT_TRANSFER`, `DELEGATE_RESOURCE` in `TRON_MODE=mock`
 - `TRX_TRANSFER`, `USDT_TRANSFER`, `DELEGATE_RESOURCE`, `TRIGGER_SMART_CONTRACT` in `TRON_MODE=grpc`
 and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alto bundler e2e exists).
@@ -333,16 +333,18 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
   - persist tx bytes + txid.
 - [x] Proof builder for `TransferContract` fills.
 - [x] Hub prove submission and confirmation.
-- [~] Optional: multi-key TRX consolidation pre-txs.
-  - Implemented: `TRON_PRIVATE_KEYS_HEX_CSV` + `SOLVER_CONSOLIDATION_*` produce `pre:*` tron_signed_txs steps.
-  - Remaining: explicit amount caps + profitability adjustment for extra pre-tx fees.
+- [x] Optional: multi-key TRX consolidation pre-txs.
+  - Implemented: `TRON_PRIVATE_KEYS_HEX_CSV` + `SOLVER_CONSOLIDATION_*` produce deterministic `pre:*` steps, persisted as signed tx bytes.
+  - Caps: `SOLVER_CONSOLIDATION_MAX_{TOTAL,PER_TX}_TRX_PULL_SUN` + `SOLVER_CONSOLIDATION_MAX_PRE_TXS`.
+  - Profitability: Tron fee estimate scales with `(1 + required_pre_txs)` computed during pre-claim inventory check.
 
 ### Phase 3: USDT transfer
 
 - [x] Implement USDT transfer execution on Tron (one allowed call shape first).
-- [~] Add optional consolidation planning for USDT with strict limits.
-  - Implemented: multi-key inventory + best-effort consolidation pre-txs behind env flags.
-  - Remaining: explicit amount caps + profitability adjustment for extra pre-tx fees.
+- [x] Add optional consolidation planning for USDT with strict limits.
+  - Implemented: multi-key inventory + deterministic consolidation pre-txs behind env flags, persisted as signed tx bytes.
+  - Caps: `SOLVER_CONSOLIDATION_MAX_{TOTAL,PER_TX}_USDT_PULL_AMOUNT` + `SOLVER_CONSOLIDATION_MAX_PRE_TXS`.
+  - Profitability: Tron fee estimate scales with `(1 + required_pre_txs)` computed during pre-claim inventory check.
 - [x] Proof builder for `TriggerSmartContract` fills.
 - [~] Profitability model expanded to include TRX/USD.
   - Implemented as best-effort TRX/USD cache + intent-type cost estimation.
@@ -350,6 +352,8 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
     (with lookback + headroom + fallback constant).
   - Tron costs: realized `TransactionInfo.fee` (+ receipt breakdown) are persisted in `solver.tron_tx_costs` and fed back
     into profitability as a rolling `fee_sun` average with headroom (fallback to `SOLVER_TRON_FEE_USD` if empty).
+  - Note: consolidation pre-txs are costed explicitly by scaling the per-tx fee estimate by `(1 + required_pre_txs)`.
+    (We also store `intent_type` in `solver.tron_tx_costs` to keep per-type rolling averages from being polluted by pre-txs.)
 
 ### Phase 4: Resource delegation
 

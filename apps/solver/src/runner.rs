@@ -309,8 +309,53 @@ impl Solver {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
+        let ty = IntentType::from_i16(row.intent_type)?;
+
+        // Pre-claim inventory check for multi-key TRX/USDT: if we can't fill (and can't consolidate
+        // within configured limits), skip before we spend the claim deposit.
+        let mut required_pre_txs: usize = 0;
+        if self.cfg.tron.mode == TronMode::Grpc
+            && matches!(ty, IntentType::TrxTransfer | IntentType::UsdtTransfer)
+            && (self.cfg.tron.private_keys.len() > 1 || self.cfg.jobs.consolidation_enabled)
+        {
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            match self
+                .tron
+                .can_fill_preclaim(self.hub.as_ref(), ty, &specs)
+                .await
+            {
+                Ok(inv) => {
+                    required_pre_txs = inv.required_pre_txs;
+                    if !inv.ok {
+                        if let Ok(id) = parse_b256(&row.id) {
+                            let details = serde_json::json!({
+                                "reason": inv.reason,
+                                "required_pre_txs": inv.required_pre_txs,
+                            })
+                            .to_string();
+                            let _ = self
+                                .db
+                                .upsert_intent_skip(
+                                    b256_to_bytes32(id),
+                                    row.intent_type,
+                                    inv.reason.unwrap_or("inventory_insufficient"),
+                                    Some(&details),
+                                )
+                                .await;
+                        }
+                        return Ok(false);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(err = %err, "preclaim inventory check failed; continuing");
+                }
+            }
+        }
+
         let hub_cost_usd = self.estimate_hub_cost_usd().await?;
-        let tron_fee_usd = self.estimate_tron_fee_usd(row.intent_type).await?;
+        let tron_fee_usd_per_tx = self.estimate_tron_fee_usd(row.intent_type).await?;
+        let tron_fee_usd = tron_fee_usd_per_tx * (1.0 + required_pre_txs as f64);
+
         let eval = self
             .policy
             .evaluate_open_intent(row, now, &mut self.pricing, hub_cost_usd, tron_fee_usd)
@@ -353,7 +398,6 @@ impl Solver {
 
         // Optional Tron emulation gating: avoid claiming intents we know will revert.
         if self.cfg.tron.emulation_enabled && self.cfg.tron.mode == TronMode::Grpc {
-            let ty = IntentType::from_i16(row.intent_type)?;
             if matches!(
                 ty,
                 IntentType::TriggerSmartContract | IntentType::UsdtTransfer
@@ -423,38 +467,6 @@ impl Solver {
                         return Ok(false);
                     }
                 }
-            }
-        }
-
-        // Pre-claim inventory check for multi-key TRX/USDT: if we can't fill (and can't consolidate
-        // within configured limits), skip before we spend the claim deposit.
-        if self.cfg.tron.mode == TronMode::Grpc
-            && matches!(
-                IntentType::from_i16(row.intent_type)?,
-                IntentType::TrxTransfer | IntentType::UsdtTransfer
-            )
-            && (self.cfg.tron.private_keys.len() > 1 || self.cfg.jobs.consolidation_enabled)
-        {
-            let ty = IntentType::from_i16(row.intent_type)?;
-            let specs = parse_hex_bytes(&row.intent_specs)?;
-            let ok = self
-                .tron
-                .can_fill_preclaim(self.hub.as_ref(), ty, &specs)
-                .await
-                .unwrap_or(true);
-            if !ok {
-                if let Ok(id) = parse_b256(&row.id) {
-                    let _ = self
-                        .db
-                        .upsert_intent_skip(
-                            b256_to_bytes32(id),
-                            row.intent_type,
-                            "inventory_insufficient",
-                            None,
-                        )
-                        .await;
-                }
-                return Ok(false);
             }
         }
 
@@ -1176,7 +1188,12 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                             };
                             let _ = ctx
                                 .db
-                                .upsert_tron_tx_costs(job.job_id, row.txid, &costs)
+                                .upsert_tron_tx_costs(
+                                    job.job_id,
+                                    row.txid,
+                                    Some(job.intent_type),
+                                    &costs,
+                                )
                                 .await;
                             break;
                         }
@@ -1307,7 +1324,10 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                     result_code: Some(info.result),
                     result_message: Some(String::from_utf8_lossy(&info.res_message).into_owned()),
                 };
-                let _ = ctx.db.upsert_tron_tx_costs(job.job_id, txid, &costs).await;
+                let _ = ctx
+                    .db
+                    .upsert_tron_tx_costs(job.job_id, txid, Some(job.intent_type), &costs)
+                    .await;
             }
 
             ctx.db

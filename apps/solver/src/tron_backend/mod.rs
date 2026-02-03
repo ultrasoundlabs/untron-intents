@@ -60,6 +60,13 @@ pub struct TronPreparedPlan {
     pub final_tx: TronPreparedTx,
 }
 
+#[derive(Debug, Clone)]
+pub struct InventoryCheck {
+    pub ok: bool,
+    pub reason: Option<&'static str>,
+    pub required_pre_txs: usize,
+}
+
 pub enum TronExecution {
     ImmediateProof(crate::hub::TronProof),
     PreparedTx(TronPreparedTx),
@@ -221,6 +228,12 @@ impl TronBackend {
             anyhow::bail!("insufficient TRX balance (cannot consolidate within limits)");
         };
 
+        validate_trx_consolidation_caps(
+            &plan,
+            self.jobs.consolidation_max_total_trx_pull_sun,
+            self.jobs.consolidation_max_per_tx_trx_pull_sun,
+        )?;
+
         let executor = wallets[plan.executor_index].address();
         let mut pre_txs = Vec::with_capacity(plan.transfers.len());
         for (from_idx, amt) in plan.transfers {
@@ -361,6 +374,12 @@ impl TronBackend {
             anyhow::bail!("insufficient USDT balance (cannot consolidate within limits)");
         };
 
+        validate_trc20_consolidation_caps(
+            &plan,
+            self.jobs.consolidation_max_total_usdt_pull_amount,
+            self.jobs.consolidation_max_per_tx_usdt_pull_amount,
+        )?;
+
         let executor = wallets[plan.executor_index].address();
         let mut pre_txs = Vec::with_capacity(plan.transfers.len());
         for (from_idx, amt) in plan.transfers {
@@ -408,18 +427,30 @@ impl TronBackend {
         hub: &HubClient,
         ty: crate::types::IntentType,
         intent_specs: &[u8],
-    ) -> Result<bool> {
+    ) -> Result<InventoryCheck> {
         if self.cfg.mode != TronMode::Grpc {
-            return Ok(true);
+            return Ok(InventoryCheck {
+                ok: true,
+                reason: None,
+                required_pre_txs: 0,
+            });
         }
         if self.cfg.private_keys.is_empty() {
-            return Ok(false);
+            return Ok(InventoryCheck {
+                ok: false,
+                reason: Some("no_tron_keys"),
+                required_pre_txs: 0,
+            });
         }
         if !matches!(
             ty,
             crate::types::IntentType::TrxTransfer | crate::types::IntentType::UsdtTransfer
         ) {
-            return Ok(true);
+            return Ok(InventoryCheck {
+                ok: true,
+                reason: None,
+                required_pre_txs: 0,
+            });
         }
 
         // Quick inventory check (no signing): can any key fill, or can we consolidate within limits?
@@ -446,18 +477,52 @@ impl TronBackend {
                     .iter()
                     .any(|b| *b >= amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN))
                 {
-                    return Ok(true);
+                    return Ok(InventoryCheck {
+                        ok: true,
+                        reason: None,
+                        required_pre_txs: 0,
+                    });
                 }
                 if !self.jobs.consolidation_enabled {
-                    return Ok(false);
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("consolidation_disabled"),
+                        required_pre_txs: 0,
+                    });
                 }
                 let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
-                Ok(plan_trx_consolidation(
+                let Some(plan) = plan_trx_consolidation(
                     &balances,
                     amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN),
                     max_pre_txs,
                 )?
-                .is_some())
+                else {
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("cannot_consolidate"),
+                        required_pre_txs: 0,
+                    });
+                };
+
+                if validate_trx_consolidation_caps(
+                    &plan,
+                    self.jobs.consolidation_max_total_trx_pull_sun,
+                    self.jobs.consolidation_max_per_tx_trx_pull_sun,
+                )
+                .is_err()
+                {
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("consolidation_caps"),
+                        required_pre_txs: plan.transfers.len(),
+                    });
+                }
+
+                Ok(InventoryCheck {
+                    ok: true,
+                    reason: None,
+                    required_pre_txs: plan.transfers.len(),
+                })
             }
             crate::types::IntentType::UsdtTransfer => {
                 let intent = USDTTransferIntent::abi_decode(intent_specs)
@@ -479,15 +544,55 @@ impl TronBackend {
                     *b >= amount_u64
                         && trx_balances.get(i).copied().unwrap_or(0) >= BALANCE_RESERVE_SUN
                 }) {
-                    return Ok(true);
+                    return Ok(InventoryCheck {
+                        ok: true,
+                        reason: None,
+                        required_pre_txs: 0,
+                    });
                 }
                 if !self.jobs.consolidation_enabled {
-                    return Ok(false);
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("consolidation_disabled"),
+                        required_pre_txs: 0,
+                    });
                 }
                 let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
-                Ok(plan_trc20_consolidation(&token_balances, amount_u64, max_pre_txs)?.is_some())
+                let Some(plan) =
+                    plan_trc20_consolidation(&token_balances, amount_u64, max_pre_txs)?
+                else {
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("cannot_consolidate"),
+                        required_pre_txs: 0,
+                    });
+                };
+
+                if validate_trc20_consolidation_caps(
+                    &plan,
+                    self.jobs.consolidation_max_total_usdt_pull_amount,
+                    self.jobs.consolidation_max_per_tx_usdt_pull_amount,
+                )
+                .is_err()
+                {
+                    return Ok(InventoryCheck {
+                        ok: false,
+                        reason: Some("consolidation_caps"),
+                        required_pre_txs: plan.transfers.len(),
+                    });
+                }
+
+                Ok(InventoryCheck {
+                    ok: true,
+                    reason: None,
+                    required_pre_txs: plan.transfers.len(),
+                })
             }
-            _ => Ok(true),
+            _ => Ok(InventoryCheck {
+                ok: true,
+                reason: None,
+                required_pre_txs: 0,
+            }),
         }
     }
 
@@ -633,4 +738,42 @@ pub(super) fn tron_sender_from_privkey_or_fallback(
         }
     }
     evm_to_tron_raw21(hub.solver_address())
+}
+
+fn validate_trx_consolidation_caps(
+    plan: &planner::TrxConsolidationPlan,
+    max_total_pull_sun: u64,
+    max_per_tx_pull_sun: u64,
+) -> Result<()> {
+    let total: i64 = plan.transfers.iter().map(|(_, a)| *a).sum();
+    if max_total_pull_sun > 0 && total > i64::try_from(max_total_pull_sun).unwrap_or(i64::MAX) {
+        anyhow::bail!("consolidation max_total_trx_pull_sun exceeded");
+    }
+    if max_per_tx_pull_sun > 0 {
+        let cap = i64::try_from(max_per_tx_pull_sun).unwrap_or(i64::MAX);
+        if plan.transfers.iter().any(|(_, a)| *a > cap) {
+            anyhow::bail!("consolidation max_per_tx_trx_pull_sun exceeded");
+        }
+    }
+    Ok(())
+}
+
+fn validate_trc20_consolidation_caps(
+    plan: &planner::Trc20ConsolidationPlan,
+    max_total_pull_amount: u64,
+    max_per_tx_pull_amount: u64,
+) -> Result<()> {
+    let total: u64 = plan.transfers.iter().map(|(_, a)| *a).sum();
+    if max_total_pull_amount > 0 && total > max_total_pull_amount {
+        anyhow::bail!("consolidation max_total_usdt_pull_amount exceeded");
+    }
+    if max_per_tx_pull_amount > 0
+        && plan
+            .transfers
+            .iter()
+            .any(|(_, a)| *a > max_per_tx_pull_amount)
+    {
+        anyhow::bail!("consolidation max_per_tx_usdt_pull_amount exceeded");
+    }
+    Ok(())
 }

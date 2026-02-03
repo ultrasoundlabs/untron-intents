@@ -21,6 +21,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, include_str!("../db/migrations/0008_hub_userop_gas.sql")),
     (9, include_str!("../db/migrations/0009_intent_skips.sql")),
     (10, include_str!("../db/migrations/0010_tron_tx_costs.sql")),
+    (
+        11,
+        include_str!("../db/migrations/0011_tron_tx_costs_intent_type.sql"),
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -937,18 +941,20 @@ impl SolverDb {
         &self,
         job_id: i64,
         txid: [u8; 32],
+        intent_type: Option<i16>,
         costs: &TronTxCostsRow,
     ) -> Result<()> {
         sqlx::query(
             "insert into solver.tron_tx_costs( \
-                txid, job_id, fee_sun, energy_usage_total, net_usage, energy_fee_sun, net_fee_sun, \
+                txid, job_id, intent_type, fee_sun, energy_usage_total, net_usage, energy_fee_sun, net_fee_sun, \
                 block_number, block_timestamp, result_code, result_message, updated_at \
              ) values ( \
-                $1, $2, $3, $4, $5, $6, $7, \
-                $8, $9, $10, $11, now() \
+                $1, $2, $3, $4, $5, $6, $7, $8, \
+                $9, $10, $11, $12, now() \
              ) \
              on conflict (txid) do update set \
                 job_id = excluded.job_id, \
+                intent_type = excluded.intent_type, \
                 fee_sun = excluded.fee_sun, \
                 energy_usage_total = excluded.energy_usage_total, \
                 net_usage = excluded.net_usage, \
@@ -962,6 +968,7 @@ impl SolverDb {
         )
         .bind(txid.to_vec())
         .bind(job_id)
+        .bind(intent_type)
         .bind(costs.fee_sun)
         .bind(costs.energy_usage_total)
         .bind(costs.net_usage)
@@ -988,9 +995,8 @@ impl SolverDb {
              from ( \
                select c.fee_sun \
                from solver.tron_tx_costs c \
-               join solver.jobs j on j.job_id = c.job_id \
                where c.fee_sun is not null \
-                 and j.intent_type = $1 \
+                 and c.intent_type = $1 \
                order by c.updated_at desc \
                limit $2 \
              ) t",

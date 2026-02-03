@@ -142,6 +142,14 @@ pub struct JobConfig {
     pub consolidation_enabled: bool,
     /// Maximum number of pre-transactions per job.
     pub consolidation_max_pre_txs: u64,
+    /// Maximum total TRX pulled into executor across all pre-transactions (SUN). 0 = unlimited.
+    pub consolidation_max_total_trx_pull_sun: u64,
+    /// Maximum TRX pulled in a single pre-transaction (SUN). 0 = unlimited.
+    pub consolidation_max_per_tx_trx_pull_sun: u64,
+    /// Maximum total USDT pulled into executor across all pre-transactions (token base units). 0 = unlimited.
+    pub consolidation_max_total_usdt_pull_amount: u64,
+    /// Maximum USDT pulled in a single pre-transaction (token base units). 0 = unlimited.
+    pub consolidation_max_per_tx_usdt_pull_amount: u64,
 
     pub controller_rebalance_threshold_usdt: String,
     pub controller_rebalance_keep_usdt: String,
@@ -258,6 +266,14 @@ struct Env {
     solver_consolidation_enabled: bool,
     #[serde(default)]
     solver_consolidation_max_pre_txs: u64,
+    #[serde(default)]
+    solver_consolidation_max_total_trx_pull_sun: u64,
+    #[serde(default)]
+    solver_consolidation_max_per_tx_trx_pull_sun: u64,
+    #[serde(default)]
+    solver_consolidation_max_total_usdt_pull_amount: u64,
+    #[serde(default)]
+    solver_consolidation_max_per_tx_usdt_pull_amount: u64,
 
     controller_rebalance_threshold_usdt: String,
 
@@ -399,6 +415,10 @@ impl Default for Env {
             solver_concurrency_tron_broadcast: 1,
             solver_consolidation_enabled: false,
             solver_consolidation_max_pre_txs: 0,
+            solver_consolidation_max_total_trx_pull_sun: 0,
+            solver_consolidation_max_per_tx_trx_pull_sun: 0,
+            solver_consolidation_max_total_usdt_pull_amount: 0,
+            solver_consolidation_max_per_tx_usdt_pull_amount: 0,
             controller_rebalance_threshold_usdt: "0".to_string(),
             controller_rebalance_keep_usdt: "1".to_string(),
             pull_liquidity_ppm: 500_000,
@@ -829,6 +849,12 @@ pub fn load_config() -> Result<AppConfig> {
             concurrency_tron_broadcast: env.solver_concurrency_tron_broadcast.max(1),
             consolidation_enabled: env.solver_consolidation_enabled,
             consolidation_max_pre_txs: env.solver_consolidation_max_pre_txs,
+            consolidation_max_total_trx_pull_sun: env.solver_consolidation_max_total_trx_pull_sun,
+            consolidation_max_per_tx_trx_pull_sun: env.solver_consolidation_max_per_tx_trx_pull_sun,
+            consolidation_max_total_usdt_pull_amount: env
+                .solver_consolidation_max_total_usdt_pull_amount,
+            consolidation_max_per_tx_usdt_pull_amount: env
+                .solver_consolidation_max_per_tx_usdt_pull_amount,
             controller_rebalance_threshold_usdt: env.controller_rebalance_threshold_usdt,
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
             pull_liquidity_ppm: env.pull_liquidity_ppm.min(1_000_000),
