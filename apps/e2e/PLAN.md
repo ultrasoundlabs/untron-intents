@@ -45,7 +45,7 @@ Conventions:
 ## P0 — Safe4337 correctness (AA nonces/receipts/failure modes)
 
 - [ ] **Safe4337: nonce-floor / “AA25 invalid account nonce” recovery**
-  - [ ] Add test `apps/e2e/tests/solver_safe4337_nonce_recovery.rs`
+  - [x] Add test `apps/e2e/tests/solver_safe4337_nonce_recovery.rs`
   - [ ] Force a stale prepared userop scenario (sleep/backoff or inject extra userop externally).
   - [ ] Assert solver deletes stale prepared ops and re-prepares with a valid nonce.
   - Done when: the job completes without manual intervention and receipts are persisted.
@@ -78,7 +78,7 @@ Conventions:
   - Done when: the solver resumes claiming once lag is below threshold (or after indexer catches up).
 
 - [ ] **PostgREST outage / flakiness handling**
-  - [ ] Add test `apps/e2e/tests/solver_postgrest_outage.rs`
+  - [x] Add test `apps/e2e/tests/solver_postgrest_outage.rs`
   - [ ] Kill PostgREST during run; keep solver running; restart PostgREST.
   - [ ] Assert solver recovers and continues (no permanent fatal, no duplicate fills).
   - Done when: jobs still reach `done` and errors remain retryable.
