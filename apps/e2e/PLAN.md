@@ -25,14 +25,15 @@ Conventions:
   - [x] Create a second intent with same `(contract, selector)` and assert it is skipped without claiming.
   - Done when: breaker activation + suppression is deterministic and persisted across solver restart.
 
-- [ ] **USDT_TRANSFER intent on real Tron gRPC**
-  - [ ] Add test `apps/e2e/tests/solver_usdt_tron_grpc.rs`
-  - [ ] Run `tronbox/tre` (as in existing Tron gRPC tests).
-  - [ ] Ensure the solver has TRC20 balance on Tron (mint/transfer on private chain).
-  - [ ] Create `USDT_TRANSFER` intent and assert:
-    - [ ] intent becomes `solved/funded/settled` via indexer projections
-    - [ ] the Tron tx is a `TriggerSmartContract` to Tron USDT with `transfer(to, amount)` calldata
+- [x] **USDT_TRANSFER intent on real Tron gRPC**
+  - [x] Add test `apps/e2e/tests/solver_usdt_tron_grpc.rs`
+  - [x] Run `tronbox/tre` (as in existing Tron gRPC tests).
+  - [x] Ensure the solver has TRC20 balance on Tron (stub token returns large `balanceOf` without SSTORE).
+  - [x] Create `USDT_TRANSFER` intent and assert:
+    - [x] intent becomes `solved/funded/settled` via indexer projections
+    - [x] the Tron tx is a `TriggerSmartContract` to Tron USDT with `transfer(to, amount)` calldata
   - Done when: the test validates both hub settlement *and* Tron-side tx fields match intent specs.
+  - Note: this uses a TRC20-like stub token (no storage writes) so it does not assert receiver balance changes.
 
 - [ ] **Multi-key Tron inventory + consolidation plan is correct and restart-safe**
   - [x] Add test `apps/e2e/tests/solver_tron_consolidation.rs`

@@ -1,8 +1,9 @@
 use super::protocol::{
     Account, AccountResourceMessage, BlockExtention, BytesMessage, ChainParameters,
-    DelegateResourceContract, EmptyMessage, EstimateEnergyMessage, FreezeBalanceV2Contract,
-    NumberMessage, Return, Transaction, TransactionExtention, TransactionInfo, TransferContract,
-    TriggerSmartContract, UnDelegateResourceContract, wallet_client::WalletClient,
+    CreateSmartContract, DelegateResourceContract, EmptyMessage, EstimateEnergyMessage,
+    FreezeBalanceV2Contract, NumberMessage, Return, Transaction, TransactionExtention,
+    TransactionInfo, TransferContract, TriggerSmartContract, UnDelegateResourceContract,
+    wallet_client::WalletClient,
 };
 use anyhow::{Context, Result};
 use bytes::{Buf, BufMut, Bytes};
@@ -145,6 +146,18 @@ impl TronGrpc {
             .trigger_constant_contract(self.req(msg))
             .await
             .context("TriggerConstantContract")?;
+        Ok(resp.into_inner())
+    }
+
+    pub async fn deploy_contract(
+        &mut self,
+        msg: CreateSmartContract,
+    ) -> Result<TransactionExtention> {
+        let resp = self
+            .wallet
+            .deploy_contract(self.req(msg))
+            .await
+            .context("DeployContract")?;
         Ok(resp.into_inner())
     }
 

@@ -1,7 +1,7 @@
 use super::grpc::TronGrpc;
 use super::protocol::{
-    DelegateResourceContract, FreezeBalanceV2Contract, Transaction, TransferContract,
-    TriggerSmartContract,
+    CreateSmartContract, DelegateResourceContract, FreezeBalanceV2Contract, SmartContract,
+    Transaction, TransferContract, TriggerSmartContract,
 };
 use super::resources::{parse_chain_fees, quote_fee_limit_sun};
 use super::{TronAddress, TronWallet};
@@ -35,6 +35,63 @@ pub struct SignedTronTx {
 }
 
 impl TronWallet {
+    /// Builds and signs a contract deployment (`CreateSmartContract`) tx.
+    ///
+    /// Notes:
+    /// - This uses the node's `DeployContract` to construct the tx skeleton (ref block bytes/hash/etc).
+    /// - `fee_limit_sun` is applied locally at signing time (the node tx skeleton may omit it).
+    pub async fn build_and_sign_deploy_contract(
+        &self,
+        grpc: &mut TronGrpc,
+        name: &str,
+        bytecode: Vec<u8>,
+        fee_limit_sun: i64,
+        consume_user_resource_percent: i64,
+        origin_energy_limit: i64,
+    ) -> Result<SignedTronTx> {
+        let owner = self.address.prefixed_bytes().to_vec();
+
+        let tx_ext = grpc
+            .deploy_contract(CreateSmartContract {
+                owner_address: owner.clone(),
+                new_contract: Some(SmartContract {
+                    origin_address: owner,
+                    name: name.to_string(),
+                    bytecode,
+                    consume_user_resource_percent,
+                    origin_energy_limit,
+                    ..Default::default()
+                }),
+                call_token_value: 0,
+                token_id: 0,
+            })
+            .await
+            .context("deploy_contract")?;
+
+        if tx_ext.transaction.is_none() {
+            let msg = tx_ext
+                .result
+                .as_ref()
+                .map(|r| String::from_utf8_lossy(&r.message).into_owned())
+                .unwrap_or_else(|| "<missing>".to_string());
+            let ok = tx_ext.result.as_ref().map(|r| r.result);
+            anyhow::bail!("node returned no transaction for DeployContract: ok={ok:?} msg={msg}");
+        }
+
+        let mut tx = tx_ext.transaction.context("node returned no transaction")?;
+        let raw = tx.raw_data.take().context("node returned no raw_data")?;
+        let (signed, txid, tx_size) =
+            self.sign_raw_with_fee_limit(raw, tx.ret.clone(), fee_limit_sun)?;
+
+        Ok(SignedTronTx {
+            tx: signed,
+            txid,
+            fee_limit_sun: u64::try_from(fee_limit_sun.max(0)).unwrap_or(u64::MAX),
+            energy_required: 0,
+            tx_size_bytes: tx_size,
+        })
+    }
+
     /// Builds and signs a FreezeBalanceV2 tx (Stake 2.0).
     pub async fn build_and_sign_freeze_balance_v2(
         &self,
@@ -188,8 +245,13 @@ impl TronWallet {
             })
             .await?
             .energy_required;
-        let energy_required =
+        let mut energy_required =
             u64::try_from(energy_required_i64).context("energy_required out of range")?;
+        // Some private Tron networks return `energy_required=0` even for state-changing calls.
+        // A too-small derived fee_limit causes nodes to reject txs with "Not enough energy".
+        if energy_required == 0 {
+            energy_required = 50_000;
+        }
 
         // Ask node to build the tx skeleton (ref block bytes/hash/etc).
         let tx_ext = grpc
