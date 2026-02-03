@@ -1,0 +1,110 @@
+# E2E Test Plan (Gaps / Next Coverage)
+
+This file is a prioritized checklist of important end-to-end behaviors that are **not** currently
+covered by `apps/e2e/tests/*.rs`, but we expect to have high confidence in for production.
+
+Conventions:
+- Priority: **P0** = critical safety/reliability, **P1** = important, **P2** = nice-to-have.
+- “Done when” bullets should be turned into concrete assertions (DB rows, onchain state, logs).
+- Prefer adding a new `apps/e2e/tests/<name>.rs` per behavior; add shared helpers in `apps/e2e/src/*`.
+
+## P0 — Protocol safety + money-moving correctness
+
+- [ ] **TriggerSmartContract intent (mock Tron) is fillable only when policy allows**
+  - [ ] Add test `apps/e2e/tests/solver_trigger_policy_mock.rs`
+  - [ ] Create a `TRIGGER_SMART_CONTRACT` intent with calldata selector present.
+  - [ ] Configure `SOLVER_TRIGGER_CONTRACT_ALLOWLIST_CSV` to include the target; assert it fills.
+  - [ ] Configure `SOLVER_TRIGGER_SELECTOR_DENYLIST_CSV` to deny the selector; assert it is skipped.
+  - [ ] Assert skip reason is persisted (e.g. `solver.intent_skips`) and job does not advance past `ready`.
+  - Done when: we have both “fills” and “rejects” cases, and the failure case never submits a hub-chain claim.
+
+- [ ] **TriggerSmartContract circuit breaker trips on repeated onchain failures**
+  - [ ] Add test `apps/e2e/tests/solver_trigger_breaker.rs`
+  - [ ] Use a deliberately failing trigger call (e.g., contract that always reverts).
+  - [ ] Assert `solver.breakers` is updated with `(contract, selector)` and becomes active.
+  - [ ] Create a second intent with same `(contract, selector)` and assert it is skipped without claiming.
+  - Done when: breaker activation + suppression is deterministic and persisted across solver restart.
+
+- [ ] **USDT_TRANSFER intent on real Tron gRPC**
+  - [ ] Add test `apps/e2e/tests/solver_usdt_tron_grpc.rs`
+  - [ ] Run `tronbox/tre` (as in existing Tron gRPC tests).
+  - [ ] Ensure the solver has TRC20 balance on Tron (mint/transfer on private chain).
+  - [ ] Create `USDT_TRANSFER` intent and assert:
+    - [ ] intent becomes `solved/funded/settled` via indexer projections
+    - [ ] the Tron tx is a `TriggerSmartContract` to Tron USDT with `transfer(to, amount)` calldata
+  - Done when: the test validates both hub settlement *and* Tron-side tx fields match intent specs.
+
+- [ ] **Multi-key Tron inventory + consolidation plan is correct and restart-safe**
+  - [ ] Add test `apps/e2e/tests/solver_tron_consolidation.rs`
+  - [ ] Configure `TRON_PRIVATE_KEYS_HEX_CSV` with ≥2 keys, and set `SOLVER_CONSOLIDATION_*` caps.
+  - [ ] Create TRX transfer intent that requires consolidation (no single key has enough funds).
+  - [ ] Assert `solver.tron_signed_txs` contains ordered `pre:*` steps + `final`.
+  - [ ] Kill the solver after some `pre:*` txs are broadcast; restart; ensure it resumes idempotently.
+  - Done when: no duplicate broadcasts and the final tx is never broadcast before hub claim is confirmed.
+
+## P0 — Safe4337 correctness (AA nonces/receipts/failure modes)
+
+- [ ] **Safe4337: nonce-floor / “AA25 invalid account nonce” recovery**
+  - [ ] Add test `apps/e2e/tests/solver_safe4337_nonce_recovery.rs`
+  - [ ] Force a stale prepared userop scenario (sleep/backoff or inject extra userop externally).
+  - [ ] Assert solver deletes stale prepared ops and re-prepares with a valid nonce.
+  - Done when: the job completes without manual intervention and receipts are persisted.
+
+- [ ] **Safe4337: “AlreadyClaimed” and other hub reverts are fatal and stop retries**
+  - [ ] Add test `apps/e2e/tests/solver_safe4337_already_claimed.rs`
+  - [ ] Create intent; claim it from a different address; let solver attempt.
+  - [ ] Assert solver records `failed_fatal` and does not keep re-submitting userops.
+  - Done when: DB state stabilizes (no growing attempts) and job is terminal.
+
+## P1 — Operational reliability + guardrails
+
+- [ ] **Profitability gating and pricing fallbacks**
+  - [ ] Add test `apps/e2e/tests/solver_profitability.rs`
+  - [ ] Set `SOLVER_MIN_PROFIT_USD` high; create small-escrow intents; assert they are skipped.
+  - [ ] Configure `SOLVER_REQUIRE_PRICED_ESCROW=true` and a non-allowed token; assert skip reason.
+  - [ ] Simulate pricing outage (invalid URL / timeouts) and assert solver falls back to configured costs.
+  - Done when: “skip” paths are asserted without any hub-chain claim submission.
+
+- [ ] **Rate limiting + global pause**
+  - [ ] Add test `apps/e2e/tests/solver_rate_limit_and_pause.rs`
+  - [ ] Configure `SOLVER_RATE_LIMIT_CLAIMS_PER_MINUTE_*` low; create N intents; assert claims are throttled.
+  - [ ] Trigger global pause (or set via DB) and assert ticks do not claim while paused.
+  - Done when: claim submission rate is bounded and pause is enforced across restarts.
+
+- [ ] **Indexer lag guard blocks claiming**
+  - [ ] Add test `apps/e2e/tests/solver_indexer_lag_guard.rs`
+  - [ ] Artificially advance hub head (produce blocks) without indexing them, then start solver.
+  - [ ] Assert solver logs “indexer lag too high” and does not claim.
+  - Done when: the solver resumes claiming once lag is below threshold (or after indexer catches up).
+
+- [ ] **PostgREST outage / flakiness handling**
+  - [ ] Add test `apps/e2e/tests/solver_postgrest_outage.rs`
+  - [ ] Kill PostgREST during run; keep solver running; restart PostgREST.
+  - [ ] Assert solver recovers and continues (no permanent fatal, no duplicate fills).
+  - Done when: jobs still reach `done` and errors remain retryable.
+
+## P1 — Tron error handling / fee mechanics
+
+- [ ] **Tron node busy / transient errors are retried with backoff**
+  - [ ] Add test `apps/e2e/tests/solver_tron_retry_backoff.rs`
+  - [ ] Inject failures (proxy gRPC or use a test Tron reader that returns SERVER_BUSY-like errors).
+  - [ ] Assert retryable errors bump `attempts` and set `next_retry_at` into the future.
+  - Done when: transient failures do not produce `failed_fatal`.
+
+- [ ] **Energy rental providers (if enabled) are exercised**
+  - [ ] Add test `apps/e2e/tests/solver_tron_energy_rental.rs`
+  - [ ] Configure `TRON_ENERGY_RENTAL_APIS_JSON` to a local stub and assert solver attempts rental.
+  - Done when: we assert the HTTP call shape and that the solver proceeds with expected fee limits.
+
+## P2 — Proof/security fidelity + adversarial scenarios
+
+- [ ] **Proof verification with signature validation (avoid “no-sig reader” shortcuts)**
+  - [ ] Add test `apps/e2e/tests/solver_tron_proof_sig_verified.rs`
+  - [ ] Use the real Tron tx reader path (or a strict reader contract) and assert prove succeeds only with valid tx bytes.
+  - Done when: the test fails if tx bytes are mutated or signature is missing.
+
+- [ ] **Competing solvers and “don’t broadcast final Tron tx until claim confirmed”**
+  - [ ] Add test `apps/e2e/tests/solver_competition_race.rs`
+  - [ ] Run two solver instances with different hub keys; ensure only claimant broadcasts final tx.
+  - Done when: non-claimant never produces a matching final Tron tx that could be stolen for proof.
+

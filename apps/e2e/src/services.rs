@@ -82,6 +82,43 @@ pub fn spawn_solver_mock_with_enabled_types(
     cmd.spawn().context("spawn solver (mock)")
 }
 
+pub fn spawn_solver_mock_custom(
+    db_url: &str,
+    postgrest_url: &str,
+    rpc_url: &str,
+    pool_contract: &str,
+    solver_private_key: &str,
+    mock_reader: &str,
+    instance_id: &str,
+    enabled_intent_types: &str,
+    extra_env: &[(&str, &str)],
+) -> Result<Child> {
+    let root = repo_root();
+    let mut cmd = Command::new(root.join("target/debug/solver"));
+    cmd.current_dir(&root)
+        .env("SOLVER_DB_URL", db_url)
+        .env("INDEXER_API_BASE_URL", postgrest_url)
+        .env("HUB_RPC_URL", rpc_url)
+        .env("HUB_POOL_ADDRESS", pool_contract)
+        .env("HUB_TX_MODE", "eoa")
+        .env("HUB_SIGNER_PRIVATE_KEY_HEX", solver_private_key)
+        .env("TRON_MODE", "mock")
+        .env("TRON_MOCK_READER_ADDRESS", mock_reader)
+        .env("SOLVER_INSTANCE_ID", instance_id)
+        .env("SOLVER_ENABLED_INTENT_TYPES", enabled_intent_types)
+        .env("SOLVER_TICK_INTERVAL_SECS", "1")
+        .env("RUST_LOG", "info")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
+    null_stdio(&mut cmd);
+    cmd.spawn().context("spawn solver (mock custom)")
+}
+
 pub fn spawn_solver_tron_grpc(
     db_url: &str,
     postgrest_url: &str,
