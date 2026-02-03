@@ -10,19 +10,19 @@ Conventions:
 
 ## P0 — Protocol safety + money-moving correctness
 
-- [ ] **TriggerSmartContract intent (mock Tron) is fillable only when policy allows**
-  - [ ] Add test `apps/e2e/tests/solver_trigger_policy_mock.rs`
-  - [ ] Create a `TRIGGER_SMART_CONTRACT` intent with calldata selector present.
-  - [ ] Configure `SOLVER_TRIGGER_CONTRACT_ALLOWLIST_CSV` to include the target; assert it fills.
-  - [ ] Configure `SOLVER_TRIGGER_SELECTOR_DENYLIST_CSV` to deny the selector; assert it is skipped.
-  - [ ] Assert skip reason is persisted (e.g. `solver.intent_skips`) and job does not advance past `ready`.
+- [x] **TriggerSmartContract intent (mock Tron) is fillable only when policy allows**
+  - [x] Add test `apps/e2e/tests/solver_trigger_policy_mock.rs`
+  - [x] Create a `TRIGGER_SMART_CONTRACT` intent with calldata selector present.
+  - [x] Configure `SOLVER_TRIGGER_CONTRACT_ALLOWLIST_CSV` to include the target; assert it fills.
+  - [x] Configure `SOLVER_TRIGGER_SELECTOR_DENYLIST_CSV` to deny the selector; assert it is skipped.
+  - [x] Assert skip reason is persisted (e.g. `solver.intent_skips`) and job does not advance past `ready`.
   - Done when: we have both “fills” and “rejects” cases, and the failure case never submits a hub-chain claim.
 
 - [ ] **TriggerSmartContract circuit breaker trips on repeated onchain failures**
-  - [ ] Add test `apps/e2e/tests/solver_trigger_breaker.rs`
+  - [x] Add test `apps/e2e/tests/solver_trigger_breaker.rs`
   - [ ] Use a deliberately failing trigger call (e.g., contract that always reverts).
-  - [ ] Assert `solver.breakers` is updated with `(contract, selector)` and becomes active.
-  - [ ] Create a second intent with same `(contract, selector)` and assert it is skipped without claiming.
+  - [ ] Assert `solver.circuit_breakers` is updated with `(contract, selector)` and becomes active.
+  - [x] Create a second intent with same `(contract, selector)` and assert it is skipped without claiming.
   - Done when: breaker activation + suppression is deterministic and persisted across solver restart.
 
 - [ ] **USDT_TRANSFER intent on real Tron gRPC**
@@ -50,31 +50,31 @@ Conventions:
   - [ ] Assert solver deletes stale prepared ops and re-prepares with a valid nonce.
   - Done when: the job completes without manual intervention and receipts are persisted.
 
-- [ ] **Safe4337: “AlreadyClaimed” and other hub reverts are fatal and stop retries**
-  - [ ] Add test `apps/e2e/tests/solver_safe4337_already_claimed.rs`
-  - [ ] Create intent; claim it from a different address; let solver attempt.
-  - [ ] Assert solver records `failed_fatal` and does not keep re-submitting userops.
+- [x] **Safe4337: “AlreadyClaimed” and other hub reverts are fatal and stop retries**
+  - [x] Add test `apps/e2e/tests/solver_safe4337_already_claimed.rs`
+  - [x] Create intent; claim it from a different address; let solver attempt.
+  - [x] Assert solver records `failed_fatal` and does not keep re-submitting userops.
   - Done when: DB state stabilizes (no growing attempts) and job is terminal.
 
 ## P1 — Operational reliability + guardrails
 
-- [ ] **Profitability gating and pricing fallbacks**
-  - [ ] Add test `apps/e2e/tests/solver_profitability.rs`
-  - [ ] Set `SOLVER_MIN_PROFIT_USD` high; create small-escrow intents; assert they are skipped.
-  - [ ] Configure `SOLVER_REQUIRE_PRICED_ESCROW=true` and a non-allowed token; assert skip reason.
-  - [ ] Simulate pricing outage (invalid URL / timeouts) and assert solver falls back to configured costs.
+- [x] **Profitability gating and pricing fallbacks**
+  - [x] Add test `apps/e2e/tests/solver_profitability.rs`
+  - [x] Set `SOLVER_MIN_PROFIT_USD` high; create small-escrow intents; assert they are skipped.
+  - [x] Configure `SOLVER_REQUIRE_PRICED_ESCROW=true` and a non-allowed token; assert skip reason.
+  - [x] Simulate pricing outage (invalid URL / timeouts) and assert solver falls back to configured costs.
   - Done when: “skip” paths are asserted without any hub-chain claim submission.
 
-- [ ] **Rate limiting + global pause**
-  - [ ] Add test `apps/e2e/tests/solver_rate_limit_and_pause.rs`
-  - [ ] Configure `SOLVER_RATE_LIMIT_CLAIMS_PER_MINUTE_*` low; create N intents; assert claims are throttled.
-  - [ ] Trigger global pause (or set via DB) and assert ticks do not claim while paused.
+- [x] **Rate limiting + global pause**
+  - [x] Add test `apps/e2e/tests/solver_rate_limit_and_pause.rs`
+  - [x] Configure `SOLVER_RATE_LIMIT_CLAIMS_PER_MINUTE_*` low; create N intents; assert claims are throttled.
+  - [x] Trigger global pause (or set via DB) and assert ticks do not claim while paused (`apps/e2e/tests/solver_global_pause.rs`).
   - Done when: claim submission rate is bounded and pause is enforced across restarts.
 
-- [ ] **Indexer lag guard blocks claiming**
-  - [ ] Add test `apps/e2e/tests/solver_indexer_lag_guard.rs`
-  - [ ] Artificially advance hub head (produce blocks) without indexing them, then start solver.
-  - [ ] Assert solver logs “indexer lag too high” and does not claim.
+- [x] **Indexer lag guard blocks claiming**
+  - [x] Add test `apps/e2e/tests/solver_indexer_lag_guard.rs`
+  - [x] Artificially advance hub head (produce blocks) without indexing them, then start solver.
+  - [x] Assert solver logs “indexer lag too high” and does not claim (via absence of `solver.jobs`).
   - Done when: the solver resumes claiming once lag is below threshold (or after indexer catches up).
 
 - [ ] **PostgREST outage / flakiness handling**
@@ -107,4 +107,3 @@ Conventions:
   - [ ] Add test `apps/e2e/tests/solver_competition_race.rs`
   - [ ] Run two solver instances with different hub keys; ensure only claimant broadcasts final tx.
   - Done when: non-claimant never produces a matching final Tron tx that could be stolen for proof.
-
