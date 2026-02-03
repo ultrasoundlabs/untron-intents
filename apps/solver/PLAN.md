@@ -333,11 +333,16 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
   - persist tx bytes + txid.
 - [x] Proof builder for `TransferContract` fills.
 - [x] Hub prove submission and confirmation.
+- [~] Optional: multi-key TRX consolidation pre-txs.
+  - Implemented: `TRON_PRIVATE_KEYS_HEX_CSV` + `SOLVER_CONSOLIDATION_*` produce `pre:*` tron_signed_txs steps.
+  - Remaining: explicit amount caps + profitability adjustment for extra pre-tx fees.
 
 ### Phase 3: USDT transfer
 
 - [x] Implement USDT transfer execution on Tron (one allowed call shape first).
-- [ ] Add optional consolidation planning for USDT with strict limits.
+- [~] Add optional consolidation planning for USDT with strict limits.
+  - Implemented: multi-key inventory + best-effort consolidation pre-txs behind env flags.
+  - Remaining: explicit amount caps + profitability adjustment for extra pre-tx fees.
 - [x] Proof builder for `TriggerSmartContract` fills.
 - [~] Profitability model expanded to include TRX/USD.
   - Implemented as best-effort TRX/USD cache + intent-type cost estimation.

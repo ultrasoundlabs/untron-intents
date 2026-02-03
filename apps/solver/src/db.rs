@@ -53,6 +53,16 @@ pub struct TronTxCostsRow {
     pub result_message: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TronSignedTxRow {
+    pub step: String,
+    pub txid: [u8; 32],
+    pub tx_bytes: Vec<u8>,
+    pub fee_limit_sun: Option<i64>,
+    pub energy_required: Option<i64>,
+    pub tx_size_bytes: Option<i64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HubUserOpKind {
     Claim,
@@ -361,6 +371,95 @@ impl SolverDb {
 
         tx.commit().await.context("commit tron_prepared tx")?;
         Ok(())
+    }
+
+    pub async fn record_tron_plan(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        pre_txs: &[TronSignedTxRow],
+        final_tx: &TronSignedTxRow,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.context("begin tron_plan tx")?;
+
+        // Replace any previous plan for this job idempotently.
+        sqlx::query("delete from solver.tron_signed_txs where job_id = $1")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await
+            .context("delete solver.tron_signed_txs (job plan)")?;
+
+        for row in pre_txs.iter().chain(std::iter::once(final_tx)) {
+            sqlx::query(
+                "insert into solver.tron_signed_txs(txid, job_id, step, tx_bytes, fee_limit_sun, energy_required, tx_size_bytes, updated_at) \
+                 values ($1, $2, $3, $4, $5, $6, $7, now()) \
+                 on conflict (txid) do update set \
+                    job_id = excluded.job_id, \
+                    step = excluded.step, \
+                    tx_bytes = excluded.tx_bytes, \
+                    fee_limit_sun = excluded.fee_limit_sun, \
+                    energy_required = excluded.energy_required, \
+                    tx_size_bytes = excluded.tx_size_bytes, \
+                    updated_at = now()",
+            )
+            .bind(row.txid.to_vec())
+            .bind(job_id)
+            .bind(&row.step)
+            .bind(&row.tx_bytes)
+            .bind(row.fee_limit_sun)
+            .bind(row.energy_required)
+            .bind(row.tx_size_bytes)
+            .execute(&mut *tx)
+            .await
+            .context("upsert solver.tron_signed_txs (plan row)")?;
+        }
+
+        let n = sqlx::query(
+            "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
+             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+        )
+        .bind(final_tx.txid.to_vec())
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&mut *tx)
+        .await
+        .context("record tron_prepared (plan)")?
+        .rows_affected();
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+
+        tx.commit().await.context("commit tron_plan tx")?;
+        Ok(())
+    }
+
+    pub async fn list_tron_signed_txs_for_job(&self, job_id: i64) -> Result<Vec<TronSignedTxRow>> {
+        let rows = sqlx::query(
+            "select step, txid, tx_bytes, fee_limit_sun, energy_required, tx_size_bytes \
+             from solver.tron_signed_txs \
+             where job_id = $1 \
+             order by (step = 'final')::int, step asc",
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("list solver.tron_signed_txs (job plan)")?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let txid: Vec<u8> = r.try_get("txid")?;
+            let mut t = [0u8; 32];
+            t.copy_from_slice(&txid);
+            out.push(TronSignedTxRow {
+                step: r.try_get("step")?,
+                txid: t,
+                tx_bytes: r.try_get("tx_bytes")?,
+                fee_limit_sun: r.try_get("fee_limit_sun")?,
+                energy_required: r.try_get("energy_required")?,
+                tx_size_bytes: r.try_get("tx_size_bytes")?,
+            });
+        }
+        Ok(out)
     }
 
     pub async fn load_tron_signed_tx_bytes(&self, txid: [u8; 32]) -> Result<Vec<u8>> {

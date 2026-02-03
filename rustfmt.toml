@@ -1,6 +1,0 @@
-# Don't format generated artifacts.
-#
-# `crates/bindings` is generated from contract ABIs; formatting it creates noisy diffs and risks
-# diverging from regeneration output.
-ignore = ["crates/bindings"]
-

@@ -1,7 +1,7 @@
 use crate::{
     config::{AppConfig, HubTxMode, TronMode},
     db::SolverDb,
-    db::{HubUserOpKind, SolverJob, TronProofRow, TronTxCostsRow},
+    db::{HubUserOpKind, SolverJob, TronProofRow, TronSignedTxRow, TronTxCostsRow},
     hub_cost::estimate_hub_cost_usd_from_userops,
     indexer::{IndexerClient, PoolOpenIntentRow},
     metrics::SolverTelemetry,
@@ -423,6 +423,38 @@ impl Solver {
                         return Ok(false);
                     }
                 }
+            }
+        }
+
+        // Pre-claim inventory check for multi-key TRX/USDT: if we can't fill (and can't consolidate
+        // within configured limits), skip before we spend the claim deposit.
+        if self.cfg.tron.mode == TronMode::Grpc
+            && matches!(
+                IntentType::from_i16(row.intent_type)?,
+                IntentType::TrxTransfer | IntentType::UsdtTransfer
+            )
+            && (self.cfg.tron.private_keys.len() > 1 || self.cfg.jobs.consolidation_enabled)
+        {
+            let ty = IntentType::from_i16(row.intent_type)?;
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            let ok = self
+                .tron
+                .can_fill_preclaim(self.hub.as_ref(), ty, &specs)
+                .await
+                .unwrap_or(true);
+            if !ok {
+                if let Ok(id) = parse_b256(&row.id) {
+                    let _ = self
+                        .db
+                        .upsert_intent_skip(
+                            b256_to_bytes32(id),
+                            row.intent_type,
+                            "inventory_insufficient",
+                            None,
+                        )
+                        .await;
+                }
+                return Ok(false);
             }
         }
 
@@ -930,27 +962,63 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 }
             } else {
                 tracing::info!(id = %id, "preparing tron tx (persist signed bytes)");
+                // TRX/USDT can optionally require consolidation (multi-key pre-txs). We persist the
+                // whole plan as (pre txs + final tx), then broadcast them in order in tron_prepared.
+                if matches!(ty, IntentType::TrxTransfer | IntentType::UsdtTransfer) {
+                    let plan = match ty {
+                        IntentType::TrxTransfer => ctx
+                            .tron
+                            .prepare_trx_transfer_plan(&job.intent_specs)
+                            .await
+                            .context("prepare trx transfer plan")?,
+                        IntentType::UsdtTransfer => ctx
+                            .tron
+                            .prepare_usdt_transfer_plan(ctx.hub.as_ref(), &job.intent_specs)
+                            .await
+                            .context("prepare usdt transfer plan")?,
+                        _ => unreachable!(),
+                    };
+
+                    let pre_rows = plan
+                        .pre_txs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| TronSignedTxRow {
+                            step: format!("pre:{i:04}"),
+                            txid: p.txid,
+                            tx_bytes: p.tx_bytes.clone(),
+                            fee_limit_sun: p.fee_limit_sun,
+                            energy_required: p.energy_required,
+                            tx_size_bytes: p.tx_size_bytes,
+                        })
+                        .collect::<Vec<_>>();
+                    let final_row = TronSignedTxRow {
+                        step: "final".to_string(),
+                        txid: plan.final_tx.txid,
+                        tx_bytes: plan.final_tx.tx_bytes,
+                        fee_limit_sun: plan.final_tx.fee_limit_sun,
+                        energy_required: plan.final_tx.energy_required,
+                        tx_size_bytes: plan.final_tx.tx_size_bytes,
+                    };
+
+                    ctx.db
+                        .record_tron_plan(job.job_id, &ctx.instance_id, &pre_rows, &final_row)
+                        .await?;
+                    return Ok(());
+                }
+
                 let exec_res = match ty {
                     IntentType::TriggerSmartContract => ctx
                         .tron
                         .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs)
                         .await
                         .context("prepare trigger smart contract"),
-                    IntentType::TrxTransfer => ctx
-                        .tron
-                        .prepare_trx_transfer(ctx.hub.as_ref(), id, &job.intent_specs)
-                        .await
-                        .context("prepare trx transfer"),
-                    IntentType::UsdtTransfer => ctx
-                        .tron
-                        .prepare_usdt_transfer(ctx.hub.as_ref(), id, &job.intent_specs)
-                        .await
-                        .context("prepare usdt transfer"),
                     IntentType::DelegateResource => ctx
                         .tron
                         .prepare_delegate_resource(ctx.hub.as_ref(), id, &job.intent_specs)
                         .await
                         .context("prepare delegate resource"),
+                    _ => unreachable!(),
                 };
 
                 let exec = match exec_res {
@@ -1005,7 +1073,7 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
             }
         }
         "tron_prepared" => {
-            let Some(txid) = job.tron_txid else {
+            let Some(final_txid) = job.tron_txid else {
                 ctx.db
                     .record_retryable_error(
                         job.job_id,
@@ -1017,47 +1085,110 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                 return Ok(());
             };
 
-            // If we already see the tx onchain, just move forward. This avoids double-broadcasts
-            // across crashes between broadcast and state update.
-            if ctx.tron.tx_is_known(txid).await {
-                ctx.db
-                    .record_tron_txid(job.job_id, &ctx.instance_id, txid)
-                    .await?;
-                return Ok(());
-            }
+            let plan = ctx.db.list_tron_signed_txs_for_job(job.job_id).await?;
+            let txs = if plan.is_empty() {
+                vec![TronSignedTxRow {
+                    step: "final".to_string(),
+                    txid: final_txid,
+                    tx_bytes: ctx.db.load_tron_signed_tx_bytes(final_txid).await?,
+                    fee_limit_sun: None,
+                    energy_required: None,
+                    tx_size_bytes: None,
+                }]
+            } else {
+                plan
+            };
 
-            let tx_bytes = ctx.db.load_tron_signed_tx_bytes(txid).await?;
-            let _permit = ctx
-                .tron_broadcast_sem
-                .acquire_owned()
-                .await
-                .context("acquire tron_broadcast_sem")?;
-            let started = Instant::now();
-            let res = ctx.tron.broadcast_signed_tx(&tx_bytes).await;
-            let ms = started.elapsed().as_millis() as u64;
-            match res {
-                Ok(()) => {
-                    ctx.telemetry.tron_tx_ok();
-                    ctx.telemetry.tron_broadcast_ms(true, ms);
+            for row in &txs {
+                // If already included, skip.
+                let included = match ctx.tron.fetch_transaction_info(row.txid).await {
+                    Ok(Some(info)) => info.block_number > 0,
+                    _ => false,
+                };
+                if included {
+                    continue;
                 }
-                Err(err) => {
-                    ctx.telemetry.tron_tx_err();
-                    ctx.telemetry.tron_broadcast_ms(false, ms);
-                    let msg = err.to_string();
-                    ctx.db
-                        .record_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            &msg,
-                            retry_in(job.attempts),
-                        )
-                        .await?;
-                    return Ok(());
+
+                // If already known onchain (pending), don't double-broadcast.
+                if ctx.tron.tx_is_known(row.txid).await {
+                    continue;
+                }
+
+                let _permit = ctx
+                    .tron_broadcast_sem
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .context("acquire tron_broadcast_sem")?;
+                let started = Instant::now();
+                let res = ctx.tron.broadcast_signed_tx(&row.tx_bytes).await;
+                let ms = started.elapsed().as_millis() as u64;
+                match res {
+                    Ok(()) => {
+                        ctx.telemetry.tron_tx_ok();
+                        ctx.telemetry.tron_broadcast_ms(true, ms);
+                    }
+                    Err(err) => {
+                        ctx.telemetry.tron_tx_err();
+                        ctx.telemetry.tron_broadcast_ms(false, ms);
+                        let msg = err.to_string();
+                        ctx.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &ctx.instance_id,
+                                &msg,
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                }
+
+                // Wait until included so subsequent steps are reliably funded.
+                let started = Instant::now();
+                loop {
+                    if started.elapsed() > std::time::Duration::from_secs(60) {
+                        ctx.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &ctx.instance_id,
+                                "tron tx inclusion timeout",
+                                retry_in(job.attempts),
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                    match ctx.tron.fetch_transaction_info(row.txid).await {
+                        Ok(Some(info)) if info.block_number > 0 => {
+                            let receipt = info.receipt.as_ref();
+                            let costs = TronTxCostsRow {
+                                fee_sun: Some(info.fee),
+                                energy_usage_total: receipt.map(|r| r.energy_usage_total),
+                                net_usage: receipt.map(|r| r.net_usage),
+                                energy_fee_sun: receipt.map(|r| r.energy_fee),
+                                net_fee_sun: receipt.map(|r| r.net_fee),
+                                block_number: Some(info.block_number),
+                                block_timestamp: Some(info.block_time_stamp),
+                                result_code: Some(info.result),
+                                result_message: Some(
+                                    String::from_utf8_lossy(&info.res_message).into_owned(),
+                                ),
+                            };
+                            let _ = ctx
+                                .db
+                                .upsert_tron_tx_costs(job.job_id, row.txid, &costs)
+                                .await;
+                            break;
+                        }
+                        _ => {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
                 }
             }
 
             ctx.db
-                .record_tron_txid(job.job_id, &ctx.instance_id, txid)
+                .record_tron_txid(job.job_id, &ctx.instance_id, final_txid)
                 .await?;
             Ok(())
         }

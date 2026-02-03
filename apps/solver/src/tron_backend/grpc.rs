@@ -33,6 +33,113 @@ pub async fn fetch_account(
     Ok(account)
 }
 
+pub async fn fetch_trx_balance_sun(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    address: TronAddress,
+) -> Result<i64> {
+    Ok(fetch_account(cfg, telemetry, address).await?.balance)
+}
+
+pub async fn fetch_trx_balances_sun(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    addresses: &[TronAddress],
+) -> Result<Vec<i64>> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let mut out = Vec::with_capacity(addresses.len());
+    for a in addresses {
+        let started = std::time::Instant::now();
+        let account = grpc
+            .get_account(a.prefixed_bytes().to_vec())
+            .await
+            .context("GetAccount")?;
+        telemetry.tron_grpc_ms("get_account", true, started.elapsed().as_millis() as u64);
+        out.push(account.balance);
+    }
+    Ok(out)
+}
+
+pub async fn fetch_trc20_balance_u64(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    token: TronAddress,
+    owner: TronAddress,
+) -> Result<u64> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let msg = tron::protocol::TriggerSmartContract {
+        owner_address: owner.prefixed_bytes().to_vec(),
+        contract_address: token.prefixed_bytes().to_vec(),
+        data: crate::abi::encode_trc20_balance_of(owner.evm()),
+        ..Default::default()
+    };
+
+    let started = std::time::Instant::now();
+    let res = grpc
+        .trigger_constant_contract(msg)
+        .await
+        .context("TriggerConstantContract(balanceOf)")?;
+    telemetry.tron_grpc_ms(
+        "trigger_constant_contract_balance_of",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+
+    let Some(first) = res.constant_result.first() else {
+        return Ok(0);
+    };
+    // EVM ABI uint256 in big-endian (32 bytes). Some nodes may return shorter byte arrays.
+    let mut buf = [0u8; 32];
+    if first.len() >= 32 {
+        buf.copy_from_slice(&first[first.len() - 32..]);
+    } else {
+        buf[32 - first.len()..].copy_from_slice(first);
+    }
+    let v = alloy::primitives::U256::from_be_bytes(buf);
+    Ok(u64::try_from(v).unwrap_or(u64::MAX))
+}
+
+pub async fn fetch_trc20_balances_u64(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    token: TronAddress,
+    owners: &[TronAddress],
+) -> Result<Vec<u64>> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let mut out = Vec::with_capacity(owners.len());
+    for o in owners {
+        let msg = tron::protocol::TriggerSmartContract {
+            owner_address: o.prefixed_bytes().to_vec(),
+            contract_address: token.prefixed_bytes().to_vec(),
+            data: crate::abi::encode_trc20_balance_of(o.evm()),
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        let res = grpc
+            .trigger_constant_contract(msg)
+            .await
+            .context("TriggerConstantContract(balanceOf)")?;
+        telemetry.tron_grpc_ms(
+            "trigger_constant_contract_balance_of",
+            true,
+            started.elapsed().as_millis() as u64,
+        );
+        let Some(first) = res.constant_result.first() else {
+            out.push(0);
+            continue;
+        };
+        let mut buf = [0u8; 32];
+        if first.len() >= 32 {
+            buf.copy_from_slice(&first[first.len() - 32..]);
+        } else {
+            buf[32 - first.len()..].copy_from_slice(first);
+        }
+        let v = alloy::primitives::U256::from_be_bytes(buf);
+        out.push(u64::try_from(v).unwrap_or(u64::MAX));
+    }
+    Ok(out)
+}
+
 pub fn delegated_resource_available_sun(
     account: &tron::protocol::Account,
     resource: tron::protocol::ResourceCode,
@@ -112,6 +219,49 @@ pub async fn prepare_trx_transfer(
     })
 }
 
+pub async fn prepare_trx_transfer_with_key(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    private_key: [u8; 32],
+    intent_specs: &[u8],
+) -> Result<PreparedTronTx> {
+    let intent = super::TRXTransferIntent::abi_decode(intent_specs)
+        .context("abi_decode TRXTransferIntent")?;
+    let amount_sun_i64 = i64::try_from(intent.amountSun).context("amountSun out of i64 range")?;
+    let to = TronAddress::from_evm(intent.to);
+    build_trx_transfer(cfg, telemetry, private_key, to, amount_sun_i64).await
+}
+
+pub async fn build_trx_transfer(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    private_key: [u8; 32],
+    to: TronAddress,
+    amount_sun: i64,
+) -> Result<PreparedTronTx> {
+    let wallet = TronWallet::new(private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+
+    let started = std::time::Instant::now();
+    let signed = wallet
+        .build_and_sign_transfer_contract(&mut grpc, to, amount_sun)
+        .await
+        .context("build_and_sign_transfer_contract")?;
+    telemetry.tron_grpc_ms(
+        "build_and_sign_transfer_contract",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
+}
+
 pub async fn prepare_trigger_smart_contract(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
@@ -154,6 +304,43 @@ pub async fn prepare_trigger_smart_contract(
             call_value_i64,
             fee_policy,
         )
+        .await
+        .context("build_and_sign_trigger_smart_contract")?;
+    telemetry.tron_grpc_ms(
+        "build_and_sign_trigger_smart_contract",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
+}
+
+pub async fn build_trc20_transfer(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    private_key: [u8; 32],
+    token: TronAddress,
+    to: TronAddress,
+    amount: u64,
+) -> Result<PreparedTronTx> {
+    let wallet = TronWallet::new(private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+
+    let data = crate::abi::encode_trc20_transfer(to.evm(), alloy::primitives::U256::from(amount));
+    let fee_policy = tron::sender::FeePolicy {
+        fee_limit_cap_sun: cfg.fee_limit_cap_sun,
+        fee_limit_headroom_ppm: cfg.fee_limit_headroom_ppm,
+    };
+
+    let started = std::time::Instant::now();
+    let signed = wallet
+        .build_and_sign_trigger_smart_contract(&mut grpc, token, data, 0, fee_policy)
         .await
         .context("build_and_sign_trigger_smart_contract")?;
     telemetry.tron_grpc_ms(
@@ -234,6 +421,63 @@ pub async fn prepare_usdt_transfer(
     let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
 
     let wallet = TronWallet::new(cfg.private_key).context("init TronWallet")?;
+    let mut grpc = connect_grpc(cfg).await?;
+
+    let data = crate::abi::encode_trc20_transfer(intent.to, intent.amount);
+    if cfg.emulation_enabled {
+        emulate_trigger_smart_contract(
+            &mut grpc,
+            telemetry,
+            &wallet,
+            TronAddress::from_evm(tron_usdt),
+            &alloy::primitives::Bytes::from(data.as_slice().to_vec()),
+            0,
+        )
+        .await?;
+    }
+    let fee_policy = tron::sender::FeePolicy {
+        fee_limit_cap_sun: cfg.fee_limit_cap_sun,
+        fee_limit_headroom_ppm: cfg.fee_limit_headroom_ppm,
+    };
+
+    let started = std::time::Instant::now();
+    let signed = wallet
+        .build_and_sign_trigger_smart_contract(
+            &mut grpc,
+            TronAddress::from_evm(tron_usdt),
+            data,
+            0,
+            fee_policy,
+        )
+        .await
+        .context("build_and_sign_trigger_smart_contract")?;
+    telemetry.tron_grpc_ms(
+        "build_and_sign_trigger_smart_contract",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+
+    Ok(PreparedTronTx {
+        txid: signed.txid,
+        tx_bytes: signed.tx.encode_to_vec(),
+        fee_limit_sun: Some(i64::try_from(signed.fee_limit_sun).unwrap_or(i64::MAX)),
+        energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
+        tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
+    })
+}
+
+pub async fn prepare_usdt_transfer_with_key(
+    hub: &crate::hub::HubClient,
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    private_key: [u8; 32],
+    intent_specs: &[u8],
+) -> Result<PreparedTronTx> {
+    let intent = super::USDTTransferIntent::abi_decode(intent_specs)
+        .context("abi_decode USDTTransferIntent")?;
+    let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+
+    let wallet = TronWallet::new(private_key).context("init TronWallet")?;
     let mut grpc = connect_grpc(cfg).await?;
 
     let data = crate::abi::encode_trc20_transfer(intent.to, intent.amount);

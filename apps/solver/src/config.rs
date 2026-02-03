@@ -102,7 +102,10 @@ pub struct TronConfig {
     pub mode: TronMode,
     pub grpc_url: String,
     pub api_key: Option<String>,
+    /// Default Tron key (back-compat; also used when only one key is configured).
     pub private_key: [u8; 32],
+    /// All configured Tron keys (one or more) for inventory selection and consolidation.
+    pub private_keys: Vec<[u8; 32]>,
     pub controller_address: String,
     pub mock_reader_address: Option<Address>,
 
@@ -134,6 +137,11 @@ pub struct JobConfig {
     pub concurrency_trigger_smart_contract: u64,
     /// Max concurrent Tron broadcasts (avoid ref-block collisions / node overload).
     pub concurrency_tron_broadcast: u64,
+
+    /// Enable consolidation pre-transactions for TRX/USDT intents (moves funds into executor key).
+    pub consolidation_enabled: bool,
+    /// Maximum number of pre-transactions per job.
+    pub consolidation_max_pre_txs: u64,
 
     pub controller_rebalance_threshold_usdt: String,
     pub controller_rebalance_keep_usdt: String,
@@ -200,6 +208,9 @@ struct Env {
 
     tron_private_key_hex: String,
 
+    #[serde(default)]
+    tron_private_keys_hex_csv: String,
+
     tron_controller_address: String,
 
     #[serde(default)]
@@ -242,6 +253,11 @@ struct Env {
     solver_concurrency_trigger_smart_contract: u64,
     #[serde(default)]
     solver_concurrency_tron_broadcast: u64,
+
+    #[serde(default)]
+    solver_consolidation_enabled: bool,
+    #[serde(default)]
+    solver_consolidation_max_pre_txs: u64,
 
     controller_rebalance_threshold_usdt: String,
 
@@ -362,6 +378,7 @@ impl Default for Env {
             tron_grpc_url: String::new(),
             tron_api_key: None,
             tron_private_key_hex: String::new(),
+            tron_private_keys_hex_csv: String::new(),
             tron_controller_address: String::new(),
             tron_mock_reader_address: String::new(),
             tron_block_lag: 0,
@@ -380,6 +397,8 @@ impl Default for Env {
             solver_concurrency_delegate_resource: 1,
             solver_concurrency_trigger_smart_contract: 1,
             solver_concurrency_tron_broadcast: 1,
+            solver_consolidation_enabled: false,
+            solver_consolidation_max_pre_txs: 0,
             controller_rebalance_threshold_usdt: "0".to_string(),
             controller_rebalance_keep_usdt: "1".to_string(),
             pull_liquidity_ppm: 500_000,
@@ -587,6 +606,15 @@ fn parse_intent_types(s: &str) -> Result<Vec<crate::types::IntentType>> {
     Ok(out)
 }
 
+fn parse_hex_32_csv(label: &str, s: &str) -> Result<Vec<[u8; 32]>> {
+    let items = parse_csv(label, s)?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        out.push(parse_hex_32(label, &item)?);
+    }
+    Ok(out)
+}
+
 pub fn load_config() -> Result<AppConfig> {
     let env: Env = envy::from_env().context("load solver env config")?;
 
@@ -693,8 +721,12 @@ pub fn load_config() -> Result<AppConfig> {
         if env.tron_grpc_url.trim().is_empty() {
             anyhow::bail!("TRON_GRPC_URL must be set in TRON_MODE=grpc");
         }
-        if env.tron_private_key_hex.trim().is_empty() {
-            anyhow::bail!("TRON_PRIVATE_KEY_HEX must be set in TRON_MODE=grpc");
+        if env.tron_private_key_hex.trim().is_empty()
+            && env.tron_private_keys_hex_csv.trim().is_empty()
+        {
+            anyhow::bail!(
+                "TRON_PRIVATE_KEY_HEX or TRON_PRIVATE_KEYS_HEX_CSV must be set in TRON_MODE=grpc"
+            );
         }
         if env.tron_controller_address.trim().is_empty() {
             anyhow::bail!("TRON_CONTROLLER_ADDRESS must be set in TRON_MODE=grpc");
@@ -702,6 +734,35 @@ pub fn load_config() -> Result<AppConfig> {
     } else if env.tron_mock_reader_address.trim().is_empty() {
         anyhow::bail!("TRON_MOCK_READER_ADDRESS must be set in TRON_MODE=mock");
     }
+
+    let tron_private_keys = if tron_mode == TronMode::Grpc {
+        let mut keys: Vec<[u8; 32]> = Vec::new();
+        if !env.tron_private_key_hex.trim().is_empty() {
+            keys.push(parse_hex_32(
+                "TRON_PRIVATE_KEY_HEX",
+                &env.tron_private_key_hex,
+            )?);
+        }
+        if !env.tron_private_keys_hex_csv.trim().is_empty() {
+            keys.extend(parse_hex_32_csv(
+                "TRON_PRIVATE_KEYS_HEX_CSV",
+                &env.tron_private_keys_hex_csv,
+            )?);
+        }
+        // Dedup preserving order.
+        let mut out: Vec<[u8; 32]> = Vec::new();
+        for k in keys {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        if out.is_empty() {
+            anyhow::bail!("no Tron keys configured");
+        }
+        out
+    } else {
+        Vec::new()
+    };
 
     Ok(AppConfig {
         indexer: IndexerConfig {
@@ -728,10 +789,14 @@ pub fn load_config() -> Result<AppConfig> {
             grpc_url: env.tron_grpc_url,
             api_key: env.tron_api_key.filter(|s| !s.trim().is_empty()),
             private_key: if tron_mode == TronMode::Grpc {
-                parse_hex_32("TRON_PRIVATE_KEY_HEX", &env.tron_private_key_hex)?
+                tron_private_keys
+                    .first()
+                    .copied()
+                    .context("missing Tron private key")?
             } else {
                 [0u8; 32]
             },
+            private_keys: tron_private_keys,
             controller_address: env.tron_controller_address,
             mock_reader_address: parse_optional_address(
                 "TRON_MOCK_READER_ADDRESS",
@@ -762,6 +827,8 @@ pub fn load_config() -> Result<AppConfig> {
                 .solver_concurrency_trigger_smart_contract
                 .max(1),
             concurrency_tron_broadcast: env.solver_concurrency_tron_broadcast.max(1),
+            consolidation_enabled: env.solver_consolidation_enabled,
+            consolidation_max_pre_txs: env.solver_consolidation_max_pre_txs,
             controller_rebalance_threshold_usdt: env.controller_rebalance_threshold_usdt,
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
             pull_liquidity_ppm: env.pull_liquidity_ppm.min(1_000_000),

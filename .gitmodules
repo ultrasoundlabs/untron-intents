@@ -25,3 +25,4 @@
 [submodule "packages/contracts/lib/safe-modules"]
 	path = packages/contracts/lib/safe-modules
 	url = https://github.com/safe-global/safe-modules.git
+	ignore = dirty

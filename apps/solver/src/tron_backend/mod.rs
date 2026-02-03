@@ -4,10 +4,14 @@ use crate::{
     metrics::SolverTelemetry,
 };
 use alloy::primitives::{B256, FixedBytes, U256};
+use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 
 mod grpc;
 mod mock;
+mod planner;
+
+use planner::{plan_trc20_consolidation, plan_trx_consolidation};
 
 alloy::sol! {
     struct TriggerSmartContractIntent {
@@ -48,6 +52,12 @@ pub struct TronPreparedTx {
     pub fee_limit_sun: Option<i64>,
     pub energy_required: Option<i64>,
     pub tx_size_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TronPreparedPlan {
+    pub pre_txs: Vec<TronPreparedTx>,
+    pub final_tx: TronPreparedTx,
 }
 
 pub enum TronExecution {
@@ -146,6 +156,111 @@ impl TronBackend {
         }
     }
 
+    pub async fn prepare_trx_transfer_plan(&self, intent_specs: &[u8]) -> Result<TronPreparedPlan> {
+        if self.cfg.mode != TronMode::Grpc {
+            anyhow::bail!("prepare_trx_transfer_plan is only available in TRON_MODE=grpc");
+        }
+        if self.cfg.private_keys.is_empty() {
+            anyhow::bail!("no tron private keys configured");
+        }
+
+        let intent =
+            TRXTransferIntent::abi_decode(intent_specs).context("abi_decode TRXTransferIntent")?;
+        let amount_sun_i64 =
+            i64::try_from(intent.amountSun).context("amountSun out of i64 range")?;
+
+        let wallets = self
+            .cfg
+            .private_keys
+            .iter()
+            .copied()
+            .map(|k| tron::TronWallet::new(k).context("init TronWallet"))
+            .collect::<Result<Vec<_>>>()?;
+        let addrs = wallets.iter().map(|w| w.address()).collect::<Vec<_>>();
+        let balances = grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs)
+            .await
+            .context("fetch_trx_balances_sun")?;
+
+        // Reserve some TRX for fees.
+        const BALANCE_RESERVE_SUN: i64 = 2_000_000;
+        let mut best: Option<usize> = None;
+        for (i, b) in balances.iter().enumerate() {
+            if *b >= amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN) {
+                best = Some(i);
+                break;
+            }
+        }
+        if let Some(executor_index) = best {
+            let p = grpc::prepare_trx_transfer_with_key(
+                &self.cfg,
+                &self.telemetry,
+                self.cfg.private_keys[executor_index],
+                intent_specs,
+            )
+            .await?;
+            return Ok(TronPreparedPlan {
+                pre_txs: Vec::new(),
+                final_tx: TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                },
+            });
+        }
+
+        if !self.jobs.consolidation_enabled {
+            anyhow::bail!("insufficient TRX balance (and consolidation disabled)");
+        }
+
+        let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
+        let Some(plan) =
+            plan_trx_consolidation(&balances, amount_sun_i64 + BALANCE_RESERVE_SUN, max_pre_txs)?
+        else {
+            anyhow::bail!("insufficient TRX balance (cannot consolidate within limits)");
+        };
+
+        let executor = wallets[plan.executor_index].address();
+        let mut pre_txs = Vec::with_capacity(plan.transfers.len());
+        for (from_idx, amt) in plan.transfers {
+            let p = grpc::build_trx_transfer(
+                &self.cfg,
+                &self.telemetry,
+                self.cfg.private_keys[from_idx],
+                executor,
+                amt,
+            )
+            .await?;
+            pre_txs.push(TronPreparedTx {
+                txid: p.txid,
+                tx_bytes: p.tx_bytes,
+                fee_limit_sun: p.fee_limit_sun,
+                energy_required: p.energy_required,
+                tx_size_bytes: p.tx_size_bytes,
+            });
+        }
+
+        let p = grpc::prepare_trx_transfer_with_key(
+            &self.cfg,
+            &self.telemetry,
+            self.cfg.private_keys[plan.executor_index],
+            intent_specs,
+        )
+        .await?;
+
+        Ok(TronPreparedPlan {
+            pre_txs,
+            final_tx: TronPreparedTx {
+                txid: p.txid,
+                tx_bytes: p.tx_bytes,
+                fee_limit_sun: p.fee_limit_sun,
+                energy_required: p.energy_required,
+                tx_size_bytes: p.tx_size_bytes,
+            },
+        })
+    }
+
     pub async fn prepare_usdt_transfer(
         &self,
         hub: &HubClient,
@@ -168,6 +283,211 @@ impl TronBackend {
                     tx_size_bytes: p.tx_size_bytes,
                 }))
             }
+        }
+    }
+
+    pub async fn prepare_usdt_transfer_plan(
+        &self,
+        hub: &HubClient,
+        intent_specs: &[u8],
+    ) -> Result<TronPreparedPlan> {
+        if self.cfg.mode != TronMode::Grpc {
+            anyhow::bail!("prepare_usdt_transfer_plan is only available in TRON_MODE=grpc");
+        }
+        if self.cfg.private_keys.is_empty() {
+            anyhow::bail!("no tron private keys configured");
+        }
+
+        let intent = USDTTransferIntent::abi_decode(intent_specs)
+            .context("abi_decode USDTTransferIntent")?;
+        let amount_u64 = u64::try_from(intent.amount).unwrap_or(u64::MAX);
+        let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+
+        let wallets = self
+            .cfg
+            .private_keys
+            .iter()
+            .copied()
+            .map(|k| tron::TronWallet::new(k).context("init TronWallet"))
+            .collect::<Result<Vec<_>>>()?;
+        let addrs = wallets.iter().map(|w| w.address()).collect::<Vec<_>>();
+        let token_balances = grpc::fetch_trc20_balances_u64(
+            &self.cfg,
+            &self.telemetry,
+            tron::TronAddress::from_evm(tron_usdt),
+            &addrs,
+        )
+        .await
+        .context("fetch usdt balances")?;
+        let trx_balances = grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs)
+            .await
+            .context("fetch trx balances")?;
+
+        const BALANCE_RESERVE_SUN: i64 = 2_000_000;
+        let mut best: Option<usize> = None;
+        for (i, b) in token_balances.iter().enumerate() {
+            if *b >= amount_u64 && trx_balances.get(i).copied().unwrap_or(0) >= BALANCE_RESERVE_SUN
+            {
+                best = Some(i);
+                break;
+            }
+        }
+        if let Some(executor_index) = best {
+            let p = grpc::prepare_usdt_transfer_with_key(
+                hub,
+                &self.cfg,
+                &self.telemetry,
+                self.cfg.private_keys[executor_index],
+                intent_specs,
+            )
+            .await?;
+            return Ok(TronPreparedPlan {
+                pre_txs: Vec::new(),
+                final_tx: TronPreparedTx {
+                    txid: p.txid,
+                    tx_bytes: p.tx_bytes,
+                    fee_limit_sun: p.fee_limit_sun,
+                    energy_required: p.energy_required,
+                    tx_size_bytes: p.tx_size_bytes,
+                },
+            });
+        }
+
+        if !self.jobs.consolidation_enabled {
+            anyhow::bail!("insufficient USDT balance (and consolidation disabled)");
+        }
+        let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
+        let Some(plan) = plan_trc20_consolidation(&token_balances, amount_u64, max_pre_txs)? else {
+            anyhow::bail!("insufficient USDT balance (cannot consolidate within limits)");
+        };
+
+        let executor = wallets[plan.executor_index].address();
+        let mut pre_txs = Vec::with_capacity(plan.transfers.len());
+        for (from_idx, amt) in plan.transfers {
+            let p = grpc::build_trc20_transfer(
+                &self.cfg,
+                &self.telemetry,
+                self.cfg.private_keys[from_idx],
+                tron::TronAddress::from_evm(tron_usdt),
+                executor,
+                amt,
+            )
+            .await?;
+            pre_txs.push(TronPreparedTx {
+                txid: p.txid,
+                tx_bytes: p.tx_bytes,
+                fee_limit_sun: p.fee_limit_sun,
+                energy_required: p.energy_required,
+                tx_size_bytes: p.tx_size_bytes,
+            });
+        }
+
+        let p = grpc::prepare_usdt_transfer_with_key(
+            hub,
+            &self.cfg,
+            &self.telemetry,
+            self.cfg.private_keys[plan.executor_index],
+            intent_specs,
+        )
+        .await?;
+
+        Ok(TronPreparedPlan {
+            pre_txs,
+            final_tx: TronPreparedTx {
+                txid: p.txid,
+                tx_bytes: p.tx_bytes,
+                fee_limit_sun: p.fee_limit_sun,
+                energy_required: p.energy_required,
+                tx_size_bytes: p.tx_size_bytes,
+            },
+        })
+    }
+
+    pub async fn can_fill_preclaim(
+        &self,
+        hub: &HubClient,
+        ty: crate::types::IntentType,
+        intent_specs: &[u8],
+    ) -> Result<bool> {
+        if self.cfg.mode != TronMode::Grpc {
+            return Ok(true);
+        }
+        if self.cfg.private_keys.is_empty() {
+            return Ok(false);
+        }
+        if !matches!(
+            ty,
+            crate::types::IntentType::TrxTransfer | crate::types::IntentType::UsdtTransfer
+        ) {
+            return Ok(true);
+        }
+
+        // Quick inventory check (no signing): can any key fill, or can we consolidate within limits?
+        let wallets = self
+            .cfg
+            .private_keys
+            .iter()
+            .copied()
+            .map(|k| tron::TronWallet::new(k).context("init TronWallet"))
+            .collect::<Result<Vec<_>>>()?;
+        let addrs = wallets.iter().map(|w| w.address()).collect::<Vec<_>>();
+
+        const BALANCE_RESERVE_SUN: i64 = 2_000_000;
+
+        match ty {
+            crate::types::IntentType::TrxTransfer => {
+                let intent = TRXTransferIntent::abi_decode(intent_specs)
+                    .context("abi_decode TRXTransferIntent")?;
+                let amount_sun_i64 =
+                    i64::try_from(intent.amountSun).context("amountSun out of i64 range")?;
+                let balances =
+                    grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs).await?;
+                if balances
+                    .iter()
+                    .any(|b| *b >= amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN))
+                {
+                    return Ok(true);
+                }
+                if !self.jobs.consolidation_enabled {
+                    return Ok(false);
+                }
+                let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
+                Ok(plan_trx_consolidation(
+                    &balances,
+                    amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN),
+                    max_pre_txs,
+                )?
+                .is_some())
+            }
+            crate::types::IntentType::UsdtTransfer => {
+                let intent = USDTTransferIntent::abi_decode(intent_specs)
+                    .context("abi_decode USDTTransferIntent")?;
+                let amount_u64 = u64::try_from(intent.amount).unwrap_or(u64::MAX);
+                let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
+
+                let token_balances = grpc::fetch_trc20_balances_u64(
+                    &self.cfg,
+                    &self.telemetry,
+                    tron::TronAddress::from_evm(tron_usdt),
+                    &addrs,
+                )
+                .await?;
+                let trx_balances =
+                    grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs).await?;
+
+                if token_balances.iter().enumerate().any(|(i, b)| {
+                    *b >= amount_u64
+                        && trx_balances.get(i).copied().unwrap_or(0) >= BALANCE_RESERVE_SUN
+                }) {
+                    return Ok(true);
+                }
+                if !self.jobs.consolidation_enabled {
+                    return Ok(false);
+                }
+                let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
+                Ok(plan_trc20_consolidation(&token_balances, amount_u64, max_pre_txs)?.is_some())
+            }
+            _ => Ok(true),
         }
     }
 
