@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
@@ -28,7 +28,7 @@ use std::time::Duration;
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{GenericImage, ImageExt};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 #[derive(Clone)]
 struct RentalStubState {
@@ -65,7 +65,8 @@ async fn rent_handler(
         _ => (tron::protocol::ResourceCode::Energy, "energy"),
     };
 
-    let wallet = tron::TronWallet::new(st.provider_key).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let wallet =
+        tron::TronWallet::new(st.provider_key).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     let mut grpc = tron::TronGrpc::connect(&st.tron_grpc_url, None)
         .await
         .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
@@ -102,6 +103,13 @@ async fn rent_handler(
         "success": true,
         "txid": format!("0x{}", hex::encode(txid))
     })))
+}
+
+async fn rent_fail_handler() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "success": false,
+        "error": "no_liquidity"
+    }))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -164,6 +172,7 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
     };
     let app = Router::new()
         .route("/rent", post(rent_handler))
+        .route("/rent_fail", post(rent_fail_handler))
         .with_state(rental_state.clone());
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(rental_addr).await.unwrap();
@@ -175,23 +184,42 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
             .ok();
     });
 
-    let rental_cfg = serde_json::json!([{
-        "name": "stub",
-        "url": format!("http://127.0.0.1:{rental_port}/rent"),
-        "method": "POST",
-        "headers": { "content-type": "application/json" },
-        "body": {
-            "kind": "{{resource_kind}}",
-            "amount": "{{amount}}",
-            "lock_period": "{{lock_period}}",
-            "receiver": "{{address_base58check}}"
+    let rental_cfg = serde_json::json!([
+        {
+            "name": "bad",
+            "url": format!("http://127.0.0.1:{rental_port}/rent_fail"),
+            "method": "POST",
+            "headers": { "content-type": "application/json" },
+            "body": {
+                "kind": "{{resource_kind}}",
+                "amount": "{{amount}}",
+                "lock_period": "{{lock_period}}",
+                "receiver": "{{address_base58check}}"
+            },
+            "response": {
+                "success_pointer": "/success",
+                "txid_pointer": "/txid",
+                "error_pointer": "/error"
+            }
         },
-        "response": {
-            "success_pointer": "/success",
-            "txid_pointer": "/txid",
-            "error_pointer": "/error"
+        {
+            "name": "good",
+            "url": format!("http://127.0.0.1:{rental_port}/rent"),
+            "method": "POST",
+            "headers": { "content-type": "application/json" },
+            "body": {
+                "kind": "{{resource_kind}}",
+                "amount": "{{amount}}",
+                "lock_period": "{{lock_period}}",
+                "receiver": "{{address_base58check}}"
+            },
+            "response": {
+                "success_pointer": "/success",
+                "txid_pointer": "/txid",
+                "error_pointer": "/error"
+            }
         }
-    }])
+    ])
     .to_string();
 
     // Postgres (+ docker network for PostgREST).
@@ -276,6 +304,10 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
         &[
             ("TRON_DELEGATE_RESOURCE_RESELL_ENABLED", "true"),
             ("TRON_ENERGY_RENTAL_APIS_JSON", &rental_cfg),
+            // Force a fast freeze so the solver deterministically falls back from "bad" -> "good".
+            ("TRON_RENTAL_PROVIDER_FAIL_THRESHOLD", "1"),
+            ("TRON_RENTAL_PROVIDER_FAIL_WINDOW_SECS", "60"),
+            ("TRON_RENTAL_PROVIDER_FREEZE_SECS", "600"),
         ],
     )?);
 
@@ -287,9 +319,9 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
         pk0,
         &intents_addr,
         &receiver_evm,
-        1,          // ENERGY
-        "1000000",  // balanceSun
-        "10",       // lockPeriod
+        1,         // ENERGY
+        "1000000", // balanceSun
+        "10",      // lockPeriod
         1,
     )?;
     wait_for_pool_current_intents_count(&db_url, 1, Duration::from_secs(60)).await?;
@@ -297,7 +329,8 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
     let rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(180)).await?;
     let row = rows.first().context("missing intent row")?;
 
-    let tron_tx_id = decode_hex32(row.row.tron_tx_id.as_ref().unwrap()).context("decode tron_tx_id")?;
+    let tron_tx_id =
+        decode_hex32(row.row.tron_tx_id.as_ref().unwrap()).context("decode tron_tx_id")?;
     let tron_block_number = *row.row.tron_block_number.as_ref().unwrap();
 
     let mut grpc = tron::TronGrpc::connect(&tron_grpc_url, None)
@@ -311,7 +344,10 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
         c.r#type,
         tron::protocol::transaction::contract::ContractType::DelegateResourceContract as i32
     );
-    let any = c.parameter.as_ref().context("tx contract missing parameter")?;
+    let any = c
+        .parameter
+        .as_ref()
+        .context("tx contract missing parameter")?;
     let del = tron::protocol::DelegateResourceContract::decode(any.value.as_slice())
         .context("decode DelegateResourceContract")?;
     assert_eq!(
@@ -323,6 +359,38 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
         del.receiver_address,
         receiver_wallet.address().prefixed_bytes().to_vec()
     );
+
+    // Assert circuit breaker state persisted + rendered request stored.
+    {
+        let pool = sqlx::PgPool::connect(&db_url)
+            .await
+            .context("connect db (assert)")?;
+
+        let frozen: Option<i64> = sqlx::query_scalar(
+            "select extract(epoch from frozen_until)::bigint from solver.rental_provider_freezes where provider = $1",
+        )
+        .bind("bad")
+        .fetch_optional(&pool)
+        .await
+        .context("query rental_provider_freezes")?;
+        assert!(frozen.is_some(), "expected provider 'bad' to be frozen");
+
+        let (provider, request_json): (String, Option<serde_json::Value>) = sqlx::query_as(
+            "select provider, request_json from solver.tron_rentals order by job_id desc limit 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .context("query tron_rentals")?;
+        assert_eq!(provider, "good", "expected solver to fall back to 'good'");
+
+        let req = request_json.context("expected request_json to be persisted")?;
+        let url = req["url"].as_str().unwrap_or("");
+        assert!(
+            url.contains("/rent"),
+            "expected rendered request url to contain /rent, got {url:?}"
+        );
+        assert_eq!(req["method"].as_str().unwrap_or(""), "POST");
+    }
 
     let _ = shutdown_tx.send(());
     Ok(())

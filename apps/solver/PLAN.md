@@ -367,6 +367,16 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
   - Implemented as a best-effort pre-claim check (gRPC `GetAccount` + stake2.0 `frozen_v2` parsing) for `DELEGATE_RESOURCE`.
   - Implemented a restart-safe DB reservation layer (`solver.delegate_reservations`) to prevent concurrent jobs (or multiple solver instances) from overcommitting the same staked inventory before inclusion.
 
+- [x] Implement `DELEGATE_RESOURCE` resell via rental APIs (provider broadcasts onchain delegation)
+  - Implemented: DB-persisted rental state (`solver.tron_rentals`) including provider, rendered request, and txid.
+  - Implemented: provider freeze/circuit-breaker (`solver.rental_provider_freezes`) with configurable thresholds.
+  - Implemented: `balanceSun` → provider units conversion using chain stake totals (+headroom) with a small TTL cache.
+  - Done when: the solver can restart mid-rental and still prove the provider’s tx deterministically.
+
+- [ ] Rental quote selection + profitability gating
+  - Must price rentals (offchain) before claiming so we don’t pay hub deposit for unprofitable fills.
+  - Should select best provider by quote + latency + recent failure rate, with fallback ordering.
+
 ### Phase 5: TRIGGER_SMART_CONTRACT (strictly gated)
 
 - [x] Implement strict allowlist (contract + optional selector).

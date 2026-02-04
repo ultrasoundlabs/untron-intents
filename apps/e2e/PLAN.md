@@ -97,6 +97,13 @@ Conventions:
   - [x] Configure `TRON_ENERGY_RENTAL_APIS_JSON` to a local stub and assert solver attempts rental.
   - Done when: we assert the HTTP call shape and that the solver proceeds with expected fee limits.
 
+- [x] **DelegateResource resell via rental APIs (provider tx owner + fallback/freeze)**
+  - [x] Add test `apps/e2e/tests/solver_tron_delegate_resell.rs`
+  - [x] Configure `TRON_DELEGATE_RESOURCE_RESELL_ENABLED=true` and multiple providers (first fails).
+  - [x] Assert the proved Tron tx owner is the provider (not the solver).
+  - [x] Assert the failing provider is frozen and the solver falls back to the next provider.
+  - Done when: the job reaches `done` and request/response are persisted for postmortems.
+
 ## P2 — Proof/security fidelity + adversarial scenarios
 
 - [x] **Proof verification with signature validation (avoid “no-sig reader” shortcuts)**

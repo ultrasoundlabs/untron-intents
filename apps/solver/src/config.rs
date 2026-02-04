@@ -113,6 +113,8 @@ pub struct TronConfig {
     pub fee_limit_cap_sun: u64,
     /// Extra headroom on computed fee_limit (ppm, i.e. 100_000 = +10%).
     pub fee_limit_headroom_ppm: u64,
+    /// Cache TTL (seconds) for global stake totals (TotalEnergyLimit/Weight, TotalNetLimit/Weight).
+    pub stake_totals_cache_ttl_secs: u64,
     /// Optional list of external energy rental providers.
     pub energy_rental_providers: Vec<JsonApiRentalProviderConfig>,
     /// If true, fill `DELEGATE_RESOURCE` intents by requesting resource rentals from configured
@@ -261,6 +263,9 @@ struct Env {
 
     #[serde(default)]
     tron_fee_limit_headroom_ppm: u64,
+
+    #[serde(default)]
+    tron_stake_totals_cache_ttl_secs: u64,
 
     #[serde(default)]
     tron_energy_rental_apis_json: String,
@@ -467,6 +472,7 @@ impl Default for Env {
             tron_block_lag: 0,
             tron_fee_limit_cap_sun: 200_000_000,
             tron_fee_limit_headroom_ppm: 100_000,
+            tron_stake_totals_cache_ttl_secs: 10,
             tron_energy_rental_apis_json: String::new(),
             tron_delegate_resource_resell_enabled: false,
             tron_rental_provider_fail_threshold: 3,
@@ -907,6 +913,7 @@ pub fn load_config() -> Result<AppConfig> {
             block_lag: env.tron_block_lag,
             fee_limit_cap_sun: env.tron_fee_limit_cap_sun.max(1_000_000),
             fee_limit_headroom_ppm: env.tron_fee_limit_headroom_ppm.min(1_000_000),
+            stake_totals_cache_ttl_secs: env.tron_stake_totals_cache_ttl_secs.max(1),
             energy_rental_providers: parse_tron_energy_rental_apis_json(
                 &env.tron_energy_rental_apis_json,
             )?,

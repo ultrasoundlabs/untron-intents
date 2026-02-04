@@ -6,6 +6,9 @@ use crate::{
 use alloy::primitives::{B256, FixedBytes, U256};
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
 use tron::resources::ResourceStakeTotals;
 
 mod grpc;
@@ -44,6 +47,25 @@ pub struct TronBackend {
     cfg: TronConfig,
     jobs: JobConfig,
     telemetry: SolverTelemetry,
+    stake_totals_cache: Arc<RwLock<StakeTotalsCache>>,
+}
+
+#[derive(Debug, Clone)]
+struct StakeTotalsCache {
+    energy: Option<CachedTotals>,
+    net: Option<CachedTotals>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedTotals {
+    fetched_at: Instant,
+    totals: ResourceStakeTotals,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ResourceStakeTotalsKind {
+    Energy,
+    Net,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +107,10 @@ impl TronBackend {
             cfg,
             jobs,
             telemetry,
+            stake_totals_cache: Arc::new(RwLock::new(StakeTotalsCache {
+                energy: None,
+                net: None,
+            })),
         }
     }
 
@@ -92,20 +118,72 @@ impl TronBackend {
         if self.cfg.mode != TronMode::Grpc {
             anyhow::bail!("energy_stake_totals is only available in TRON_MODE=grpc");
         }
-        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
-        grpc::fetch_energy_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+        if let Some(cached) = self
+            .get_cached_stake_totals(ResourceStakeTotalsKind::Energy)
             .await
-            .context("fetch_energy_stake_totals")
+        {
+            return Ok(cached);
+        }
+        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
+        let totals = grpc::fetch_energy_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+            .await
+            .context("fetch_energy_stake_totals")?;
+        self.put_cached_stake_totals(ResourceStakeTotalsKind::Energy, totals.clone())
+            .await;
+        Ok(totals)
     }
 
     pub async fn net_stake_totals(&self) -> Result<ResourceStakeTotals> {
         if self.cfg.mode != TronMode::Grpc {
             anyhow::bail!("net_stake_totals is only available in TRON_MODE=grpc");
         }
-        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
-        grpc::fetch_net_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+        if let Some(cached) = self
+            .get_cached_stake_totals(ResourceStakeTotalsKind::Net)
             .await
-            .context("fetch_net_stake_totals")
+        {
+            return Ok(cached);
+        }
+        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
+        let totals = grpc::fetch_net_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+            .await
+            .context("fetch_net_stake_totals")?;
+        self.put_cached_stake_totals(ResourceStakeTotalsKind::Net, totals.clone())
+            .await;
+        Ok(totals)
+    }
+
+    async fn get_cached_stake_totals(
+        &self,
+        kind: ResourceStakeTotalsKind,
+    ) -> Option<ResourceStakeTotals> {
+        let ttl = std::time::Duration::from_secs(self.cfg.stake_totals_cache_ttl_secs.max(1));
+        let cache = self.stake_totals_cache.read().await;
+        let entry = match kind {
+            ResourceStakeTotalsKind::Energy => cache.energy.as_ref(),
+            ResourceStakeTotalsKind::Net => cache.net.as_ref(),
+        }?;
+
+        if entry.fetched_at.elapsed() <= ttl {
+            Some(entry.totals.clone())
+        } else {
+            None
+        }
+    }
+
+    async fn put_cached_stake_totals(
+        &self,
+        kind: ResourceStakeTotalsKind,
+        totals: ResourceStakeTotals,
+    ) {
+        let mut cache = self.stake_totals_cache.write().await;
+        let entry = CachedTotals {
+            fetched_at: Instant::now(),
+            totals,
+        };
+        match kind {
+            ResourceStakeTotalsKind::Energy => cache.energy = Some(entry),
+            ResourceStakeTotalsKind::Net => cache.net = Some(entry),
+        }
     }
 
     pub async fn prepare_trx_transfer(
@@ -774,7 +852,10 @@ impl TronBackend {
             let account = grpc::fetch_account(&self.cfg, &self.telemetry, a)
                 .await
                 .context("fetch_account")?;
-            out.push((a, grpc::delegated_resource_available_sun(&account, resource)));
+            out.push((
+                a,
+                grpc::delegated_resource_available_sun(&account, resource),
+            ));
         }
         Ok(out)
     }
@@ -913,14 +994,23 @@ mod delegate_selection_tests {
     fn select_delegate_executor_picks_best_effective_capacity() {
         let available = [100, 200, 150];
         let reserved = [0, 50, 0];
-        assert_eq!(select_delegate_executor_index(&available, &reserved, 120), Some(1));
-        assert_eq!(select_delegate_executor_index(&available, &reserved, 180), None);
+        assert_eq!(
+            select_delegate_executor_index(&available, &reserved, 120),
+            Some(1)
+        );
+        assert_eq!(
+            select_delegate_executor_index(&available, &reserved, 180),
+            None
+        );
     }
 
     #[test]
     fn select_delegate_executor_handles_reservations() {
         let available = [500, 500];
         let reserved = [450, 0];
-        assert_eq!(select_delegate_executor_index(&available, &reserved, 100), Some(1));
+        assert_eq!(
+            select_delegate_executor_index(&available, &reserved, 100),
+            Some(1)
+        );
     }
 }
