@@ -46,6 +46,7 @@ impl PolicyEngine {
         pricing: &mut Pricing,
         hub_cost_usd: f64,
         tron_fee_usd: f64,
+        delegate_resource_resell: bool,
     ) -> Result<PolicyEvaluation> {
         let mut eval = PolicyEvaluation {
             allowed: false,
@@ -88,7 +89,14 @@ impl PolicyEngine {
 
         // Best-effort profitability gating.
         if let Some(reason) = self
-            .profitability_check(row, ty, pricing, hub_cost_usd, tron_fee_usd)
+            .profitability_check(
+                row,
+                ty,
+                pricing,
+                hub_cost_usd,
+                tron_fee_usd,
+                delegate_resource_resell,
+            )
             .await
             .context("profitability_check")?
         {
@@ -314,6 +322,7 @@ impl PolicyEngine {
         pricing: &mut Pricing,
         hub_cost_usd: f64,
         tron_fee_usd: f64,
+        delegate_resource_resell: bool,
     ) -> Result<Option<String>> {
         if self.cfg.min_profit_usd <= 0.0 && !self.cfg.require_priced_escrow {
             return Ok(None);
@@ -333,9 +342,13 @@ impl PolicyEngine {
         let revenue_usd = (escrow_amount.to_string().parse::<f64>().unwrap_or(0.0)) / 1e6;
 
         let trx_usd = pricing.trx_usd().await.unwrap_or(0.0);
-        let cost_usd = match estimate_cost_usd(&self.cfg, ty, &row.intent_specs, trx_usd) {
-            Ok(v) => v,
-            Err(_) => return Ok(Some("cost_estimate_failed".to_string())),
+        let cost_usd = if ty == IntentType::DelegateResource && delegate_resource_resell {
+            0.0
+        } else {
+            match estimate_cost_usd(&self.cfg, ty, &row.intent_specs, trx_usd) {
+                Ok(v) => v,
+                Err(_) => return Ok(Some("cost_estimate_failed".to_string())),
+            }
         };
         let profit = revenue_usd - cost_usd - hub_cost_usd - tron_fee_usd;
         if profit < self.cfg.min_profit_usd {
@@ -534,7 +547,7 @@ mod tests {
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0, false)
             .await
             .unwrap();
         assert!(!eval.allowed);
@@ -572,7 +585,7 @@ mod tests {
         });
 
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.0, 0.0, false)
             .await
             .unwrap();
         assert!(!eval.allowed);
@@ -609,7 +622,7 @@ mod tests {
 
         // $1.00 revenue - $0.00 tron - $0.95 hub = $0.05 profit < $0.10
         let eval = p
-            .evaluate_open_intent(&row, now, &mut pricing, 0.95, 0.0)
+            .evaluate_open_intent(&row, now, &mut pricing, 0.95, 0.0, false)
             .await
             .unwrap();
         assert!(!eval.allowed);

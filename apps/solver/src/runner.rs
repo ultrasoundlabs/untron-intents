@@ -26,6 +26,23 @@ use tokio_util::sync::CancellationToken;
 const INTENT_CLAIM_DEPOSIT: u64 = 1_000_000;
 const LEASE_FOR_SECS: u64 = 30;
 
+struct ShouldAttemptDecision {
+    ok: bool,
+    rental_quote: Option<RentalQuoteDecision>,
+}
+
+struct RentalQuoteDecision {
+    provider: String,
+    receiver_evm: [u8; 20],
+    balance_sun: i64,
+    lock_period: i64,
+    amount_units: u64,
+    duration_hours: u64,
+    cost_trx: f64,
+    rendered_request: tron::RenderedJsonApiRequest,
+    response_json: serde_json::Value,
+}
+
 pub struct Solver {
     cfg: AppConfig,
     telemetry: SolverTelemetry,
@@ -242,14 +259,47 @@ impl Solver {
             .await?;
 
         for row in rows {
-            if !self.should_attempt(&row).await? {
+            let decision = self.should_attempt(&row).await?;
+            if !decision.ok {
                 continue;
             }
             let id = parse_b256(&row.id)?;
             let specs = parse_hex_bytes(&row.intent_specs)?;
+            let intent_id = b256_to_bytes32(id);
             self.db
-                .insert_job_if_new(b256_to_bytes32(id), row.intent_type, &specs, row.deadline)
+                .insert_job_if_new(intent_id, row.intent_type, &specs, row.deadline)
                 .await?;
+
+            if let Some(q) = decision.rental_quote {
+                if let Some(job_id) = self.db.job_id_for_intent(intent_id).await? {
+                    let request_json = serde_json::json!({
+                        "quote": q.rendered_request,
+                        "quote_meta": {
+                            "duration_hours": q.duration_hours,
+                            "amount_units": q.amount_units,
+                            "cost_trx": q.cost_trx,
+                        }
+                    });
+                    let response_json = serde_json::json!({
+                        "quote": q.response_json
+                    });
+                    let _ = self
+                        .db
+                        .upsert_tron_rental(
+                            job_id,
+                            &q.provider,
+                            "energy",
+                            q.receiver_evm,
+                            q.balance_sun,
+                            q.lock_period,
+                            None,
+                            None,
+                            Some(&request_json),
+                            Some(&response_json),
+                        )
+                        .await;
+                }
+            }
         }
 
         let jobs = self
@@ -307,12 +357,162 @@ impl Solver {
         Ok(())
     }
 
-    async fn should_attempt(&mut self, row: &PoolOpenIntentRow) -> Result<bool> {
+    async fn quote_best_energy_rental(
+        &self,
+        receiver: tron::TronAddress,
+        balance_sun: u64,
+        lock_period_blocks: u64,
+        amount_units: u64,
+        duration_hours: u64,
+    ) -> Result<RentalQuoteDecision> {
+        let mut recv = [0u8; 20];
+        recv.copy_from_slice(receiver.evm().as_slice());
+
+        let ctx_quote = tron::RentalContext {
+            resource: tron::RentalResourceKind::Energy,
+            amount: amount_units,
+            lock_period: Some(lock_period_blocks),
+            duration_hours: Some(duration_hours),
+            balance_sun: Some(balance_sun),
+            address_base58check: receiver.to_base58check(),
+            address_hex41: format!("0x{}", hex::encode(receiver.prefixed_bytes())),
+            address_evm_hex: format!("{:#x}", receiver.evm()),
+            txid: None,
+        };
+
+        let mut best: Option<RentalQuoteDecision> = None;
+        let mut last_err: Option<String> = None;
+
+        for provider_cfg in &self.cfg.tron.energy_rental_providers {
+            if provider_cfg.quote.is_none() {
+                continue;
+            }
+            if self
+                .db
+                .rental_provider_is_frozen(&provider_cfg.name)
+                .await?
+                .is_some()
+            {
+                continue;
+            }
+
+            let provider = tron::JsonApiRentalProvider::new(provider_cfg.clone());
+            let started = Instant::now();
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                provider.quote_with_rendered_request(&ctx_quote),
+            )
+            .await;
+            let ms = started.elapsed().as_millis() as u64;
+
+            match res {
+                Ok(Ok((req, attempt))) => {
+                    let ok = attempt.ok && attempt.cost_trx.is_some();
+                    self.telemetry.rental_quote_ms(provider.name(), ok, ms);
+                    if ok {
+                        let cost_trx = attempt.cost_trx.unwrap_or(f64::INFINITY);
+                        let resp = attempt.response_json.unwrap_or(serde_json::Value::Null);
+                        let candidate = RentalQuoteDecision {
+                            provider: provider.name().to_string(),
+                            receiver_evm: recv,
+                            balance_sun: i64::try_from(balance_sun).unwrap_or(i64::MAX),
+                            lock_period: i64::try_from(lock_period_blocks).unwrap_or(i64::MAX),
+                            amount_units,
+                            duration_hours,
+                            cost_trx,
+                            rendered_request: req,
+                            response_json: resp,
+                        };
+                        let choose = match &best {
+                            None => true,
+                            Some(b) => cost_trx < b.cost_trx,
+                        };
+                        if choose {
+                            best = Some(candidate);
+                        }
+                        let _ = self
+                            .db
+                            .rental_provider_record_success(provider.name())
+                            .await;
+                    } else {
+                        let msg = format!(
+                            "ok={} cost_trx={:?} err={:?}",
+                            attempt.ok, attempt.cost_trx, attempt.error
+                        );
+                        last_err = Some(format!("{}: {msg}", provider.name()));
+                        self.telemetry.rental_quote_ms(provider.name(), false, ms);
+                        let froze = self
+                            .db
+                            .rental_provider_record_failure(
+                                provider.name(),
+                                self.cfg.tron.rental_provider_fail_window_secs,
+                                self.cfg.tron.rental_provider_freeze_secs,
+                                self.cfg.tron.rental_provider_fail_threshold,
+                                &msg,
+                            )
+                            .await;
+                        if froze.unwrap_or(false) {
+                            self.telemetry.rental_provider_frozen(provider.name());
+                        }
+                    }
+                }
+                Ok(Err(err)) => {
+                    self.telemetry.rental_quote_ms(provider.name(), false, ms);
+                    let msg = format!("{err:#}");
+                    last_err = Some(format!("{}: {msg}", provider.name()));
+                    let froze = self
+                        .db
+                        .rental_provider_record_failure(
+                            provider.name(),
+                            self.cfg.tron.rental_provider_fail_window_secs,
+                            self.cfg.tron.rental_provider_freeze_secs,
+                            self.cfg.tron.rental_provider_fail_threshold,
+                            &msg,
+                        )
+                        .await;
+                    if froze.unwrap_or(false) {
+                        self.telemetry.rental_provider_frozen(provider.name());
+                    }
+                }
+                Err(_) => {
+                    self.telemetry.rental_quote_ms(provider.name(), false, ms);
+                    let msg = "timeout".to_string();
+                    last_err = Some(format!("{}: {msg}", provider.name()));
+                    let froze = self
+                        .db
+                        .rental_provider_record_failure(
+                            provider.name(),
+                            self.cfg.tron.rental_provider_fail_window_secs,
+                            self.cfg.tron.rental_provider_freeze_secs,
+                            self.cfg.tron.rental_provider_fail_threshold,
+                            &msg,
+                        )
+                        .await;
+                    if froze.unwrap_or(false) {
+                        self.telemetry.rental_provider_frozen(provider.name());
+                    }
+                }
+            }
+        }
+
+        best.ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                last_err
+                    .unwrap_or_else(|| "no energy rental quote providers succeeded".to_string())
+            )
+        })
+    }
+
+    async fn should_attempt(&mut self, row: &PoolOpenIntentRow) -> Result<ShouldAttemptDecision> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
         let ty = IntentType::from_i16(row.intent_type)?;
+        let mut rental_quote: Option<RentalQuoteDecision> = None;
+        let mut rental_cost_usd: f64 = 0.0;
+        let mut delegate_resource_resell: bool = false;
 
         // Pre-claim inventory check for multi-key TRX/USDT: if we can't fill (and can't consolidate
         // within configured limits), skip before we spend the claim deposit.
@@ -346,7 +546,10 @@ impl Solver {
                                 )
                                 .await;
                         }
-                        return Ok(false);
+                        return Ok(ShouldAttemptDecision {
+                            ok: false,
+                            rental_quote: None,
+                        });
                     }
                 }
                 Err(err) => {
@@ -359,9 +562,107 @@ impl Solver {
         let tron_fee_usd_per_tx = self.estimate_tron_fee_usd(row.intent_type).await?;
         let tron_fee_usd = tron_fee_usd_per_tx * (1.0 + required_pre_txs as f64);
 
+        // DelegateResource resell (ENERGY-only): quote rental providers before claim to ensure profitability.
+        if self.cfg.tron.mode == TronMode::Grpc
+            && ty == IntentType::DelegateResource
+            && self.cfg.tron.delegate_resource_resell_enabled
+        {
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            if let Ok(intent) = crate::tron_backend::DelegateResourceIntent::abi_decode(&specs) {
+                // Only resell ENERGY. Bandwidth/TRON_POWER use the solver's own capacity and are gated separately.
+                if intent.resource == 1 {
+                    delegate_resource_resell = true;
+
+                    let receiver = tron::TronAddress::from_evm(intent.receiver);
+                    let balance_sun_u64 = u64::try_from(intent.balanceSun).unwrap_or(u64::MAX);
+                    let lock_period_blocks = u64::try_from(intent.lockPeriod).unwrap_or(u64::MAX);
+
+                    let duration_hours = duration_hours_for_lock_period_blocks(lock_period_blocks);
+                    let totals = self.tron.energy_stake_totals().await?;
+                    let amount_units = tron::resources::resource_units_for_min_trx_sun(
+                        balance_sun_u64,
+                        totals,
+                        self.cfg.tron.resell_energy_headroom_ppm,
+                    );
+
+                    let need_profitability = self.cfg.policy.min_profit_usd > 0.0
+                        || self.cfg.policy.require_priced_escrow;
+
+                    match self
+                        .quote_best_energy_rental(
+                            receiver,
+                            balance_sun_u64,
+                            lock_period_blocks,
+                            amount_units,
+                            duration_hours,
+                        )
+                        .await
+                    {
+                        Ok(q) => {
+                            if need_profitability {
+                                let trx_usd = match self.pricing.trx_usd().await {
+                                    Ok(v) => v,
+                                    Err(err) => {
+                                        tracing::warn!(err = %err, "trx_usd unavailable; skipping rental quote");
+                                        if let Ok(id) = parse_b256(&row.id) {
+                                            let _ = self
+                                                .db
+                                                .upsert_intent_skip(
+                                                    b256_to_bytes32(id),
+                                                    row.intent_type,
+                                                    "rental_quote_no_price",
+                                                    None,
+                                                )
+                                                .await;
+                                        }
+                                        return Ok(ShouldAttemptDecision {
+                                            ok: false,
+                                            rental_quote: None,
+                                        });
+                                    }
+                                };
+                                rental_cost_usd = q.cost_trx * trx_usd;
+                            }
+                            rental_quote = Some(q);
+                        }
+                        Err(err) => {
+                            if need_profitability {
+                                tracing::warn!(
+                                    err = %err,
+                                    "energy rental quote failed; skipping intent"
+                                );
+                                if let Ok(id) = parse_b256(&row.id) {
+                                    let _ = self
+                                        .db
+                                        .upsert_intent_skip(
+                                            b256_to_bytes32(id),
+                                            row.intent_type,
+                                            "rental_quote_failed",
+                                            Some(&format!("{err:#}")),
+                                        )
+                                        .await;
+                                }
+                                return Ok(ShouldAttemptDecision {
+                                    ok: false,
+                                    rental_quote: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let eval = self
             .policy
-            .evaluate_open_intent(row, now, &mut self.pricing, hub_cost_usd, tron_fee_usd)
+            .evaluate_open_intent(
+                row,
+                now,
+                &mut self.pricing,
+                hub_cost_usd,
+                tron_fee_usd + rental_cost_usd,
+                delegate_resource_resell,
+            )
             .await?;
         if !eval.allowed {
             if let Ok(id) = parse_b256(&row.id) {
@@ -378,7 +679,10 @@ impl Solver {
             if let Some(reason) = eval.reason.as_deref() {
                 tracing::debug!(id = %row.id, intent_type = row.intent_type, reason, "skip intent");
             }
-            return Ok(false);
+            return Ok(ShouldAttemptDecision {
+                ok: false,
+                rental_quote: None,
+            });
         }
 
         // Dynamic breaker (if applicable).
@@ -395,7 +699,10 @@ impl Solver {
                         )
                         .await;
                 }
-                return Ok(false);
+                return Ok(ShouldAttemptDecision {
+                    ok: false,
+                    rental_quote: None,
+                });
             }
         }
 
@@ -412,9 +719,11 @@ impl Solver {
                     .await;
                 if let Ok(id) = parse_b256(&row.id) {
                     let (contract, selector) = match ty {
-                        IntentType::TriggerSmartContract => decode_trigger_contract_and_selector(&specs)
-                            .map(|(c, s)| (Some(c), s))
-                            .unwrap_or((None, None)),
+                        IntentType::TriggerSmartContract => {
+                            decode_trigger_contract_and_selector(&specs)
+                                .map(|(c, s)| (Some(c), s))
+                                .unwrap_or((None, None))
+                        }
                         _ => (None, None),
                     };
                     let contract_bytes = contract.map(|c| c.as_slice().to_vec());
@@ -449,7 +758,10 @@ impl Solver {
                         reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
                         "skip intent (tron emulation)"
                     );
-                    return Ok(false);
+                    return Ok(ShouldAttemptDecision {
+                        ok: false,
+                        rental_quote: None,
+                    });
                 }
             }
         }
@@ -458,7 +770,7 @@ impl Solver {
         // because we don't have enough staked TRX for the requested resource.
         if self.cfg.tron.mode == TronMode::Grpc
             && row.intent_type == IntentType::DelegateResource as i16
-            && !self.cfg.tron.delegate_resource_resell_enabled
+            && !delegate_resource_resell
         {
             let specs = parse_hex_bytes(&row.intent_specs)?;
             if let Ok(intent) = crate::tron_backend::DelegateResourceIntent::abi_decode(&specs) {
@@ -474,7 +786,10 @@ impl Solver {
                     Ok(v) => v,
                     Err(err) => {
                         tracing::warn!(err = %err, "delegate capacity check failed; continuing");
-                        return Ok(true);
+                        return Ok(ShouldAttemptDecision {
+                            ok: true,
+                            rental_quote,
+                        });
                     }
                 };
                 let reserved = match self
@@ -485,7 +800,10 @@ impl Solver {
                     Ok(v) => v,
                     Err(err) => {
                         tracing::warn!(err = %err, "delegate reservation sum failed; continuing");
-                        return Ok(true);
+                        return Ok(ShouldAttemptDecision {
+                            ok: true,
+                            rental_quote,
+                        });
                     }
                 };
                 let mut reserved_map = std::collections::HashMap::<Vec<u8>, i64>::new();
@@ -526,12 +844,18 @@ impl Solver {
                             )
                             .await;
                     }
-                    return Ok(false);
+                    return Ok(ShouldAttemptDecision {
+                        ok: false,
+                        rental_quote: None,
+                    });
                 }
             }
         }
 
-        Ok(true)
+        Ok(ShouldAttemptDecision {
+            ok: true,
+            rental_quote,
+        })
     }
 
     async fn estimate_hub_cost_usd(&mut self) -> Result<f64> {
@@ -648,7 +972,9 @@ async fn enforce_claim_rate_limits(ctx: &JobCtx, ty: IntentType) -> Result<Optio
         ),
         IntentType::TriggerSmartContract => (
             "claim:trigger_smart_contract",
-            ctx.cfg.jobs.rate_limit_claims_per_minute_trigger_smart_contract,
+            ctx.cfg
+                .jobs
+                .rate_limit_claims_per_minute_trigger_smart_contract,
         ),
     };
     if let Some(wait) = ctx.db.rate_limit_claim_per_minute(k, limit).await? {
@@ -746,16 +1072,22 @@ async fn finalize_after_prove(ctx: &JobCtx, job: &SolverJob) -> Result<()> {
                     ctx.db
                         .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
                         .await?;
-                    ctx.telemetry
-                        .job_state_transition(job.intent_type, "proved", "proved_waiting_funding");
+                    ctx.telemetry.job_state_transition(
+                        job.intent_type,
+                        "proved",
+                        "proved_waiting_funding",
+                    );
                     return Ok(());
                 }
                 if status.solved && status.funded && !status.settled {
                     ctx.db
                         .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
                         .await?;
-                    ctx.telemetry
-                        .job_state_transition(job.intent_type, "proved", "proved_waiting_settlement");
+                    ctx.telemetry.job_state_transition(
+                        job.intent_type,
+                        "proved",
+                        "proved_waiting_settlement",
+                    );
                     return Ok(());
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -885,11 +1217,15 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                         Err(err) => {
                             let msg = err.to_string();
                             // If already claimed, don't keep retrying.
-                        if msg.contains("AlreadyClaimed") {
-                                ctx.telemetry.job_state_transition(job.intent_type, "ready", "failed_fatal");
+                            if msg.contains("AlreadyClaimed") {
+                                ctx.telemetry.job_state_transition(
+                                    job.intent_type,
+                                    "ready",
+                                    "failed_fatal",
+                                );
                                 record_fatal(&ctx, &job, &msg).await?;
                                 return Ok(());
-                        }
+                            }
                             ctx.db
                                 .record_retryable_error(
                                     job.job_id,
@@ -1056,9 +1392,10 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         .await?;
                                     return Ok(());
                                 }
-                                if ty == IntentType::DelegateResource && ctx.cfg.tron.mode == TronMode::Grpc {
-                                    if let Err(err) =
-                                        ensure_delegate_reservation(&ctx, &job).await
+                                if ty == IntentType::DelegateResource
+                                    && ctx.cfg.tron.mode == TronMode::Grpc
+                                {
+                                    if let Err(err) = ensure_delegate_reservation(&ctx, &job).await
                                     {
                                         let msg = format!("delegate reservation failed: {err:#}");
                                         ctx.db
@@ -1178,7 +1515,11 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         b256_to_bytes32(tx_hash),
                                     )
                                     .await?;
-                                ctx.telemetry.job_state_transition(job.intent_type, "ready", "claimed");
+                                ctx.telemetry.job_state_transition(
+                                    job.intent_type,
+                                    "ready",
+                                    "claimed",
+                                );
                             } else {
                                 let msg = format!(
                                     "claim userop failed: {:?}",
@@ -1360,210 +1701,234 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
 
                 // Delegate resource resell path: request a rental provider to broadcast the
                 // onchain `DelegateResourceContract` and prove it once included.
-                if ty == IntentType::DelegateResource && ctx.cfg.tron.delegate_resource_resell_enabled
+                if ty == IntentType::DelegateResource
+                    && ctx.cfg.tron.delegate_resource_resell_enabled
                 {
-                    let existing = ctx.db.get_tron_rental_for_job(job.job_id).await?;
-                    let txid = if let Some(r) = existing.and_then(|r| r.txid) {
-                        r
-                    } else {
-                        let intent = crate::tron_backend::DelegateResourceIntent::abi_decode(&job.intent_specs)
+                    let intent =
+                        crate::tron_backend::DelegateResourceIntent::abi_decode(&job.intent_specs)
                             .context("decode DelegateResourceIntent")?;
-                        let receiver = tron::TronAddress::from_evm(intent.receiver);
-                        let balance_sun_i64 =
-                            i64::try_from(intent.balanceSun).context("balanceSun out of i64 range")?;
-                        let lock_period_i64 =
-                            i64::try_from(intent.lockPeriod).context("lockPeriod out of i64 range")?;
+                    // Resell ENERGY only; bandwidth/TRON_POWER use the solver's own capacity.
+                    if intent.resource == 1 {
+                        let existing = ctx.db.get_tron_rental_for_job(job.job_id).await?;
+                        let txid = if let Some(r) = existing.as_ref().and_then(|r| r.txid) {
+                            r
+                        } else {
+                            let receiver = tron::TronAddress::from_evm(intent.receiver);
+                            let balance_sun_i64 = i64::try_from(intent.balanceSun)
+                                .context("balanceSun out of i64 range")?;
+                            let lock_period_i64 = i64::try_from(intent.lockPeriod)
+                                .context("lockPeriod out of i64 range")?;
 
-                        let resource_kind = match intent.resource {
-                            0 => tron::RentalResourceKind::Bandwidth,
-                            1 => tron::RentalResourceKind::Energy,
-                            2 => tron::RentalResourceKind::TronPower,
-                            other => anyhow::bail!("unsupported DelegateResourceIntent.resource: {other}"),
-                        };
+                            let mut recv = [0u8; 20];
+                            recv.copy_from_slice(intent.receiver.as_slice());
 
-                        let mut recv = [0u8; 20];
-                        recv.copy_from_slice(intent.receiver.as_slice());
+                            let totals = ctx.tron.energy_stake_totals().await?;
+                            let units = tron::resources::resource_units_for_min_trx_sun(
+                                u64::try_from(balance_sun_i64.max(0)).unwrap_or(0),
+                                totals,
+                                ctx.cfg.tron.resell_energy_headroom_ppm,
+                            );
+                            let duration_hours = duration_hours_for_lock_period_blocks(
+                                u64::try_from(lock_period_i64.max(0)).unwrap_or(0),
+                            );
 
-                        let totals = match resource_kind {
-                            tron::RentalResourceKind::Energy => ctx.tron.energy_stake_totals().await?,
-                            tron::RentalResourceKind::Bandwidth => ctx.tron.net_stake_totals().await?,
-                            tron::RentalResourceKind::TronPower => {
-                                anyhow::bail!("delegate_resource resell unsupported for tron_power")
+                            // Prefer the pre-quoted provider (if present).
+                            let preferred = existing.as_ref().map(|r| r.provider.as_str());
+                            let ctx_rent = tron::RentalContext {
+                                resource: tron::RentalResourceKind::Energy,
+                                amount: units,
+                                lock_period: Some(
+                                    u64::try_from(lock_period_i64.max(0)).unwrap_or(0),
+                                ),
+                                duration_hours: Some(duration_hours),
+                                balance_sun: Some(
+                                    u64::try_from(balance_sun_i64.max(0)).unwrap_or(0),
+                                ),
+                                address_base58check: receiver.to_base58check(),
+                                address_hex41: format!(
+                                    "0x{}",
+                                    hex::encode(receiver.prefixed_bytes())
+                                ),
+                                address_evm_hex: format!("{:#x}", receiver.evm()),
+                                txid: None,
+                            };
+
+                            let mut last_err: Option<String> = None;
+                            let mut chosen: Option<(
+                                tron::RenderedJsonApiRequest,
+                                tron::RentalAttempt,
+                            )> = None;
+
+                            let mut providers = ctx.cfg.tron.energy_rental_providers.clone();
+                            if let Some(p) = preferred {
+                                providers.sort_by_key(|c| if c.name == p { 0 } else { 1 });
                             }
-                        };
-                        let units = tron::resources::resource_units_for_min_trx_sun(
-                            u64::try_from(balance_sun_i64.max(0)).unwrap_or(0),
-                            totals,
-                            ctx.cfg.tron.resell_energy_headroom_ppm,
-                        );
-
-                        let ctx_rent = tron::RentalContext {
-                            resource: resource_kind,
-                            amount: units,
-                            lock_period: Some(u64::try_from(lock_period_i64.max(0)).unwrap_or(0)),
-                            balance_sun: Some(u64::try_from(balance_sun_i64.max(0)).unwrap_or(0)),
-                            address_base58check: receiver.to_base58check(),
-                            address_hex41: format!("0x{}", hex::encode(receiver.prefixed_bytes())),
-                            address_evm_hex: format!("{:#x}", receiver.evm()),
-                            txid: None,
-                        };
-
-                        let request_params = serde_json::json!({
-                            "resource_kind": match resource_kind {
-                                tron::RentalResourceKind::Energy => "energy",
-                                tron::RentalResourceKind::Bandwidth => "bandwidth",
-                                tron::RentalResourceKind::TronPower => "tron_power",
-                            },
-                            "receiver_base58check": receiver.to_base58check(),
-                            "receiver_hex41": format!("0x{}", hex::encode(receiver.prefixed_bytes())),
-                            "receiver_evm": format!("{:#x}", receiver.evm()),
-                            "balance_sun": balance_sun_i64,
-                            "lock_period": lock_period_i64,
-                        });
-
-                        let mut last_err: Option<String> = None;
-                        let mut chosen: Option<(tron::RenderedJsonApiRequest, tron::RentalAttempt)> =
-                            None;
-                        for p in &ctx.cfg.tron.energy_rental_providers {
-                            let provider = tron::JsonApiRentalProvider::new(p.clone());
-                            if ctx
-                                .db
-                                .rental_provider_is_frozen(provider.name())
-                                .await?
-                                .is_some()
-                            {
-                                continue;
-                            }
-
-                            let res = tokio::time::timeout(
-                                std::time::Duration::from_secs(3),
-                                provider.rent_with_rendered_request(&ctx_rent),
-                            )
-                            .await;
-                            match res {
-                                Ok(Ok((req, attempt))) if attempt.ok && attempt.txid.is_some() => {
-                                    chosen = Some((req.clone(), attempt.clone()));
-                                    // Persist request/response details for restart-safety/auditing.
-                                    ctx.db
-                                        .upsert_tron_rental(
-                                            job.job_id,
-                                            provider.name(),
-                                            match resource_kind {
-                                                tron::RentalResourceKind::Energy => "energy",
-                                                tron::RentalResourceKind::Bandwidth => "bandwidth",
-                                                tron::RentalResourceKind::TronPower => "tron_power",
-                                            },
-                                            recv,
-                                            balance_sun_i64,
-                                            lock_period_i64,
-                                            attempt.order_id.as_deref(),
-                                            None,
-                                            Some(&serde_json::to_value(req).unwrap_or(request_params.clone())),
-                                            attempt.response_json.as_ref(),
-                                        )
-                                        .await
-                                        .ok();
-                                    let _ = ctx.db.rental_provider_record_success(provider.name()).await;
-                                    break;
+                            for p in &providers {
+                                let provider = tron::JsonApiRentalProvider::new(p.clone());
+                                if ctx
+                                    .db
+                                    .rental_provider_is_frozen(provider.name())
+                                    .await?
+                                    .is_some()
+                                {
+                                    continue;
                                 }
-                                Ok(Ok((_req, attempt))) => {
-                                    let msg = format!(
-                                        "ok={} txid={:?} err={:?}",
-                                        attempt.ok, attempt.txid, attempt.error
-                                    );
-                                    last_err = Some(format!("{}: {msg}", provider.name()));
-                                    let _ = ctx
-                                        .db
-                                        .rental_provider_record_failure(
-                                            provider.name(),
-                                            ctx.cfg.tron.rental_provider_fail_window_secs,
-                                            ctx.cfg.tron.rental_provider_freeze_secs,
-                                            ctx.cfg.tron.rental_provider_fail_threshold,
-                                            &msg,
-                                        )
-                                        .await;
-                                }
-                                Ok(Err(err)) => {
-                                    let msg = format!("{err:#}");
-                                    last_err = Some(format!("{}: {msg}", provider.name()));
-                                    let _ = ctx
-                                        .db
-                                        .rental_provider_record_failure(
-                                            provider.name(),
-                                            ctx.cfg.tron.rental_provider_fail_window_secs,
-                                            ctx.cfg.tron.rental_provider_freeze_secs,
-                                            ctx.cfg.tron.rental_provider_fail_threshold,
-                                            &msg,
-                                        )
-                                        .await;
-                                }
-                                Err(_) => {
-                                    let msg = "timeout".to_string();
-                                    last_err = Some(format!("{}: {msg}", provider.name()));
-                                    let _ = ctx
-                                        .db
-                                        .rental_provider_record_failure(
-                                            provider.name(),
-                                            ctx.cfg.tron.rental_provider_fail_window_secs,
-                                            ctx.cfg.tron.rental_provider_freeze_secs,
-                                            ctx.cfg.tron.rental_provider_fail_threshold,
-                                            &msg,
-                                        )
-                                        .await;
-                                }
-                            }
-                        }
 
-                        let Some((rendered_req, attempt)) = chosen else {
-                            let msg = last_err.unwrap_or_else(|| "no energy rental providers succeeded".to_string());
-                            ctx.db
-                                .record_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    &msg,
-                                    retry_in(job.attempts),
+                                let started = Instant::now();
+                                let res = tokio::time::timeout(
+                                    std::time::Duration::from_secs(10),
+                                    provider.rent_with_rendered_request(&ctx_rent),
                                 )
-                                .await?;
-                            return Ok(());
+                                .await;
+                                let ms = started.elapsed().as_millis() as u64;
+
+                                match res {
+                                    Ok(Ok((req, attempt)))
+                                        if attempt.ok && attempt.txid.is_some() =>
+                                    {
+                                        ctx.telemetry.rental_order_ms(provider.name(), true, ms);
+                                        chosen = Some((req, attempt));
+                                        let _ = ctx
+                                            .db
+                                            .rental_provider_record_success(provider.name())
+                                            .await;
+                                        break;
+                                    }
+                                    Ok(Ok((_req, attempt))) => {
+                                        ctx.telemetry.rental_order_ms(provider.name(), false, ms);
+                                        let msg = format!(
+                                            "ok={} txid={:?} err={:?}",
+                                            attempt.ok, attempt.txid, attempt.error
+                                        );
+                                        last_err = Some(format!("{}: {msg}", provider.name()));
+                                        let froze = ctx
+                                            .db
+                                            .rental_provider_record_failure(
+                                                provider.name(),
+                                                ctx.cfg.tron.rental_provider_fail_window_secs,
+                                                ctx.cfg.tron.rental_provider_freeze_secs,
+                                                ctx.cfg.tron.rental_provider_fail_threshold,
+                                                &msg,
+                                            )
+                                            .await;
+                                        if froze.unwrap_or(false) {
+                                            ctx.telemetry.rental_provider_frozen(provider.name());
+                                        }
+                                    }
+                                    Ok(Err(err)) => {
+                                        ctx.telemetry.rental_order_ms(provider.name(), false, ms);
+                                        let msg = format!("{err:#}");
+                                        last_err = Some(format!("{}: {msg}", provider.name()));
+                                        let froze = ctx
+                                            .db
+                                            .rental_provider_record_failure(
+                                                provider.name(),
+                                                ctx.cfg.tron.rental_provider_fail_window_secs,
+                                                ctx.cfg.tron.rental_provider_freeze_secs,
+                                                ctx.cfg.tron.rental_provider_fail_threshold,
+                                                &msg,
+                                            )
+                                            .await;
+                                        if froze.unwrap_or(false) {
+                                            ctx.telemetry.rental_provider_frozen(provider.name());
+                                        }
+                                    }
+                                    Err(_) => {
+                                        ctx.telemetry.rental_order_ms(provider.name(), false, ms);
+                                        let msg = "timeout".to_string();
+                                        last_err = Some(format!("{}: {msg}", provider.name()));
+                                        let froze = ctx
+                                            .db
+                                            .rental_provider_record_failure(
+                                                provider.name(),
+                                                ctx.cfg.tron.rental_provider_fail_window_secs,
+                                                ctx.cfg.tron.rental_provider_freeze_secs,
+                                                ctx.cfg.tron.rental_provider_fail_threshold,
+                                                &msg,
+                                            )
+                                            .await;
+                                        if froze.unwrap_or(false) {
+                                            ctx.telemetry.rental_provider_frozen(provider.name());
+                                        }
+                                    }
+                                }
+                            }
+
+                            let Some((rendered_req, attempt)) = chosen else {
+                                let msg = last_err.unwrap_or_else(|| {
+                                    "no energy rental providers succeeded".to_string()
+                                });
+                                ctx.db
+                                    .record_retryable_error(
+                                        job.job_id,
+                                        &ctx.instance_id,
+                                        &msg,
+                                        retry_in(job.attempts),
+                                    )
+                                    .await?;
+                                return Ok(());
+                            };
+
+                            let txid_hex = attempt.txid.as_ref().unwrap();
+                            let bytes = hex::decode(txid_hex.trim_start_matches("0x"))
+                                .context("decode rental txid hex")?;
+                            if bytes.len() != 32 {
+                                anyhow::bail!("rental txid is not 32 bytes: {txid_hex}");
+                            }
+                            let mut out = [0u8; 32];
+                            out.copy_from_slice(&bytes);
+
+                            let mut request_json = existing
+                                .as_ref()
+                                .and_then(|r| r.request_json.clone())
+                                .unwrap_or_else(|| serde_json::json!({}));
+                            if !request_json.is_object() {
+                                request_json = serde_json::json!({});
+                            }
+                            request_json["order"] = serde_json::to_value(&rendered_req)
+                                .unwrap_or(serde_json::Value::Null);
+                            request_json["order_meta"] = serde_json::json!({
+                                "duration_hours": duration_hours,
+                                "amount_units": units,
+                            });
+
+                            let mut response_json = existing
+                                .as_ref()
+                                .and_then(|r| r.response_json.clone())
+                                .unwrap_or_else(|| serde_json::json!({}));
+                            if !response_json.is_object() {
+                                response_json = serde_json::json!({});
+                            }
+                            response_json["order"] = attempt
+                                .response_json
+                                .clone()
+                                .unwrap_or(serde_json::Value::Null);
+
+                            // Update rental row with txid once known.
+                            ctx.db
+                                .upsert_tron_rental(
+                                    job.job_id,
+                                    &attempt.provider,
+                                    "energy",
+                                    recv,
+                                    balance_sun_i64,
+                                    lock_period_i64,
+                                    attempt.order_id.as_deref(),
+                                    Some(out),
+                                    Some(&request_json),
+                                    Some(&response_json),
+                                )
+                                .await
+                                .ok();
+
+                            out
                         };
 
-                        let txid_hex = attempt.txid.as_ref().unwrap();
-                        let bytes = hex::decode(txid_hex.trim_start_matches("0x"))
-                            .context("decode rental txid hex")?;
-                        if bytes.len() != 32 {
-                            anyhow::bail!("rental txid is not 32 bytes: {txid_hex}");
-                        }
-                        let mut out = [0u8; 32];
-                        out.copy_from_slice(&bytes);
-
-                        // Update rental row with txid once known.
                         ctx.db
-                            .upsert_tron_rental(
-                                job.job_id,
-                                &attempt.provider,
-                                match resource_kind {
-                                    tron::RentalResourceKind::Energy => "energy",
-                                    tron::RentalResourceKind::Bandwidth => "bandwidth",
-                                    tron::RentalResourceKind::TronPower => "tron_power",
-                                },
-                                recv,
-                                balance_sun_i64,
-                                lock_period_i64,
-                                attempt.order_id.as_deref(),
-                                Some(out),
-                                Some(&serde_json::to_value(rendered_req).unwrap_or(request_params)),
-                                attempt.response_json.as_ref(),
-                            )
-                            .await
-                            .ok();
-
-                        out
-                    };
-
-                    ctx.db
-                        .record_tron_txid(job.job_id, &ctx.instance_id, txid)
-                        .await?;
-                    return Ok(());
+                            .record_tron_txid(job.job_id, &ctx.instance_id, txid)
+                            .await?;
+                        return Ok(());
+                    }
                 }
 
                 let exec_res = match ty {
@@ -1834,9 +2199,11 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
 
                             if contract != alloy::primitives::Address::ZERO {
                                 let mut mismatch = false;
-                                if ctx.cfg.tron.emulation_enabled && ctx.cfg.tron.mode == TronMode::Grpc
+                                if ctx.cfg.tron.emulation_enabled
+                                    && ctx.cfg.tron.mode == TronMode::Grpc
                                 {
-                                    if let Ok(Some(emu)) = ctx.db.get_intent_emulation(job.intent_id).await
+                                    if let Ok(Some(emu)) =
+                                        ctx.db.get_intent_emulation(job.intent_id).await
                                     {
                                         mismatch = emu.ok;
                                     }
@@ -1859,7 +2226,9 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                 };
                                 let _ = ctx
                                     .db
-                                    .breaker_record_failure_weighted(contract, selector, &err_msg, weight)
+                                    .breaker_record_failure_weighted(
+                                        contract, selector, &err_msg, weight,
+                                    )
                                     .await;
                             }
                         }
@@ -1952,8 +2321,11 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                 b256_to_bytes32(receipt.transaction_hash),
                             )
                             .await?;
-                        ctx.telemetry
-                            .job_state_transition(job.intent_type, "proof_built", "proved");
+                        ctx.telemetry.job_state_transition(
+                            job.intent_type,
+                            "proof_built",
+                            "proved",
+                        );
                         let _ = finalize_after_prove(&ctx, &job).await;
                         Ok(())
                     }
@@ -2188,8 +2560,11 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                                         b256_to_bytes32(tx_hash),
                                     )
                                     .await?;
-                                ctx.telemetry
-                                    .job_state_transition(job.intent_type, "proof_built", "proved");
+                                ctx.telemetry.job_state_transition(
+                                    job.intent_type,
+                                    "proof_built",
+                                    "proved",
+                                );
                                 let _ = finalize_after_prove(&ctx, &job).await;
                             } else {
                                 let msg = format!(
@@ -2263,20 +2638,34 @@ async fn process_job(ctx: JobCtx, job: SolverJob) -> Result<()> {
                     if row.solved && !row.funded {
                         if job.state != "proved_waiting_funding" {
                             ctx.db
-                                .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
+                                .record_job_state(
+                                    job.job_id,
+                                    &ctx.instance_id,
+                                    "proved_waiting_funding",
+                                )
                                 .await?;
-                            ctx.telemetry
-                                .job_state_transition(job.intent_type, from_state, "proved_waiting_funding");
+                            ctx.telemetry.job_state_transition(
+                                job.intent_type,
+                                from_state,
+                                "proved_waiting_funding",
+                            );
                         }
                         return Ok(());
                     }
                     if row.solved && row.funded && !row.settled {
                         if job.state != "proved_waiting_settlement" {
                             ctx.db
-                                .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
+                                .record_job_state(
+                                    job.job_id,
+                                    &ctx.instance_id,
+                                    "proved_waiting_settlement",
+                                )
                                 .await?;
-                            ctx.telemetry
-                                .job_state_transition(job.intent_type, from_state, "proved_waiting_settlement");
+                            ctx.telemetry.job_state_transition(
+                                job.intent_type,
+                                from_state,
+                                "proved_waiting_settlement",
+                            );
                         }
                         return Ok(());
                     }
@@ -2303,6 +2692,12 @@ fn b256_to_bytes32(v: B256) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(v.as_slice());
     out
+}
+
+fn duration_hours_for_lock_period_blocks(lock_period_blocks: u64) -> u64 {
+    let secs = lock_period_blocks.saturating_mul(3);
+    let hours = secs.saturating_add(3599) / 3600;
+    hours.max(1)
 }
 
 fn looks_like_tron_server_busy(msg: &str) -> bool {

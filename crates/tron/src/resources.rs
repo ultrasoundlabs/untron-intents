@@ -76,7 +76,10 @@ pub fn resource_units_for_min_trx_sun(
     let w = u128::from(totals.total_weight.max(1));
     let sun = u128::from(min_balance_sun);
     let mut energy = ceil_div_u128(sun.saturating_mul(l), w);
-    energy = ceil_div_u128(energy.saturating_mul(u128::from(1_000_000 + headroom_ppm)), 1_000_000);
+    energy = ceil_div_u128(
+        energy.saturating_mul(u128::from(1_000_000 + headroom_ppm)),
+        1_000_000,
+    );
     u64::try_from(energy).unwrap_or(u64::MAX)
 }
 
@@ -137,7 +140,8 @@ pub fn parse_account_resources(msg: &AccountResourceMessage) -> Result<AccountRe
 
 pub fn parse_energy_stake_totals(msg: &AccountResourceMessage) -> Result<ResourceStakeTotals> {
     Ok(ResourceStakeTotals {
-        total_limit: u64::try_from(msg.total_energy_limit).context("TotalEnergyLimit out of range")?,
+        total_limit: u64::try_from(msg.total_energy_limit)
+            .context("TotalEnergyLimit out of range")?,
         total_weight: u64::try_from(msg.total_energy_weight)
             .context("TotalEnergyWeight out of range")?,
     })

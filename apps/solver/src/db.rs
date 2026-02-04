@@ -27,7 +27,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     ),
     (12, include_str!("../db/migrations/0012_ops_safety.sql")),
     (13, include_str!("../db/migrations/0013_tron_rentals.sql")),
-    (14, include_str!("../db/migrations/0014_rental_provider_freeze.sql")),
+    (
+        14,
+        include_str!("../db/migrations/0014_rental_provider_freeze.sql"),
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -233,6 +236,16 @@ impl SolverDb {
         .await
         .context("insert solver.jobs")?;
         Ok(())
+    }
+
+    pub async fn job_id_for_intent(&self, intent_id: [u8; 32]) -> Result<Option<i64>> {
+        let v: Option<i64> =
+            sqlx::query_scalar("select job_id from solver.jobs where intent_id = $1")
+                .bind(intent_id.to_vec())
+                .fetch_optional(&self.pool)
+                .await
+                .context("select solver.jobs.job_id by intent_id")?;
+        Ok(v)
     }
 
     pub async fn lease_jobs(
@@ -629,7 +642,7 @@ impl SolverDb {
         freeze_secs: i64,
         threshold: i32,
         err: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let mut tx = self
             .pool
             .begin()
@@ -659,11 +672,10 @@ impl SolverDb {
         .context("select rental_provider_freezes for update")?;
         let mut fail_count: i32 = row.try_get("fail_count")?;
         let window_unix: i64 = row.try_get("window_unix")?;
-        let now_unix: i64 =
-            sqlx::query_scalar("select extract(epoch from now())::bigint")
-                .fetch_one(&mut *tx)
-                .await
-                .context("select now unix")?;
+        let now_unix: i64 = sqlx::query_scalar("select extract(epoch from now())::bigint")
+            .fetch_one(&mut *tx)
+            .await
+            .context("select now unix")?;
         if now_unix.saturating_sub(window_unix) > fail_window_secs.max(1) {
             fail_count = 0;
             sqlx::query(
@@ -688,7 +700,8 @@ impl SolverDb {
         .await
         .context("update rental_provider_freezes failure")?;
 
-        if fail_count >= threshold.max(1) && freeze_secs > 0 {
+        let froze_now = fail_count >= threshold.max(1) && freeze_secs > 0;
+        if froze_now {
             sqlx::query(
                 "update solver.rental_provider_freezes \
                  set frozen_until = now() + ($2::text || ' seconds')::interval, updated_at=now() \
@@ -704,7 +717,7 @@ impl SolverDb {
         tx.commit()
             .await
             .context("commit rental_provider_record_failure")?;
-        Ok(())
+        Ok(froze_now)
     }
 
     pub async fn rental_provider_record_success(&self, provider: &str) -> Result<()> {
@@ -868,11 +881,7 @@ impl SolverDb {
         Ok(row.try_get::<i64, _>("n")?)
     }
 
-    pub async fn rate_limit_claim_per_minute(
-        &self,
-        key: &str,
-        limit: u64,
-    ) -> Result<Option<i64>> {
+    pub async fn rate_limit_claim_per_minute(&self, key: &str, limit: u64) -> Result<Option<i64>> {
         if limit == 0 {
             return Ok(None);
         }

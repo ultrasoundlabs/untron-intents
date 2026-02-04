@@ -373,9 +373,11 @@ and can submit hub txs in both `HUB_TX_MODE=eoa` and `HUB_TX_MODE=safe4337` (Alt
   - Implemented: `balanceSun` → provider units conversion using chain stake totals (+headroom) with a small TTL cache.
   - Done when: the solver can restart mid-rental and still prove the provider’s tx deterministically.
 
-- [ ] Rental quote selection + profitability gating
-  - Must price rentals (offchain) before claiming so we don’t pay hub deposit for unprofitable fills.
-  - Should select best provider by quote + latency + recent failure rate, with fallback ordering.
+- [x] Rental quote selection + profitability gating
+  - Implemented: optional provider quote endpoint (`quote` in `TRON_ENERGY_RENTAL_APIS_JSON`) used pre-claim for `DELEGATE_RESOURCE` ENERGY resell.
+  - Implemented: quote parsing supports both pointer-based extraction and Netts-style “active period + buckets”.
+  - Implemented: integrates into existing profitability gating by treating capital lock cost as 0 for resell and adding rental cost to `tron_fee_usd`.
+  - Implemented: persists quote metadata in `solver.tron_rentals` and prefers the quoted provider on fill (with fallback + provider freeze).
 
 ### Phase 5: TRIGGER_SMART_CONTRACT (strictly gated)
 

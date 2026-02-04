@@ -415,6 +415,7 @@ async fn maybe_attempt_energy_rental(
         resource: tron::rental::RentalResourceKind::Energy,
         amount: energy_required,
         lock_period: None,
+        duration_hours: None,
         balance_sun: None,
         address_base58check: owner.to_base58check(),
         address_hex41: format!("0x{}", hex::encode(owner.prefixed_bytes())),

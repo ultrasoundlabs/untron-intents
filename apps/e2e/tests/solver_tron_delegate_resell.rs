@@ -384,12 +384,20 @@ async fn e2e_solver_delegate_resource_resell_via_rental_api() -> Result<()> {
         assert_eq!(provider, "good", "expected solver to fall back to 'good'");
 
         let req = request_json.context("expected request_json to be persisted")?;
-        let url = req["url"].as_str().unwrap_or("");
+        // New format stores order request under `order`; older format stored it at the top-level.
+        let url = req["order"]["url"]
+            .as_str()
+            .or_else(|| req["url"].as_str())
+            .unwrap_or("");
         assert!(
             url.contains("/rent"),
             "expected rendered request url to contain /rent, got {url:?}"
         );
-        assert_eq!(req["method"].as_str().unwrap_or(""), "POST");
+        let method = req["order"]["method"]
+            .as_str()
+            .or_else(|| req["method"].as_str())
+            .unwrap_or("");
+        assert_eq!(method, "POST");
     }
 
     let _ = shutdown_tx.send(());

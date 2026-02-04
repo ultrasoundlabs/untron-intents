@@ -21,6 +21,9 @@ struct Inner {
     emulation_mismatch_total: Counter<u64>,
     delegate_reservation_conflicts_total: Counter<u64>,
     job_state_transitions_total: Counter<u64>,
+    rental_quotes_total: Counter<u64>,
+    rental_orders_total: Counter<u64>,
+    rental_provider_freezes_total: Counter<u64>,
 
     job_ms: Histogram<u64>,
     hub_submit_ms: Histogram<u64>,
@@ -29,6 +32,8 @@ struct Inner {
     hub_rpc_ms: Histogram<u64>,
     tron_proof_ms: Histogram<u64>,
     tron_grpc_ms: Histogram<u64>,
+    rental_quote_ms: Histogram<u64>,
+    rental_order_ms: Histogram<u64>,
 }
 
 impl SolverTelemetry {
@@ -80,6 +85,21 @@ impl SolverTelemetry {
             .with_description("Total job state transitions (best-effort)")
             .build();
 
+        let rental_quotes_total = meter
+            .u64_counter("solver.rental_quotes_total")
+            .with_description("Total rental quote attempts")
+            .build();
+
+        let rental_orders_total = meter
+            .u64_counter("solver.rental_orders_total")
+            .with_description("Total rental order attempts")
+            .build();
+
+        let rental_provider_freezes_total = meter
+            .u64_counter("solver.rental_provider_freezes_total")
+            .with_description("Total rental provider freeze events")
+            .build();
+
         let job_ms = meter
             .u64_histogram("solver.job_ms")
             .with_description("Per-job runtime")
@@ -122,6 +142,18 @@ impl SolverTelemetry {
             .with_unit("ms")
             .build();
 
+        let rental_quote_ms = meter
+            .u64_histogram("solver.rental_quote_ms")
+            .with_description("Rental quote HTTP runtime")
+            .with_unit("ms")
+            .build();
+
+        let rental_order_ms = meter
+            .u64_histogram("solver.rental_order_ms")
+            .with_description("Rental order HTTP runtime")
+            .with_unit("ms")
+            .build();
+
         Self {
             inner: Arc::new(Inner {
                 jobs_total,
@@ -135,6 +167,9 @@ impl SolverTelemetry {
                 emulation_mismatch_total,
                 delegate_reservation_conflicts_total,
                 job_state_transitions_total,
+                rental_quotes_total,
+                rental_orders_total,
+                rental_provider_freezes_total,
                 job_ms,
                 hub_submit_ms,
                 tron_broadcast_ms,
@@ -142,6 +177,8 @@ impl SolverTelemetry {
                 hub_rpc_ms,
                 tron_proof_ms,
                 tron_grpc_ms,
+                rental_quote_ms,
+                rental_order_ms,
             }),
         }
     }
@@ -201,6 +238,29 @@ impl SolverTelemetry {
             KeyValue::new("to", to),
         ];
         self.inner.job_state_transitions_total.add(1, &attrs);
+    }
+
+    pub fn rental_quote_ms(&self, provider: &str, ok: bool, ms: u64) {
+        let attrs = [
+            KeyValue::new("provider", provider.to_string()),
+            KeyValue::new("status", if ok { "ok" } else { "err" }),
+        ];
+        self.inner.rental_quotes_total.add(1, &attrs);
+        self.inner.rental_quote_ms.record(ms, &attrs);
+    }
+
+    pub fn rental_order_ms(&self, provider: &str, ok: bool, ms: u64) {
+        let attrs = [
+            KeyValue::new("provider", provider.to_string()),
+            KeyValue::new("status", if ok { "ok" } else { "err" }),
+        ];
+        self.inner.rental_orders_total.add(1, &attrs);
+        self.inner.rental_order_ms.record(ms, &attrs);
+    }
+
+    pub fn rental_provider_frozen(&self, provider: &str) {
+        let attrs = [KeyValue::new("provider", provider.to_string())];
+        self.inner.rental_provider_freezes_total.add(1, &attrs);
     }
 
     pub fn hub_submit_ms(&self, name: &'static str, ok: bool, ms: u64) {
