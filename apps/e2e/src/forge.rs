@@ -454,6 +454,86 @@ pub fn run_forge_create_test_tron_tx_reader_no_sig(
     )
 }
 
+pub fn run_forge_create_test_tron_tx_reader_sig(
+    rpc_url: &str,
+    private_key: &str,
+    expected_witness_address: &str,
+    expected_witness_delegatee: &str,
+) -> Result<String> {
+    let root = repo_root();
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "src/mocks/TestTronTxReaderSig.sol:TestTronTxReaderSig",
+            "--constructor-args",
+            expected_witness_address,
+            expected_witness_delegatee,
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create TestTronTxReaderSig")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
+pub fn run_forge_create_test_tron_tx_reader_sig_allowlist(
+    rpc_url: &str,
+    private_key: &str,
+    allowed_signers_bytes20_hex: &[String],
+) -> Result<String> {
+    let root = repo_root();
+    let allow_arg = format!("[{}]", allowed_signers_bytes20_hex.join(","));
+
+    let out = Command::new("forge")
+        .args([
+            "create",
+            "--root",
+            "packages/contracts",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+            "--broadcast",
+            "src/mocks/TestTronTxReaderSigAllowlist.sol:TestTronTxReaderSigAllowlist",
+            "--constructor-args",
+            &allow_arg,
+        ])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("forge create TestTronTxReaderSigAllowlist")?;
+
+    if !out.status.success() {
+        anyhow::bail!(
+            "forge create failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    parse_forge_deployed_address(
+        &String::from_utf8_lossy(&out.stdout),
+        &String::from_utf8_lossy(&out.stderr),
+    )
+}
+
 pub fn run_forge_create_mock_untron_v3(
     rpc_url: &str,
     private_key: &str,

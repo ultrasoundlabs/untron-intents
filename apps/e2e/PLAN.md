@@ -86,10 +86,10 @@ Conventions:
 
 ## P1 — Tron error handling / fee mechanics
 
-- [ ] **Tron node busy / transient errors are retried with backoff**
-  - [ ] Add test `apps/e2e/tests/solver_tron_retry_backoff.rs`
-  - [ ] Inject failures (proxy gRPC or use a test Tron reader that returns SERVER_BUSY-like errors).
-  - [ ] Assert retryable errors bump `attempts` and set `next_retry_at` into the future.
+- [x] **Tron node busy / transient errors are retried with backoff**
+  - [x] Add test `apps/e2e/tests/solver_tron_retry_backoff.rs`
+  - [x] Inject failures (in-process gRPC TCP proxy).
+  - [x] Assert retryable errors bump `attempts` and set `next_retry_at` into the future.
   - Done when: transient failures do not produce `failed_fatal`.
 
 - [ ] **Energy rental providers (if enabled) are exercised**
@@ -99,10 +99,10 @@ Conventions:
 
 ## P2 — Proof/security fidelity + adversarial scenarios
 
-- [ ] **Proof verification with signature validation (avoid “no-sig reader” shortcuts)**
-  - [ ] Add test `apps/e2e/tests/solver_tron_proof_sig_verified.rs`
-  - [ ] Use the real Tron tx reader path (or a strict reader contract) and assert prove succeeds only with valid tx bytes.
-  - Done when: the test fails if tx bytes are mutated or signature is missing.
+- [x] **Proof verification with signature validation (avoid “no-sig reader” shortcuts)**
+  - [x] Add test `apps/e2e/tests/solver_tron_proof_sig_verified.rs`
+  - [x] Use a signature-checking reader (`TestTronTxReaderSigAllowlist`) and assert prove succeeds only with valid tx bytes.
+  - [x] Done when: the test fails if tx bytes are mutated (and signatures must be recoverable onchain).
 
 - [ ] **Competing solvers and “don’t broadcast final Tron tx until claim confirmed”**
   - [ ] Add test `apps/e2e/tests/solver_competition_race.rs`

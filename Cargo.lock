@@ -2170,6 +2170,7 @@ dependencies = [
  "anyhow",
  "axum",
  "hex",
+ "k256",
  "prost 0.14.3",
  "reqwest",
  "serde_json",

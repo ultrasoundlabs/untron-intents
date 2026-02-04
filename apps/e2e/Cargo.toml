@@ -17,5 +17,6 @@ tokio = { version = "1.49.0", features = ["full"] }
 tron = { path = "../../crates/tron" }
 aa = { path = "../../crates/aa" }
 alloy = { version = "1.2.1", features = ["full"] }
+k256 = "0.13.4"
 
 [dev-dependencies]
