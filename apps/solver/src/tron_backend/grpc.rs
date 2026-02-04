@@ -34,6 +34,44 @@ pub async fn fetch_account(
     Ok(account)
 }
 
+pub async fn fetch_energy_stake_totals(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    address: TronAddress,
+) -> Result<tron::resources::ResourceStakeTotals> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let started = std::time::Instant::now();
+    let msg = grpc
+        .get_account_resource(address.prefixed_bytes().to_vec())
+        .await
+        .context("GetAccountResource")?;
+    telemetry.tron_grpc_ms(
+        "get_account_resource",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+    tron::resources::parse_energy_stake_totals(&msg).context("parse_energy_stake_totals")
+}
+
+pub async fn fetch_net_stake_totals(
+    cfg: &TronConfig,
+    telemetry: &SolverTelemetry,
+    address: TronAddress,
+) -> Result<tron::resources::ResourceStakeTotals> {
+    let mut grpc = connect_grpc(cfg).await?;
+    let started = std::time::Instant::now();
+    let msg = grpc
+        .get_account_resource(address.prefixed_bytes().to_vec())
+        .await
+        .context("GetAccountResource")?;
+    telemetry.tron_grpc_ms(
+        "get_account_resource",
+        true,
+        started.elapsed().as_millis() as u64,
+    );
+    tron::resources::parse_net_stake_totals(&msg).context("parse_net_stake_totals")
+}
+
 pub async fn fetch_trx_balance_sun(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
@@ -376,6 +414,8 @@ async fn maybe_attempt_energy_rental(
     let ctx = tron::rental::RentalContext {
         resource: tron::rental::RentalResourceKind::Energy,
         amount: energy_required,
+        lock_period: None,
+        balance_sun: None,
         address_base58check: owner.to_base58check(),
         address_hex41: format!("0x{}", hex::encode(owner.prefixed_bytes())),
         address_evm_hex: format!("{:#x}", owner.evm()),

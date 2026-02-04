@@ -26,6 +26,8 @@ const MIGRATIONS: &[(i32, &str)] = &[
         include_str!("../db/migrations/0011_tron_tx_costs_intent_type.sql"),
     ),
     (12, include_str!("../db/migrations/0012_ops_safety.sql")),
+    (13, include_str!("../db/migrations/0013_tron_rentals.sql")),
+    (14, include_str!("../db/migrations/0014_rental_provider_freeze.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -66,6 +68,19 @@ pub struct TronSignedTxRow {
     pub fee_limit_sun: Option<i64>,
     pub energy_required: Option<i64>,
     pub tx_size_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TronRentalRow {
+    pub provider: String,
+    pub resource: String,
+    pub receiver_evm: [u8; 20],
+    pub balance_sun: i64,
+    pub lock_period: i64,
+    pub order_id: Option<String>,
+    pub txid: Option<[u8; 32]>,
+    pub request_json: Option<serde_json::Value>,
+    pub response_json: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -509,6 +524,205 @@ impl SolverDb {
                 .await
                 .context("select solver.tron_signed_txs")?;
         Ok(row)
+    }
+
+    pub async fn upsert_tron_rental(
+        &self,
+        job_id: i64,
+        provider: &str,
+        resource: &str,
+        receiver_evm: [u8; 20],
+        balance_sun: i64,
+        lock_period: i64,
+        order_id: Option<&str>,
+        txid: Option<[u8; 32]>,
+        request_json: Option<&serde_json::Value>,
+        response_json: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        sqlx::query(
+            "insert into solver.tron_rentals(job_id, provider, resource, receiver_evm, balance_sun, lock_period, order_id, txid, request_json, response_json, updated_at) \
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()) \
+             on conflict (job_id) do update set \
+                provider = excluded.provider, \
+                resource = excluded.resource, \
+                receiver_evm = excluded.receiver_evm, \
+                balance_sun = excluded.balance_sun, \
+                lock_period = excluded.lock_period, \
+                order_id = excluded.order_id, \
+                txid = excluded.txid, \
+                request_json = excluded.request_json, \
+                response_json = excluded.response_json, \
+                updated_at = now()",
+        )
+        .bind(job_id)
+        .bind(provider)
+        .bind(resource)
+        .bind(receiver_evm.to_vec())
+        .bind(balance_sun)
+        .bind(lock_period)
+        .bind(order_id)
+        .bind(txid.map(|t| t.to_vec()))
+        .bind(request_json)
+        .bind(response_json)
+        .execute(&self.pool)
+        .await
+        .context("upsert solver.tron_rentals")?;
+        Ok(())
+    }
+
+    pub async fn get_tron_rental_for_job(&self, job_id: i64) -> Result<Option<TronRentalRow>> {
+        let row = sqlx::query(
+            "select provider, resource, receiver_evm, balance_sun, lock_period, order_id, txid, request_json, response_json \
+             from solver.tron_rentals where job_id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.tron_rentals")?;
+
+        let Some(r) = row else {
+            return Ok(None);
+        };
+
+        let recv: Vec<u8> = r.try_get("receiver_evm")?;
+        let mut receiver_evm = [0u8; 20];
+        receiver_evm.copy_from_slice(&recv);
+
+        let txid: Option<Vec<u8>> = r.try_get("txid")?;
+        let txid = txid.map(|v| {
+            let mut t = [0u8; 32];
+            t.copy_from_slice(&v);
+            t
+        });
+
+        Ok(Some(TronRentalRow {
+            provider: r.try_get("provider")?,
+            resource: r.try_get("resource")?,
+            receiver_evm,
+            balance_sun: r.try_get("balance_sun")?,
+            lock_period: r.try_get("lock_period")?,
+            order_id: r.try_get("order_id")?,
+            txid,
+            request_json: r.try_get("request_json")?,
+            response_json: r.try_get("response_json")?,
+        }))
+    }
+
+    pub async fn rental_provider_is_frozen(&self, provider: &str) -> Result<Option<i64>> {
+        let row = sqlx::query(
+            "select extract(epoch from frozen_until)::bigint as until_unix \
+             from solver.rental_provider_freezes \
+             where provider = $1 and frozen_until is not null and frozen_until > now()",
+        )
+        .bind(provider)
+        .fetch_optional(&self.pool)
+        .await
+        .context("select solver.rental_provider_freezes")?;
+
+        Ok(row.map(|r| r.try_get::<i64, _>("until_unix").unwrap_or(0)))
+    }
+
+    pub async fn rental_provider_record_failure(
+        &self,
+        provider: &str,
+        fail_window_secs: i64,
+        freeze_secs: i64,
+        threshold: i32,
+        err: &str,
+    ) -> Result<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("begin rental_provider_record_failure")?;
+
+        // Upsert row if missing.
+        sqlx::query(
+            "insert into solver.rental_provider_freezes(provider, frozen_until, fail_count, fail_window_start, last_error, updated_at) \
+             values ($1, null, 0, now(), $2, now()) \
+             on conflict (provider) do nothing",
+        )
+        .bind(provider)
+        .bind(err)
+        .execute(&mut *tx)
+        .await
+        .context("insert rental_provider_freezes")?;
+
+        // If window expired, reset fail_count and window_start.
+        let row = sqlx::query(
+            "select fail_count, extract(epoch from fail_window_start)::bigint as window_unix \
+             from solver.rental_provider_freezes where provider=$1 for update",
+        )
+        .bind(provider)
+        .fetch_one(&mut *tx)
+        .await
+        .context("select rental_provider_freezes for update")?;
+        let mut fail_count: i32 = row.try_get("fail_count")?;
+        let window_unix: i64 = row.try_get("window_unix")?;
+        let now_unix: i64 =
+            sqlx::query_scalar("select extract(epoch from now())::bigint")
+                .fetch_one(&mut *tx)
+                .await
+                .context("select now unix")?;
+        if now_unix.saturating_sub(window_unix) > fail_window_secs.max(1) {
+            fail_count = 0;
+            sqlx::query(
+                "update solver.rental_provider_freezes set fail_count=0, fail_window_start=now() \
+                 where provider=$1",
+            )
+            .bind(provider)
+            .execute(&mut *tx)
+            .await
+            .context("reset rental_provider_freezes window")?;
+        }
+
+        fail_count = fail_count.saturating_add(1);
+        sqlx::query(
+            "update solver.rental_provider_freezes set fail_count=$2, last_error=$3, updated_at=now() \
+             where provider=$1",
+        )
+        .bind(provider)
+        .bind(fail_count)
+        .bind(err)
+        .execute(&mut *tx)
+        .await
+        .context("update rental_provider_freezes failure")?;
+
+        if fail_count >= threshold.max(1) && freeze_secs > 0 {
+            sqlx::query(
+                "update solver.rental_provider_freezes \
+                 set frozen_until = now() + ($2::text || ' seconds')::interval, updated_at=now() \
+                 where provider=$1",
+            )
+            .bind(provider)
+            .bind(freeze_secs)
+            .execute(&mut *tx)
+            .await
+            .context("freeze rental provider")?;
+        }
+
+        tx.commit()
+            .await
+            .context("commit rental_provider_record_failure")?;
+        Ok(())
+    }
+
+    pub async fn rental_provider_record_success(&self, provider: &str) -> Result<()> {
+        sqlx::query(
+            "insert into solver.rental_provider_freezes(provider, frozen_until, fail_count, fail_window_start, last_error, updated_at) \
+             values ($1, null, 0, now(), null, now()) \
+             on conflict (provider) do update set \
+                frozen_until = null, \
+                fail_count = 0, \
+                fail_window_start = now(), \
+                last_error = null, \
+                updated_at = now()",
+        )
+        .bind(provider)
+        .execute(&self.pool)
+        .await
+        .context("record rental provider success")?;
+        Ok(())
     }
 
     pub async fn record_proof_built(&self, job_id: i64, leased_by: &str) -> Result<()> {

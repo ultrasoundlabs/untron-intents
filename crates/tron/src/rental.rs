@@ -8,12 +8,18 @@ use std::collections::BTreeMap;
 pub enum RentalResourceKind {
     Energy,
     Bandwidth,
+    TronPower,
 }
 
 #[derive(Debug, Clone)]
 pub struct RentalContext {
     pub resource: RentalResourceKind,
+    /// Resource quantity in provider units (e.g. energy units / bandwidth units).
     pub amount: u64,
+    /// Optional lock period (Tron blocks) for DelegateResource-like rentals.
+    pub lock_period: Option<u64>,
+    /// Optional delegated TRX amount in sun (protocol-level `DelegateResourceContract.balance`).
+    pub balance_sun: Option<u64>,
 
     /// Tron address in base58check (T...).
     pub address_base58check: String,
@@ -57,6 +63,9 @@ pub struct JsonApiResponseMapping {
     /// Optional JSON pointer to an order id / request id.
     #[serde(default)]
     pub order_id_pointer: Option<String>,
+    /// Optional JSON pointer to a Tron transaction id / hash (0x-prefixed 32-byte hex).
+    #[serde(default)]
+    pub txid_pointer: Option<String>,
     /// Optional JSON pointer to an error message.
     #[serde(default)]
     pub error_pointer: Option<String>,
@@ -67,8 +76,17 @@ pub struct RentalAttempt {
     pub provider: String,
     pub ok: bool,
     pub order_id: Option<String>,
+    pub txid: Option<String>,
     pub response_json: Option<Value>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderedJsonApiRequest {
+    pub url: String,
+    pub method: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Value,
 }
 
 #[derive(Clone)]
@@ -90,29 +108,54 @@ impl JsonApiRentalProvider {
     }
 
     pub async fn rent(&self, ctx: &RentalContext) -> Result<RentalAttempt> {
-        let mut body = self.cfg.body.clone();
-        render_in_place(&mut body, ctx);
+        let (_req, attempt) = self.rent_with_rendered_request(ctx).await?;
+        Ok(attempt)
+    }
 
-        let url = render_str(&self.cfg.url, ctx);
-        let mut req = match self.cfg.method.to_uppercase().as_str() {
-            "POST" => self.client.post(url),
-            "GET" => self.client.get(url),
+    pub async fn rent_with_rendered_request(
+        &self,
+        ctx: &RentalContext,
+    ) -> Result<(RenderedJsonApiRequest, RentalAttempt)> {
+        let rendered = self.render_request(ctx);
+
+        let mut req = match rendered.method.to_uppercase().as_str() {
+            "POST" => self.client.post(rendered.url.clone()),
+            "GET" => self.client.get(rendered.url.clone()),
             other => anyhow::bail!("unsupported rental provider method: {other}"),
         };
 
-        for (k, v) in &self.cfg.headers {
-            req = req.header(k, render_str(v, ctx));
+        for (k, v) in &rendered.headers {
+            req = req.header(k, v);
         }
 
         // Keep it simple: JSON body for POST. GET bodies are ignored.
-        if self.cfg.method.to_uppercase() == "POST" {
-            req = req.json(&body);
+        if rendered.method.to_uppercase() == "POST" {
+            req = req.json(&rendered.body);
         }
 
         let resp = req.send().await.context("rental provider http")?;
         let status = resp.status();
         let text = resp.text().await.context("read rental response body")?;
-        Ok(interpret_json_response(&self.cfg, status.as_u16(), &text))
+        let attempt = interpret_json_response(&self.cfg, status.as_u16(), &text);
+        Ok((rendered, attempt))
+    }
+
+    fn render_request(&self, ctx: &RentalContext) -> RenderedJsonApiRequest {
+        let mut body = self.cfg.body.clone();
+        render_in_place(&mut body, ctx);
+
+        let url = render_str(&self.cfg.url, ctx);
+        let mut headers = BTreeMap::new();
+        for (k, v) in &self.cfg.headers {
+            headers.insert(k.clone(), render_str(v, ctx));
+        }
+
+        RenderedJsonApiRequest {
+            url,
+            method: self.cfg.method.clone(),
+            headers,
+            body,
+        }
     }
 }
 
@@ -128,6 +171,7 @@ fn interpret_json_response(
             provider: cfg.name.clone(),
             ok: false,
             order_id: None,
+            txid: None,
             response_json: parsed,
             error: Some(format!("http status {status_code}")),
         };
@@ -138,6 +182,7 @@ fn interpret_json_response(
             provider: cfg.name.clone(),
             ok: false,
             order_id: None,
+            txid: None,
             response_json: None,
             error: Some("response was not valid JSON".to_string()),
         };
@@ -160,6 +205,13 @@ fn interpret_json_response(
         .and_then(|p| json.pointer(p))
         .and_then(value_to_string);
 
+    let txid = cfg
+        .response
+        .txid_pointer
+        .as_ref()
+        .and_then(|p| json.pointer(p))
+        .and_then(value_to_string);
+
     let error = if ok {
         None
     } else {
@@ -174,6 +226,7 @@ fn interpret_json_response(
         provider: cfg.name.clone(),
         ok,
         order_id,
+        txid,
         response_json: Some(json),
         error,
     }
@@ -240,9 +293,18 @@ fn render_str(s: &str, ctx: &RentalContext) -> String {
         match ctx.resource {
             RentalResourceKind::Energy => "energy",
             RentalResourceKind::Bandwidth => "bandwidth",
+            RentalResourceKind::TronPower => "tron_power",
         },
     );
     out = out.replace("{{amount}}", &ctx.amount.to_string());
+    out = out.replace(
+        "{{balance_sun}}",
+        &ctx.balance_sun.map(|v| v.to_string()).unwrap_or_default(),
+    );
+    out = out.replace(
+        "{{lock_period}}",
+        &ctx.lock_period.map(|v| v.to_string()).unwrap_or_default(),
+    );
     out = out.replace("{{address_base58check}}", &ctx.address_base58check);
     out = out.replace("{{address_hex41}}", &ctx.address_hex41);
     out = out.replace("{{address_evm_hex}}", &ctx.address_evm_hex);
@@ -259,6 +321,8 @@ mod tests {
         let ctx = RentalContext {
             resource: RentalResourceKind::Energy,
             amount: 123,
+            lock_period: Some(10),
+            balance_sun: Some(456),
             address_base58check: "T...".to_string(),
             address_hex41: "0x41abcd".to_string(),
             address_evm_hex: "0xabcd".to_string(),
@@ -268,12 +332,16 @@ mod tests {
         let mut v = serde_json::json!({
             "kind": "{{resource_kind}}",
             "amount": "{{amount}}",
+            "balance": "{{balance_sun}}",
+            "lock": "{{lock_period}}",
             "nested": ["{{address_base58check}}", {"tx":"{{txid}}"}]
         });
 
         render_in_place(&mut v, &ctx);
         assert_eq!(v["kind"], "energy");
         assert_eq!(v["amount"], "123");
+        assert_eq!(v["balance"], "456");
+        assert_eq!(v["lock"], "10");
         assert_eq!(v["nested"][0], "T...");
         assert_eq!(v["nested"][1]["tx"], "0x11");
     }
@@ -290,14 +358,16 @@ mod tests {
                 success_pointer: "/success".to_string(),
                 success_equals: None,
                 order_id_pointer: Some("/data/orderId".to_string()),
+                txid_pointer: Some("/data/txid".to_string()),
                 error_pointer: Some("/error".to_string()),
             },
         };
 
         let res =
-            interpret_json_response(&cfg, 200, r#"{"success":true,"data":{"orderId":"abc"}}"#);
+            interpret_json_response(&cfg, 200, r#"{"success":true,"data":{"orderId":"abc","txid":"0x11"}}"#);
         assert!(res.ok);
         assert_eq!(res.order_id.as_deref(), Some("abc"));
+        assert_eq!(res.txid.as_deref(), Some("0x11"));
     }
 
     #[test]
@@ -312,6 +382,7 @@ mod tests {
                 success_pointer: "/code".to_string(),
                 success_equals: Some(serde_json::json!(200)),
                 order_id_pointer: None,
+                txid_pointer: None,
                 error_pointer: Some("/message".to_string()),
             },
         };
@@ -336,6 +407,7 @@ mod tests {
                 success_pointer: "/ok".to_string(),
                 success_equals: None,
                 order_id_pointer: None,
+                txid_pointer: None,
                 error_pointer: Some("/error/message".to_string()),
             },
         };
@@ -358,6 +430,7 @@ mod tests {
                 success_pointer: "/success".to_string(),
                 success_equals: None,
                 order_id_pointer: None,
+                txid_pointer: None,
                 error_pointer: None,
             },
         };
@@ -379,6 +452,7 @@ mod tests {
                 success_pointer: "/success".to_string(),
                 success_equals: None,
                 order_id_pointer: None,
+                txid_pointer: None,
                 error_pointer: None,
             },
         };

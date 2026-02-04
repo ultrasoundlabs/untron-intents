@@ -115,6 +115,17 @@ pub struct TronConfig {
     pub fee_limit_headroom_ppm: u64,
     /// Optional list of external energy rental providers.
     pub energy_rental_providers: Vec<JsonApiRentalProviderConfig>,
+    /// If true, fill `DELEGATE_RESOURCE` intents by requesting resource rentals from configured
+    /// providers instead of delegating from the solver's own staked accounts.
+    pub delegate_resource_resell_enabled: bool,
+    /// Rental provider freeze: number of failures within a window before freezing.
+    pub rental_provider_fail_threshold: i32,
+    /// Rental provider freeze window (seconds) for counting failures.
+    pub rental_provider_fail_window_secs: i64,
+    /// Rental provider freeze duration in seconds.
+    pub rental_provider_freeze_secs: i64,
+    /// When converting `balanceSun` -> energy units for rental APIs, add headroom (ppm).
+    pub resell_energy_headroom_ppm: u64,
 
     /// If true (and TRON_MODE=grpc), run pre-claim emulation checks for contract-call intents.
     pub emulation_enabled: bool,
@@ -253,6 +264,19 @@ struct Env {
 
     #[serde(default)]
     tron_energy_rental_apis_json: String,
+
+    #[serde(default)]
+    tron_delegate_resource_resell_enabled: bool,
+
+    #[serde(default)]
+    tron_rental_provider_fail_threshold: i32,
+    #[serde(default)]
+    tron_rental_provider_fail_window_secs: i64,
+    #[serde(default)]
+    tron_rental_provider_freeze_secs: i64,
+
+    #[serde(default)]
+    tron_resell_energy_headroom_ppm: u64,
 
     #[serde(default)]
     solver_tron_emulation_enabled: bool,
@@ -444,6 +468,11 @@ impl Default for Env {
             tron_fee_limit_cap_sun: 200_000_000,
             tron_fee_limit_headroom_ppm: 100_000,
             tron_energy_rental_apis_json: String::new(),
+            tron_delegate_resource_resell_enabled: false,
+            tron_rental_provider_fail_threshold: 3,
+            tron_rental_provider_fail_window_secs: 60,
+            tron_rental_provider_freeze_secs: 300,
+            tron_resell_energy_headroom_ppm: 50_000,
             solver_tron_emulation_enabled: true,
             solver_tick_interval_secs: 5,
             tron_finality_blocks: 19,
@@ -881,6 +910,12 @@ pub fn load_config() -> Result<AppConfig> {
             energy_rental_providers: parse_tron_energy_rental_apis_json(
                 &env.tron_energy_rental_apis_json,
             )?,
+            delegate_resource_resell_enabled: env.tron_delegate_resource_resell_enabled
+                && !env.tron_energy_rental_apis_json.trim().is_empty(),
+            rental_provider_fail_threshold: env.tron_rental_provider_fail_threshold.max(1),
+            rental_provider_fail_window_secs: env.tron_rental_provider_fail_window_secs.max(1),
+            rental_provider_freeze_secs: env.tron_rental_provider_freeze_secs.max(0),
+            resell_energy_headroom_ppm: env.tron_resell_energy_headroom_ppm.min(1_000_000),
             emulation_enabled: env.solver_tron_emulation_enabled,
         },
         jobs: JobConfig {

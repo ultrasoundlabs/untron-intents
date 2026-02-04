@@ -6,6 +6,7 @@ use crate::{
 use alloy::primitives::{B256, FixedBytes, U256};
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
+use tron::resources::ResourceStakeTotals;
 
 mod grpc;
 mod mock;
@@ -85,6 +86,26 @@ impl TronBackend {
             jobs,
             telemetry,
         }
+    }
+
+    pub async fn energy_stake_totals(&self) -> Result<ResourceStakeTotals> {
+        if self.cfg.mode != TronMode::Grpc {
+            anyhow::bail!("energy_stake_totals is only available in TRON_MODE=grpc");
+        }
+        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
+        grpc::fetch_energy_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+            .await
+            .context("fetch_energy_stake_totals")
+    }
+
+    pub async fn net_stake_totals(&self) -> Result<ResourceStakeTotals> {
+        if self.cfg.mode != TronMode::Grpc {
+            anyhow::bail!("net_stake_totals is only available in TRON_MODE=grpc");
+        }
+        let wallet = tron::TronWallet::new(self.cfg.private_key).context("init TronWallet")?;
+        grpc::fetch_net_stake_totals(&self.cfg, &self.telemetry, wallet.address())
+            .await
+            .context("fetch_net_stake_totals")
     }
 
     pub async fn prepare_trx_transfer(

@@ -49,6 +49,59 @@ pub struct TxCostQuote {
     pub fee_limit_sun: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceStakeTotals {
+    /// Total resource capacity on the network (energy units or bandwidth units).
+    pub total_limit: u64,
+    /// Total stake weight backing this resource (in sun).
+    pub total_weight: u64,
+}
+
+fn ceil_div_u128(n: u128, d: u128) -> u128 {
+    if d == 0 {
+        return u128::MAX;
+    }
+    (n + d - 1) / d
+}
+
+/// Converts a desired delegated TRX amount (sun) into the minimum energy units to order so that a
+/// provider who computes TRX from energy using the same totals will end up delegating at least the
+/// requested sun.
+pub fn resource_units_for_min_trx_sun(
+    min_balance_sun: u64,
+    totals: ResourceStakeTotals,
+    headroom_ppm: u64,
+) -> u64 {
+    let l = u128::from(totals.total_limit.max(1));
+    let w = u128::from(totals.total_weight.max(1));
+    let sun = u128::from(min_balance_sun);
+    let mut energy = ceil_div_u128(sun.saturating_mul(l), w);
+    energy = ceil_div_u128(energy.saturating_mul(u128::from(1_000_000 + headroom_ppm)), 1_000_000);
+    u64::try_from(energy).unwrap_or(u64::MAX)
+}
+
+/// Converts ordered energy units into the TRX delegation amount (sun) implied by the current
+/// network totals.
+pub fn trx_sun_for_resource_units(units: u64, totals: ResourceStakeTotals) -> u64 {
+    let l = u128::from(totals.total_limit.max(1));
+    let w = u128::from(totals.total_weight.max(1));
+    let e = u128::from(units);
+    let sun = ceil_div_u128(e.saturating_mul(w), l);
+    u64::try_from(sun).unwrap_or(u64::MAX)
+}
+
+pub fn energy_units_for_min_trx_sun(
+    min_balance_sun: u64,
+    totals: ResourceStakeTotals,
+    headroom_ppm: u64,
+) -> u64 {
+    resource_units_for_min_trx_sun(min_balance_sun, totals, headroom_ppm)
+}
+
+pub fn trx_sun_for_energy_units(energy_units: u64, totals: ResourceStakeTotals) -> u64 {
+    trx_sun_for_resource_units(energy_units, totals)
+}
+
 pub fn parse_chain_fees(params: &ChainParameters) -> Result<ChainFees> {
     let mut energy_fee: Option<u64> = None;
     let mut tx_fee: Option<u64> = None;
@@ -79,6 +132,21 @@ pub fn parse_account_resources(msg: &AccountResourceMessage) -> Result<AccountRe
         net_limit: u64::try_from(msg.net_limit).context("NetLimit out of range")?,
         free_net_used: u64::try_from(msg.free_net_used).context("freeNetUsed out of range")?,
         free_net_limit: u64::try_from(msg.free_net_limit).context("freeNetLimit out of range")?,
+    })
+}
+
+pub fn parse_energy_stake_totals(msg: &AccountResourceMessage) -> Result<ResourceStakeTotals> {
+    Ok(ResourceStakeTotals {
+        total_limit: u64::try_from(msg.total_energy_limit).context("TotalEnergyLimit out of range")?,
+        total_weight: u64::try_from(msg.total_energy_weight)
+            .context("TotalEnergyWeight out of range")?,
+    })
+}
+
+pub fn parse_net_stake_totals(msg: &AccountResourceMessage) -> Result<ResourceStakeTotals> {
+    Ok(ResourceStakeTotals {
+        total_limit: u64::try_from(msg.total_net_limit).context("TotalNetLimit out of range")?,
+        total_weight: u64::try_from(msg.total_net_weight).context("TotalNetWeight out of range")?,
     })
 }
 
@@ -137,5 +205,17 @@ mod tests {
             tx_fee_sun_per_byte: 1000,
         };
         assert_eq!(quote_fee_limit_sun(3, 10, fees), 3 * 100 + 10 * 1000);
+    }
+
+    #[test]
+    fn energy_units_for_min_trx_sun_roundtrips_to_at_least_original() {
+        let totals = ResourceStakeTotals {
+            total_limit: 1000,
+            total_weight: 10_000_000, // 10 TRX in sun
+        };
+        let min_sun = 2_000_000; // 2 TRX
+        let e = resource_units_for_min_trx_sun(min_sun, totals, 0);
+        let sun2 = trx_sun_for_resource_units(e, totals);
+        assert!(sun2 >= min_sun, "sun2={sun2} min_sun={min_sun} e={e}");
     }
 }

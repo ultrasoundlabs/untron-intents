@@ -11,7 +11,7 @@ pub use grpc::TronGrpc;
 pub use proof::{TronTxProofBuilder, TronTxProofBundle};
 pub use rental::{
     JsonApiRentalProvider, JsonApiRentalProviderConfig, RentalAttempt, RentalContext,
-    RentalResourceKind,
+    RentalResourceKind, RenderedJsonApiRequest,
 };
 pub use resources::{AccountResources, ChainFees, TxCostQuote};
 pub use sender::{FeePolicy, SignedTronTx};
