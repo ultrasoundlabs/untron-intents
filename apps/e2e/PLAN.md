@@ -92,9 +92,9 @@ Conventions:
   - [x] Assert retryable errors bump `attempts` and set `next_retry_at` into the future.
   - Done when: transient failures do not produce `failed_fatal`.
 
-- [ ] **Energy rental providers (if enabled) are exercised**
-  - [ ] Add test `apps/e2e/tests/solver_tron_energy_rental.rs`
-  - [ ] Configure `TRON_ENERGY_RENTAL_APIS_JSON` to a local stub and assert solver attempts rental.
+- [x] **Energy rental providers (if enabled) are exercised**
+  - [x] Add test `apps/e2e/tests/solver_tron_energy_rental.rs`
+  - [x] Configure `TRON_ENERGY_RENTAL_APIS_JSON` to a local stub and assert solver attempts rental.
   - Done when: we assert the HTTP call shape and that the solver proceeds with expected fee limits.
 
 ## P2 — Proof/security fidelity + adversarial scenarios
@@ -104,7 +104,7 @@ Conventions:
   - [x] Use a signature-checking reader (`TestTronTxReaderSigAllowlist`) and assert prove succeeds only with valid tx bytes.
   - [x] Done when: the test fails if tx bytes are mutated (and signatures must be recoverable onchain).
 
-- [ ] **Competing solvers and “don’t broadcast final Tron tx until claim confirmed”**
-  - [ ] Add test `apps/e2e/tests/solver_competition_race.rs`
-  - [ ] Run two solver instances with different hub keys; ensure only claimant broadcasts final tx.
+- [x] **Competing solvers and “don’t broadcast final Tron tx until claim confirmed”**
+  - [x] Add test `apps/e2e/tests/solver_competition_race.rs`
+  - [x] Run two solver instances with different hub keys; ensure only claimant broadcasts final tx.
   - Done when: non-claimant never produces a matching final Tron tx that could be stolen for proof.

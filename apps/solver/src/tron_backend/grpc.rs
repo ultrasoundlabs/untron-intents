@@ -7,6 +7,7 @@ use alloy::primitives::B256;
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 use prost::Message;
+use std::time::Duration;
 use tron::{TronAddress, TronGrpc, TronTxProofBuilder, TronWallet};
 
 #[derive(Debug, Clone)]
@@ -312,6 +313,8 @@ pub async fn prepare_trigger_smart_contract(
         started.elapsed().as_millis() as u64,
     );
 
+    maybe_attempt_energy_rental(cfg, wallet.address(), signed.energy_required, signed.txid).await;
+
     Ok(PreparedTronTx {
         txid: signed.txid,
         tx_bytes: signed.tx.encode_to_vec(),
@@ -349,6 +352,8 @@ pub async fn build_trc20_transfer(
         started.elapsed().as_millis() as u64,
     );
 
+    maybe_attempt_energy_rental(cfg, wallet.address(), signed.energy_required, signed.txid).await;
+
     Ok(PreparedTronTx {
         txid: signed.txid,
         tx_bytes: signed.tx.encode_to_vec(),
@@ -356,6 +361,61 @@ pub async fn build_trc20_transfer(
         energy_required: Some(i64::try_from(signed.energy_required).unwrap_or(i64::MAX)),
         tx_size_bytes: Some(i64::try_from(signed.tx_size_bytes).unwrap_or(i64::MAX)),
     })
+}
+
+async fn maybe_attempt_energy_rental(
+    cfg: &TronConfig,
+    owner: TronAddress,
+    energy_required: u64,
+    txid: [u8; 32],
+) {
+    if cfg.energy_rental_providers.is_empty() || energy_required == 0 {
+        return;
+    }
+
+    let ctx = tron::rental::RentalContext {
+        resource: tron::rental::RentalResourceKind::Energy,
+        amount: energy_required,
+        address_base58check: owner.to_base58check(),
+        address_hex41: format!("0x{}", hex::encode(owner.prefixed_bytes())),
+        address_evm_hex: format!("{:#x}", owner.evm()),
+        txid: Some(format!("0x{}", hex::encode(txid))),
+    };
+
+    for p in &cfg.energy_rental_providers {
+        let provider = tron::rental::JsonApiRentalProvider::new(p.clone());
+        let res = tokio::time::timeout(Duration::from_secs(2), provider.rent(&ctx)).await;
+        match res {
+            Ok(Ok(attempt)) => {
+                if attempt.ok {
+                    tracing::info!(
+                        provider = %attempt.provider,
+                        order_id = attempt.order_id.as_deref().unwrap_or(""),
+                        "energy rental requested"
+                    );
+                    break;
+                }
+                tracing::warn!(
+                    provider = %attempt.provider,
+                    error = attempt.error.as_deref().unwrap_or(""),
+                    "energy rental request failed"
+                );
+            }
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    provider = %provider.name(),
+                    error = %err,
+                    "energy rental request error"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    provider = %provider.name(),
+                    "energy rental request timed out"
+                );
+            }
+        }
+    }
 }
 
 pub async fn prepare_delegate_resource(
@@ -466,6 +526,8 @@ pub async fn prepare_usdt_transfer(
         started.elapsed().as_millis() as u64,
     );
 
+    maybe_attempt_energy_rental(cfg, wallet.address(), signed.energy_required, signed.txid).await;
+
     Ok(PreparedTronTx {
         txid: signed.txid,
         tx_bytes: signed.tx.encode_to_vec(),
@@ -522,6 +584,8 @@ pub async fn prepare_usdt_transfer_with_key(
         true,
         started.elapsed().as_millis() as u64,
     );
+
+    maybe_attempt_energy_rental(cfg, wallet.address(), signed.energy_required, signed.txid).await;
 
     Ok(PreparedTronTx {
         txid: signed.txid,
