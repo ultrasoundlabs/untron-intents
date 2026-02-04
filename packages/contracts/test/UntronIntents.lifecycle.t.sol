@@ -338,6 +338,117 @@ contract UntronIntentsLifecycleTest is UntronTestBase {
         _proveAs(solver, id);
     }
 
+    function test_proveIntentFill_revertsOnReusedTronTxId() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow * 2);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address receiverTron = makeAddr("tronReceiver");
+        uint8 resource = 1; // ENERGY
+        uint256 balanceSun = 23_508e6;
+        uint256 lockPeriod = 200;
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.DELEGATE_RESOURCE,
+            intentSpecs: abi.encode(
+                UntronIntents.DelegateResourceIntent({
+                    receiver: receiverTron, resource: resource, balanceSun: balanceSun, lockPeriod: lockPeriod
+                })
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline1 = block.timestamp + 1 days;
+        uint256 deadline2 = block.timestamp + 2 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline1);
+        vm.prank(maker);
+        intents.createIntent(intent, deadline2);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id1 = keccak256(abi.encodePacked(maker, intentHash, deadline1));
+        bytes32 id2 = keccak256(abi.encodePacked(maker, intentHash, deadline2));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id1);
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id2);
+
+        // Mock a single Tron txid and reuse it for both proofs.
+        {
+            DelegateResourceContract memory tx_;
+            tx_.txId = keccak256("same-txid");
+            tx_.tronBlockNumber = 123;
+            tx_.receiverTron = _tronAddrBytes21(receiverTron);
+            tx_.resource = resource;
+            tx_.balanceSun = balanceSun;
+            tx_.lock = true;
+            tx_.lockPeriod = lockPeriod;
+            tronReader.setDelegateResourceTx(tx_);
+        }
+
+        _proveAs(solver, id1);
+
+        vm.expectRevert(UntronIntents.WrongTxProps.selector);
+        _proveAs(solver, id2);
+    }
+
+    function test_createIntent_delegateResource_allowsOverfillAndLongerLock() public {
+        uint256 escrow = 5_000_000;
+        usdc.mint(maker, escrow);
+        vm.prank(maker);
+        usdc.approve(address(intents), type(uint256).max);
+
+        address receiverTron = makeAddr("tronReceiver");
+        uint8 resource = 1; // ENERGY
+        uint256 balanceSun = 1_000e6;
+        uint256 lockPeriod = 10;
+
+        UntronIntents.Intent memory intent = UntronIntents.Intent({
+            intentType: UntronIntents.IntentType.DELEGATE_RESOURCE,
+            intentSpecs: abi.encode(
+                UntronIntents.DelegateResourceIntent({
+                    receiver: receiverTron, resource: resource, balanceSun: balanceSun, lockPeriod: lockPeriod
+                })
+            ),
+            refundBeneficiary: maker,
+            token: address(usdc),
+            amount: escrow
+        });
+
+        uint256 deadline = block.timestamp + 1 days;
+        vm.prank(maker);
+        intents.createIntent(intent, deadline);
+
+        bytes32 intentHash = keccak256(abi.encode(intent));
+        bytes32 id = keccak256(abi.encodePacked(maker, intentHash, deadline));
+
+        _mintAndApproveSolverDeposit(solver);
+        vm.prank(solver);
+        intents.claimIntent(id);
+
+        // Mock Tron tx that overfills amount and lock period.
+        {
+            DelegateResourceContract memory tx_;
+            tx_.receiverTron = _tronAddrBytes21(receiverTron);
+            tx_.resource = resource;
+            tx_.balanceSun = balanceSun + 1; // >=
+            tx_.lock = true;
+            tx_.lockPeriod = lockPeriod + 1; // >=
+            tronReader.setDelegateResourceTx(tx_);
+        }
+
+        _proveAs(solver, id);
+
+        assertEq(usdc.balanceOf(solver), escrow);
+        assertEq(usdt.balanceOf(solver), intents.INTENT_CLAIM_DEPOSIT());
+    }
+
     function test_unclaimIntent_unfunded_refundsSolverDeposit() public {
         address toTron = makeAddr("toTron");
         bytes32 forwardSalt = keccak256("forwardSalt");

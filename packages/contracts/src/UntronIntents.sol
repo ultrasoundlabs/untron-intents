@@ -144,6 +144,10 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
     /// @notice Mapping from intent id to intent state.
     mapping(bytes32 => IntentState) public intents;
 
+    /// @notice Global replay protection for proven Tron transactions.
+    /// @dev A single Tron tx must not be usable to solve multiple intents (even if their specs match).
+    mapping(bytes32 => bool) public provenTronTxIds;
+
     /// @notice EVM-chain USDT used as the solver claim deposit token.
     address public immutable USDT;
     /// @notice UntronV3 config contract providing Tron verifier and well-known Tron addresses.
@@ -494,6 +498,8 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         if (st.solved) revert AlreadySolved();
 
         (bytes32 tronTxId, uint256 tronBlockNumber) = _verifyAndMatchIntent(st.intent, blocks, encodedTx, proof, index);
+        if (provenTronTxIds[tronTxId]) revert WrongTxProps();
+        provenTronTxIds[tronTxId] = true;
 
         st.solved = true;
         // Refresh the "claimed at" timestamp so `TIME_TO_FILL` remains meaningful for any follow-up actions.
@@ -598,8 +604,8 @@ contract UntronIntents is UntronIntentsIndexedOwnable, ReentrancyGuard {
         DelegateResourceIntent memory intent = abi.decode(intentSpecs, (DelegateResourceIntent));
         if (
             address(uint160(uint168(delegation.receiverTron))) != intent.receiver
-                || delegation.resource != intent.resource || delegation.balanceSun != intent.balanceSun
-                || !delegation.lock || delegation.lockPeriod != intent.lockPeriod
+                || delegation.resource != intent.resource || delegation.balanceSun < intent.balanceSun
+                || !delegation.lock || delegation.lockPeriod < intent.lockPeriod
         ) {
             revert WrongTxProps();
         }
