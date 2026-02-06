@@ -3,7 +3,7 @@ use crate::{
     hub::HubClient,
     metrics::SolverTelemetry,
 };
-use alloy::primitives::{B256, FixedBytes, U256};
+use alloy::primitives::B256;
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -12,10 +12,17 @@ use tokio::sync::RwLock;
 use tron::resources::ResourceStakeTotals;
 
 mod grpc;
+mod inventory;
 mod mock;
 mod planner;
+mod utils;
 
 use planner::{plan_trc20_consolidation, plan_trx_consolidation};
+pub use utils::select_delegate_executor_index;
+use utils::{
+    empty_proof, evm_to_tron_raw21, tron_sender_from_privkey_or_fallback,
+    validate_trc20_consolidation_caps, validate_trx_consolidation_caps,
+};
 
 alloy::sol! {
     struct TriggerSmartContractIntent {
@@ -554,180 +561,6 @@ impl TronBackend {
         })
     }
 
-    pub async fn can_fill_preclaim(
-        &self,
-        hub: &HubClient,
-        ty: crate::types::IntentType,
-        intent_specs: &[u8],
-    ) -> Result<InventoryCheck> {
-        if self.cfg.mode != TronMode::Grpc {
-            return Ok(InventoryCheck {
-                ok: true,
-                reason: None,
-                required_pre_txs: 0,
-            });
-        }
-        if self.cfg.private_keys.is_empty() {
-            return Ok(InventoryCheck {
-                ok: false,
-                reason: Some("no_tron_keys"),
-                required_pre_txs: 0,
-            });
-        }
-        if !matches!(
-            ty,
-            crate::types::IntentType::TrxTransfer | crate::types::IntentType::UsdtTransfer
-        ) {
-            return Ok(InventoryCheck {
-                ok: true,
-                reason: None,
-                required_pre_txs: 0,
-            });
-        }
-
-        // Quick inventory check (no signing): can any key fill, or can we consolidate within limits?
-        let wallets = self
-            .cfg
-            .private_keys
-            .iter()
-            .copied()
-            .map(|k| tron::TronWallet::new(k).context("init TronWallet"))
-            .collect::<Result<Vec<_>>>()?;
-        let addrs = wallets.iter().map(|w| w.address()).collect::<Vec<_>>();
-
-        const BALANCE_RESERVE_SUN: i64 = 2_000_000;
-
-        match ty {
-            crate::types::IntentType::TrxTransfer => {
-                let intent = TRXTransferIntent::abi_decode(intent_specs)
-                    .context("abi_decode TRXTransferIntent")?;
-                let amount_sun_i64 =
-                    i64::try_from(intent.amountSun).context("amountSun out of i64 range")?;
-                let balances =
-                    grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs).await?;
-                if balances
-                    .iter()
-                    .any(|b| *b >= amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN))
-                {
-                    return Ok(InventoryCheck {
-                        ok: true,
-                        reason: None,
-                        required_pre_txs: 0,
-                    });
-                }
-                if !self.jobs.consolidation_enabled {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("consolidation_disabled"),
-                        required_pre_txs: 0,
-                    });
-                }
-                let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
-                let Some(plan) = plan_trx_consolidation(
-                    &balances,
-                    amount_sun_i64.saturating_add(BALANCE_RESERVE_SUN),
-                    max_pre_txs,
-                )?
-                else {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("cannot_consolidate"),
-                        required_pre_txs: 0,
-                    });
-                };
-
-                if validate_trx_consolidation_caps(
-                    &plan,
-                    self.jobs.consolidation_max_total_trx_pull_sun,
-                    self.jobs.consolidation_max_per_tx_trx_pull_sun,
-                )
-                .is_err()
-                {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("consolidation_caps"),
-                        required_pre_txs: plan.transfers.len(),
-                    });
-                }
-
-                Ok(InventoryCheck {
-                    ok: true,
-                    reason: None,
-                    required_pre_txs: plan.transfers.len(),
-                })
-            }
-            crate::types::IntentType::UsdtTransfer => {
-                let intent = USDTTransferIntent::abi_decode(intent_specs)
-                    .context("abi_decode USDTTransferIntent")?;
-                let amount_u64 = u64::try_from(intent.amount).unwrap_or(u64::MAX);
-                let tron_usdt = hub.v3_tron_usdt().await.context("load V3.tronUsdt")?;
-
-                let token_balances = grpc::fetch_trc20_balances_u64(
-                    &self.cfg,
-                    &self.telemetry,
-                    tron::TronAddress::from_evm(tron_usdt),
-                    &addrs,
-                )
-                .await?;
-                let trx_balances =
-                    grpc::fetch_trx_balances_sun(&self.cfg, &self.telemetry, &addrs).await?;
-
-                if token_balances.iter().enumerate().any(|(i, b)| {
-                    *b >= amount_u64
-                        && trx_balances.get(i).copied().unwrap_or(0) >= BALANCE_RESERVE_SUN
-                }) {
-                    return Ok(InventoryCheck {
-                        ok: true,
-                        reason: None,
-                        required_pre_txs: 0,
-                    });
-                }
-                if !self.jobs.consolidation_enabled {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("consolidation_disabled"),
-                        required_pre_txs: 0,
-                    });
-                }
-                let max_pre_txs = usize::try_from(self.jobs.consolidation_max_pre_txs).unwrap_or(0);
-                let Some(plan) =
-                    plan_trc20_consolidation(&token_balances, amount_u64, max_pre_txs)?
-                else {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("cannot_consolidate"),
-                        required_pre_txs: 0,
-                    });
-                };
-
-                if validate_trc20_consolidation_caps(
-                    &plan,
-                    self.jobs.consolidation_max_total_usdt_pull_amount,
-                    self.jobs.consolidation_max_per_tx_usdt_pull_amount,
-                )
-                .is_err()
-                {
-                    return Ok(InventoryCheck {
-                        ok: false,
-                        reason: Some("consolidation_caps"),
-                        required_pre_txs: plan.transfers.len(),
-                    });
-                }
-
-                Ok(InventoryCheck {
-                    ok: true,
-                    reason: None,
-                    required_pre_txs: plan.transfers.len(),
-                })
-            }
-            _ => Ok(InventoryCheck {
-                ok: true,
-                reason: None,
-                required_pre_txs: 0,
-            }),
-        }
-    }
-
     pub async fn precheck_emulation(
         &self,
         hub: &HubClient,
@@ -784,85 +617,6 @@ impl TronBackend {
         }
     }
 
-    /// Returns the staked-but-not-yet-delegated TRX (in SUN) available to delegate for `resource`.
-    ///
-    /// This is a *best-effort safety check* meant to avoid claiming intents we cannot satisfy due
-    /// to insufficient staked inventory. It is not a perfect reservation system.
-    #[allow(dead_code)]
-    pub async fn delegated_resource_available_sun(
-        &self,
-        resource: tron::protocol::ResourceCode,
-    ) -> Result<Option<i64>> {
-        match self.cfg.mode {
-            TronMode::Mock => Ok(None),
-            TronMode::Grpc => {
-                let wallet = tron::TronWallet::new(self.cfg.private_key)
-                    .context("init TronWallet (capacity check)")?;
-                let account = grpc::fetch_account(&self.cfg, &self.telemetry, wallet.address())
-                    .await
-                    .context("fetch Tron account")?;
-                Ok(Some(grpc::delegated_resource_available_sun(
-                    &account, resource,
-                )))
-            }
-        }
-    }
-
-    pub fn tron_key_addresses(&self) -> Result<Vec<tron::TronAddress>> {
-        let keys = if !self.cfg.private_keys.is_empty() {
-            self.cfg.private_keys.clone()
-        } else if self.cfg.private_key != [0u8; 32] {
-            vec![self.cfg.private_key]
-        } else {
-            Vec::new()
-        };
-
-        let mut out = Vec::with_capacity(keys.len());
-        for pk in keys {
-            let w = tron::TronWallet::new(pk).context("init TronWallet")?;
-            out.push(w.address());
-        }
-        Ok(out)
-    }
-
-    pub fn private_key_for_owner(&self, owner_address_prefixed: &[u8]) -> Option<[u8; 32]> {
-        for pk in &self.cfg.private_keys {
-            if let Ok(w) = tron::TronWallet::new(*pk)
-                && w.address().prefixed_bytes().as_slice() == owner_address_prefixed
-            {
-                return Some(*pk);
-            }
-        }
-        if let Ok(w) = tron::TronWallet::new(self.cfg.private_key)
-            && w.address().prefixed_bytes().as_slice() == owner_address_prefixed
-        {
-            return Some(self.cfg.private_key);
-        }
-        None
-    }
-
-    pub async fn delegate_available_sun_by_key(
-        &self,
-        resource: tron::protocol::ResourceCode,
-    ) -> Result<Vec<(tron::TronAddress, i64)>> {
-        if self.cfg.mode != TronMode::Grpc {
-            return Ok(Vec::new());
-        }
-
-        let addrs = self.tron_key_addresses().context("tron_key_addresses")?;
-        let mut out = Vec::with_capacity(addrs.len());
-        for a in addrs {
-            let account = grpc::fetch_account(&self.cfg, &self.telemetry, a)
-                .await
-                .context("fetch_account")?;
-            out.push((
-                a,
-                grpc::delegated_resource_available_sun(&account, resource),
-            ));
-        }
-        Ok(out)
-    }
-
     pub async fn build_proof(&self, txid: [u8; 32]) -> Result<crate::hub::TronProof> {
         match self.cfg.mode {
             TronMode::Mock => anyhow::bail!("build_proof is not available in TRON_MODE=mock"),
@@ -896,124 +650,5 @@ impl TronBackend {
                 grpc::fetch_transaction_info(&self.cfg, &self.telemetry, txid).await?,
             )),
         }
-    }
-}
-
-pub(super) fn empty_proof() -> crate::hub::TronProof {
-    crate::hub::TronProof {
-        blocks: std::array::from_fn(|_| Vec::new()),
-        encoded_tx: Vec::new(),
-        proof: Vec::new(),
-        index: U256::ZERO,
-    }
-}
-
-pub(super) fn evm_to_tron_raw21(a: alloy::primitives::Address) -> FixedBytes<21> {
-    let mut out = [0u8; 21];
-    out[0] = 0x41;
-    out[1..].copy_from_slice(a.as_slice());
-    FixedBytes::from(out)
-}
-
-pub(super) fn tron_sender_from_privkey_or_fallback(
-    tron_pk: [u8; 32],
-    hub: &HubClient,
-) -> FixedBytes<21> {
-    if tron_pk != [0u8; 32]
-        && let Ok(w) = tron::TronWallet::new(tron_pk)
-    {
-        let b = w.address().prefixed_bytes();
-        return FixedBytes::from_slice(&b);
-    }
-    evm_to_tron_raw21(hub.solver_address())
-}
-
-fn validate_trx_consolidation_caps(
-    plan: &planner::TrxConsolidationPlan,
-    max_total_pull_sun: u64,
-    max_per_tx_pull_sun: u64,
-) -> Result<()> {
-    let total: i64 = plan.transfers.iter().map(|(_, a)| *a).sum();
-    if max_total_pull_sun > 0 && total > i64::try_from(max_total_pull_sun).unwrap_or(i64::MAX) {
-        anyhow::bail!("consolidation max_total_trx_pull_sun exceeded");
-    }
-    if max_per_tx_pull_sun > 0 {
-        let cap = i64::try_from(max_per_tx_pull_sun).unwrap_or(i64::MAX);
-        if plan.transfers.iter().any(|(_, a)| *a > cap) {
-            anyhow::bail!("consolidation max_per_tx_trx_pull_sun exceeded");
-        }
-    }
-    Ok(())
-}
-
-fn validate_trc20_consolidation_caps(
-    plan: &planner::Trc20ConsolidationPlan,
-    max_total_pull_amount: u64,
-    max_per_tx_pull_amount: u64,
-) -> Result<()> {
-    let total: u64 = plan.transfers.iter().map(|(_, a)| *a).sum();
-    if max_total_pull_amount > 0 && total > max_total_pull_amount {
-        anyhow::bail!("consolidation max_total_usdt_pull_amount exceeded");
-    }
-    if max_per_tx_pull_amount > 0
-        && plan
-            .transfers
-            .iter()
-            .any(|(_, a)| *a > max_per_tx_pull_amount)
-    {
-        anyhow::bail!("consolidation max_per_tx_usdt_pull_amount exceeded");
-    }
-    Ok(())
-}
-
-pub fn select_delegate_executor_index(
-    available_sun: &[i64],
-    reserved_sun: &[i64],
-    needed_sun: i64,
-) -> Option<usize> {
-    if available_sun.len() != reserved_sun.len() {
-        return None;
-    }
-    let mut best: Option<(usize, i64)> = None;
-    for (i, (&a, &r)) in available_sun.iter().zip(reserved_sun).enumerate() {
-        let effective = a.saturating_sub(r).max(0);
-        if effective < needed_sun {
-            continue;
-        }
-        match best {
-            None => best = Some((i, effective)),
-            Some((_, cur)) if effective > cur => best = Some((i, effective)),
-            _ => {}
-        }
-    }
-    best.map(|(i, _)| i)
-}
-
-#[cfg(test)]
-mod delegate_selection_tests {
-    use super::select_delegate_executor_index;
-
-    #[test]
-    fn select_delegate_executor_picks_best_effective_capacity() {
-        let available = [100, 200, 150];
-        let reserved = [0, 50, 0];
-        assert_eq!(
-            select_delegate_executor_index(&available, &reserved, 120),
-            Some(1)
-        );
-        assert_eq!(
-            select_delegate_executor_index(&available, &reserved, 180),
-            None
-        );
-    }
-
-    #[test]
-    fn select_delegate_executor_handles_reservations() {
-        let available = [500, 500];
-        let reserved = [450, 0];
-        assert_eq!(
-            select_delegate_executor_index(&available, &reserved, 100),
-            Some(1)
-        );
     }
 }
