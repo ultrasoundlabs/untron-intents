@@ -244,27 +244,27 @@ impl TronWallet {
                 token_id: 0,
             })
             .await?;
-        if let Some(ret) = est.result.as_ref() {
-            if !ret.result {
-                let msg_utf8 = String::from_utf8_lossy(&ret.message).into_owned();
-                match super::protocol::r#return::ResponseCode::try_from(ret.code) {
-                    Ok(super::protocol::r#return::ResponseCode::ContractValidateError)
-                    | Ok(super::protocol::r#return::ResponseCode::ContractExeError) => {
-                        anyhow::bail!(
-                            "contract_validate_error: code={} msg_hex=0x{} msg_utf8={}",
-                            ret.code,
-                            hex::encode(&ret.message),
-                            msg_utf8
-                        );
-                    }
-                    _ => {
-                        anyhow::bail!(
-                            "estimate_energy_failed: code={} msg_hex=0x{} msg_utf8={}",
-                            ret.code,
-                            hex::encode(&ret.message),
-                            msg_utf8
-                        );
-                    }
+        if let Some(ret) = est.result.as_ref()
+            && !ret.result
+        {
+            let msg_utf8 = String::from_utf8_lossy(&ret.message).into_owned();
+            match super::protocol::r#return::ResponseCode::try_from(ret.code) {
+                Ok(super::protocol::r#return::ResponseCode::ContractValidateError)
+                | Ok(super::protocol::r#return::ResponseCode::ContractExeError) => {
+                    anyhow::bail!(
+                        "contract_validate_error: code={} msg_hex=0x{} msg_utf8={}",
+                        ret.code,
+                        hex::encode(&ret.message),
+                        msg_utf8
+                    );
+                }
+                _ => {
+                    anyhow::bail!(
+                        "estimate_energy_failed: code={} msg_hex=0x{} msg_utf8={}",
+                        ret.code,
+                        hex::encode(&ret.message),
+                        msg_utf8
+                    );
                 }
             }
         }

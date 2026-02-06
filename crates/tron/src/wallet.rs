@@ -429,7 +429,7 @@ mod tests {
 
         // txId is sha256(raw_data bytes)
         let txid = Sha256::digest(&raw_bytes);
-        assert_eq!(txid.as_slice().len(), 32);
+        assert_eq!(txid.len(), 32);
 
         // Verify/recover.
         let sig = Signature::try_from(&sig65[..64]).unwrap();

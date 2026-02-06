@@ -117,10 +117,10 @@ pub async fn wait_for_current_intent_match(
     let start = Instant::now();
     loop {
         let rows = fetch_current_intents(db_url).await?;
-        if let Some(last) = rows.last() {
-            if &last.row == expected {
-                return Ok(());
-            }
+        if let Some(last) = rows.last()
+            && &last.row == expected
+        {
+            return Ok(());
         }
         if start.elapsed() > timeout {
             anyhow::bail!("timed out waiting for expected intent row; expected={expected:?}");
@@ -180,10 +180,10 @@ pub async fn assert_multi_intent_ordering(db_url: &str, expected_count: usize) -
         if !ids.insert(id) {
             anyhow::bail!("expected unique intent ids, got duplicate");
         }
-        if let Some(p) = prev_seq {
-            if seq <= p {
-                anyhow::bail!("expected increasing valid_from_seq, got {p} then {seq}");
-            }
+        if let Some(p) = prev_seq
+            && seq <= p
+        {
+            anyhow::bail!("expected increasing valid_from_seq, got {p} then {seq}");
         }
         prev_seq = Some(seq);
     }

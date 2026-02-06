@@ -107,8 +107,11 @@ impl IndexerClient {
             .as_ref()
             .map(|r| r.status().is_success())
             .unwrap_or(false);
-        self.telemetry
-            .indexer_http_ms("pool_intents_by_id", ok, started.elapsed().as_millis() as u64);
+        self.telemetry.indexer_http_ms(
+            "pool_intents_by_id",
+            ok,
+            started.elapsed().as_millis() as u64,
+        );
         let resp = resp.context("GET /pool_intents (by id)")?;
         if !resp.status().is_success() {
             anyhow::bail!("indexer /pool_intents failed: {}", resp.status());

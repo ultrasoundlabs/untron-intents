@@ -17,7 +17,7 @@ use e2e::{
         run_forge_create_untron_intents_with_args,
     },
     http::wait_for_http_ok,
-    pool_db::{fetch_current_intents, wait_for_pool_current_intents_count, CurrentIntentRowWithId},
+    pool_db::{CurrentIntentRowWithId, fetch_current_intents, wait_for_pool_current_intents_count},
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
     services::{spawn_indexer, spawn_solver_safe4337_mock_custom},
@@ -40,20 +40,19 @@ async fn wait_for_tx_success(rpc_url: &str, tx_hash: &str) -> Result<()> {
             "params": [tx_hash]
         });
         let resp = client.post(rpc_url).json(&payload).send().await;
-        if let Ok(resp) = resp {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if let Some(r) = val.get("result") {
-                    if r.is_null() {
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        continue;
-                    }
-                    let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                    if status.eq_ignore_ascii_case("0x1") {
-                        return Ok(());
-                    }
-                    anyhow::bail!("tx failed: {tx_hash} receipt={r}");
-                }
+        if let Ok(resp) = resp
+            && let Ok(val) = resp.json::<serde_json::Value>().await
+            && let Some(r) = val.get("result")
+        {
+            if r.is_null() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
             }
+            let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status.eq_ignore_ascii_case("0x1") {
+                return Ok(());
+            }
+            anyhow::bail!("tx failed: {tx_hash} receipt={r}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -75,24 +74,25 @@ async fn wait_for_userop_tx_hash(alto_url: &str, userop_hash: &str) -> Result<St
         });
 
         let resp = client.post(alto_url).json(&payload).send().await;
-        if let Ok(resp) = resp {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if val.get("error").is_some() {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-                let txh = val
-                    .pointer("/result/transactionHash")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        val.pointer("/result/receipt/transactionHash")
-                            .and_then(|v| v.as_str())
-                    });
-                if let Some(txh) = txh {
-                    if !txh.is_empty() && txh != "0x" {
-                        return Ok(txh.to_string());
-                    }
-                }
+        if let Ok(resp) = resp
+            && let Ok(val) = resp.json::<serde_json::Value>().await
+        {
+            if val.get("error").is_some() {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            let txh = val
+                .pointer("/result/transactionHash")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    val.pointer("/result/receipt/transactionHash")
+                        .and_then(|v| v.as_str())
+                });
+            if let Some(txh) = txh
+                && !txh.is_empty()
+                && txh != "0x"
+            {
+                return Ok(txh.to_string());
             }
         }
 
@@ -193,11 +193,9 @@ async fn wait_for_claim_userop_nonce_ge(
             let u: alloy::rpc::types::eth::erc4337::PackedUserOperation =
                 serde_json::from_str(&userop_json).context("deserialize hub userop json")?;
 
-            let min_nonce = alloy::primitives::U256::from_str_radix(
-                min_nonce_hex.trim_start_matches("0x"),
-                16,
-            )
-            .context("parse min_nonce")?;
+            let min_nonce =
+                alloy::primitives::U256::from_str_radix(min_nonce_hex.trim_start_matches("0x"), 16)
+                    .context("parse min_nonce")?;
 
             if u.nonce >= min_nonce && userop_hash.is_some() && state != "failed_fatal" {
                 return Ok(());
@@ -357,7 +355,10 @@ async fn e2e_solver_safe4337_deletes_stale_prepared_userop_and_recovers() -> Res
         &alto_url,
         &mock_reader,
         "solver-aa-migrate",
-        &[("INDEXER_MAX_HEAD_LAG_BLOCKS", "1000000"), ("SOLVER_ENABLED_INTENT_TYPES", "")],
+        &[
+            ("INDEXER_MAX_HEAD_LAG_BLOCKS", "1000000"),
+            ("SOLVER_ENABLED_INTENT_TYPES", ""),
+        ],
     )?);
     wait_for_solver_table(&db_url, "jobs", Duration::from_secs(30)).await?;
     wait_for_solver_table(&db_url, "hub_userops", Duration::from_secs(30)).await?;
@@ -372,8 +373,8 @@ async fn e2e_solver_safe4337_deletes_stale_prepared_userop_and_recovers() -> Res
             "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         ],
     )?;
-    let approve_bytes = hex::decode(approve_data.trim_start_matches("0x"))
-        .context("decode approve calldata")?;
+    let approve_bytes =
+        hex::decode(approve_data.trim_start_matches("0x")).context("decode approve calldata")?;
 
     let mut sender = aa::Safe4337UserOpSender::new(aa::Safe4337UserOpSenderConfig {
         rpc_url: rpc_url.clone(),
@@ -399,7 +400,10 @@ async fn e2e_solver_safe4337_deletes_stale_prepared_userop_and_recovers() -> Res
         .await
         .context("wait approve userop receipt")?;
     wait_for_tx_success(&rpc_url, &tx_hash).await?;
-    let chain_nonce_after = sender.chain_nonce().await.context("read chain nonce (after)")?;
+    let chain_nonce_after = sender
+        .chain_nonce()
+        .await
+        .context("read chain nonce (after)")?;
     if chain_nonce_after <= chain_nonce_before {
         anyhow::bail!(
             "expected chain nonce to advance: before={chain_nonce_before} after={chain_nonce_after}"
@@ -422,10 +426,7 @@ async fn e2e_solver_safe4337_deletes_stale_prepared_userop_and_recovers() -> Res
 
     // Reuse a valid userop shape but force nonce=0 to make it stale.
     let mut stale_userop = sender
-        .build_call_userop_unestimated(
-            usdt.parse().context("parse usdt")?,
-            Vec::new(),
-        )
+        .build_call_userop_unestimated(usdt.parse().context("parse usdt")?, Vec::new())
         .await
         .context("build dummy userop")?;
     stale_userop.nonce = alloy::primitives::U256::ZERO;
@@ -475,7 +476,13 @@ async fn e2e_solver_safe4337_deletes_stale_prepared_userop_and_recovers() -> Res
     )?);
 
     // Assert the persisted claim op is no longer stale and has been submitted.
-    wait_for_claim_userop_nonce_ge(&db_url, job_id, &format!("{chain_nonce_after:#x}"), Duration::from_secs(120)).await?;
+    wait_for_claim_userop_nonce_ge(
+        &db_url,
+        job_id,
+        &format!("{chain_nonce_after:#x}"),
+        Duration::from_secs(120),
+    )
+    .await?;
 
     // End-to-end completion.
     let start = Instant::now();

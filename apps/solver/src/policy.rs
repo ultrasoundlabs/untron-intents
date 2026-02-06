@@ -148,13 +148,13 @@ impl PolicyEngine {
                 }
 
                 let data = intent.data.as_ref();
-                if let Some(max_len) = self.cfg.max_trigger_calldata_len {
-                    if data.len() > max_len as usize {
-                        return Ok(StaticCheckOutcome {
-                            breaker: None,
-                            reject_reason: Some("trigger_calldata_len".to_string()),
-                        });
-                    }
+                if let Some(max_len) = self.cfg.max_trigger_calldata_len
+                    && data.len() > max_len as usize
+                {
+                    return Ok(StaticCheckOutcome {
+                        breaker: None,
+                        reject_reason: Some("trigger_calldata_len".to_string()),
+                    });
                 }
 
                 let selector = selector4(data);
@@ -172,13 +172,13 @@ impl PolicyEngine {
                     });
                 }
 
-                if let Some(sel) = selector {
-                    if self.cfg.trigger_selector_denylist.contains(&sel) {
-                        return Ok(StaticCheckOutcome {
-                            breaker: None,
-                            reject_reason: Some("trigger_selector_denied".to_string()),
-                        });
-                    }
+                if let Some(sel) = selector
+                    && self.cfg.trigger_selector_denylist.contains(&sel)
+                {
+                    return Ok(StaticCheckOutcome {
+                        breaker: None,
+                        reject_reason: Some("trigger_selector_denied".to_string()),
+                    });
                 }
 
                 Ok(StaticCheckOutcome {
@@ -406,8 +406,8 @@ pub fn estimate_cost_usd(
             let lock: f64 = intent.lockPeriod.to_string().parse().unwrap_or(0.0);
             let principal_usd = (sun / 1e6) * trx_usd;
             let day_frac = lock / 86400.0;
-            let lock_cost = principal_usd * (cfg.capital_lock_ppm_per_day as f64 / 1e6) * day_frac;
-            lock_cost
+
+            principal_usd * (cfg.capital_lock_ppm_per_day as f64 / 1e6) * day_frac
         }
     };
     Ok(cost)

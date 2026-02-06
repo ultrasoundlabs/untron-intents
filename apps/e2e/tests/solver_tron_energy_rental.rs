@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{GenericImage, ImageExt};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{Mutex, oneshot};
 
 // Minimal TRC20-like stub (creation bytecode), compiled with `solc --optimize` (London EVM).
 //
@@ -48,7 +48,6 @@ async fn wait_for_tron_tx_included(
     loop {
         match grpc.get_transaction_info_by_id(txid).await {
             Ok(info) => {
-                last_err = None;
                 if info.block_number > 0 {
                     return Ok(info);
                 }
@@ -351,7 +350,14 @@ async fn e2e_solver_tron_energy_rental_is_attempted() -> Result<()> {
             let expected_base58 = tron_wallet0.address().to_base58check();
             assert_eq!(last["kind"], "energy");
             assert_eq!(last["addr"], expected_base58);
-            assert!(last["amount"].as_str().unwrap_or("").parse::<u64>().unwrap_or(0) > 0);
+            assert!(
+                last["amount"]
+                    .as_str()
+                    .unwrap_or("")
+                    .parse::<u64>()
+                    .unwrap_or(0)
+                    > 0
+            );
             let txid = last["txid"].as_str().unwrap_or("");
             assert!(txid.starts_with("0x") && txid.len() == 66);
             let hex41 = last["addr_hex41"].as_str().unwrap_or("");

@@ -11,7 +11,7 @@ pub async fn http_get_json(url: &str) -> Result<Value> {
     if !status.is_success() {
         anyhow::bail!("non-2xx response: {status} body={body}");
     }
-    Ok(serde_json::from_str(&body).context("parse json")?)
+    serde_json::from_str(&body).context("parse json")
 }
 
 pub async fn wait_for_http_ok(url: &str, timeout: Duration) -> Result<()> {

@@ -63,6 +63,7 @@ struct CachedTotals {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum ResourceStakeTotalsKind {
     Energy,
     Net,
@@ -91,7 +92,7 @@ pub struct InventoryCheck {
 }
 
 pub enum TronExecution {
-    ImmediateProof(crate::hub::TronProof),
+    ImmediateProof(Box<crate::hub::TronProof>),
     PreparedTx(TronPreparedTx),
 }
 
@@ -128,11 +129,12 @@ impl TronBackend {
         let totals = grpc::fetch_energy_stake_totals(&self.cfg, &self.telemetry, wallet.address())
             .await
             .context("fetch_energy_stake_totals")?;
-        self.put_cached_stake_totals(ResourceStakeTotalsKind::Energy, totals.clone())
+        self.put_cached_stake_totals(ResourceStakeTotalsKind::Energy, totals)
             .await;
         Ok(totals)
     }
 
+    #[allow(dead_code)]
     pub async fn net_stake_totals(&self) -> Result<ResourceStakeTotals> {
         if self.cfg.mode != TronMode::Grpc {
             anyhow::bail!("net_stake_totals is only available in TRON_MODE=grpc");
@@ -147,7 +149,7 @@ impl TronBackend {
         let totals = grpc::fetch_net_stake_totals(&self.cfg, &self.telemetry, wallet.address())
             .await
             .context("fetch_net_stake_totals")?;
-        self.put_cached_stake_totals(ResourceStakeTotalsKind::Net, totals.clone())
+        self.put_cached_stake_totals(ResourceStakeTotalsKind::Net, totals)
             .await;
         Ok(totals)
     }
@@ -164,7 +166,7 @@ impl TronBackend {
         }?;
 
         if entry.fetched_at.elapsed() <= ttl {
-            Some(entry.totals.clone())
+            Some(entry.totals)
         } else {
             None
         }
@@ -786,6 +788,7 @@ impl TronBackend {
     ///
     /// This is a *best-effort safety check* meant to avoid claiming intents we cannot satisfy due
     /// to insufficient staked inventory. It is not a perfect reservation system.
+    #[allow(dead_code)]
     pub async fn delegated_resource_available_sun(
         &self,
         resource: tron::protocol::ResourceCode,
@@ -824,16 +827,16 @@ impl TronBackend {
 
     pub fn private_key_for_owner(&self, owner_address_prefixed: &[u8]) -> Option<[u8; 32]> {
         for pk in &self.cfg.private_keys {
-            if let Ok(w) = tron::TronWallet::new(*pk) {
-                if w.address().prefixed_bytes().as_slice() == owner_address_prefixed {
-                    return Some(*pk);
-                }
+            if let Ok(w) = tron::TronWallet::new(*pk)
+                && w.address().prefixed_bytes().as_slice() == owner_address_prefixed
+            {
+                return Some(*pk);
             }
         }
-        if let Ok(w) = tron::TronWallet::new(self.cfg.private_key) {
-            if w.address().prefixed_bytes().as_slice() == owner_address_prefixed {
-                return Some(self.cfg.private_key);
-            }
+        if let Ok(w) = tron::TronWallet::new(self.cfg.private_key)
+            && w.address().prefixed_bytes().as_slice() == owner_address_prefixed
+        {
+            return Some(self.cfg.private_key);
         }
         None
     }
@@ -916,11 +919,11 @@ pub(super) fn tron_sender_from_privkey_or_fallback(
     tron_pk: [u8; 32],
     hub: &HubClient,
 ) -> FixedBytes<21> {
-    if tron_pk != [0u8; 32] {
-        if let Ok(w) = tron::TronWallet::new(tron_pk) {
-            let b = w.address().prefixed_bytes();
-            return FixedBytes::from_slice(&b);
-        }
+    if tron_pk != [0u8; 32]
+        && let Ok(w) = tron::TronWallet::new(tron_pk)
+    {
+        let b = w.address().prefixed_bytes();
+        return FixedBytes::from_slice(&b);
     }
     evm_to_tron_raw21(hub.solver_address())
 }

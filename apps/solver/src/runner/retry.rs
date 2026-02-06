@@ -4,7 +4,7 @@ use anyhow::Result;
 
 pub(super) fn retry_delay(attempts: i32) -> std::time::Duration {
     // Exponential backoff with caps. This is intentionally simple and centralized.
-    let shift = u32::try_from(attempts.max(0).min(10)).unwrap_or(0);
+    let shift = u32::try_from(attempts.clamp(0, 10)).unwrap_or(0);
     let base = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
     std::time::Duration::from_secs(base.min(300))
 }

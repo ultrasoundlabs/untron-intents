@@ -33,19 +33,18 @@ async fn enforce_claim_submission_preconditions(
     if ty == IntentType::DelegateResource
         && ctx.cfg.tron.mode == TronMode::Grpc
         && !ctx.cfg.tron.delegate_resource_resell_enabled
+        && let Err(err) = ensure_delegate_reservation(ctx, job).await
     {
-        if let Err(err) = ensure_delegate_reservation(ctx, job).await {
-            let msg = format!("delegate reservation failed: {err:#}");
-            ctx.db
-                .record_retryable_error(
-                    job.job_id,
-                    &ctx.instance_id,
-                    &msg,
-                    retry::retry_delay(job.attempts),
-                )
-                .await?;
-            return Ok(true);
-        }
+        let msg = format!("delegate reservation failed: {err:#}");
+        ctx.db
+            .record_retryable_error(
+                job.job_id,
+                &ctx.instance_id,
+                &msg,
+                retry::retry_delay(job.attempts),
+            )
+            .await?;
+        return Ok(true);
     }
     Ok(false)
 }
@@ -72,6 +71,7 @@ async fn delete_stale_prepared_userop_if_needed(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn submit_safe4337_userop<F, Fut>(
     ctx: &JobCtx,
     job: &SolverJob,
@@ -235,7 +235,7 @@ pub(super) async fn process_ready_state(
     }
     match ctx.cfg.hub.tx_mode {
         HubTxMode::Eoa => {
-            if let Some(wait) = retry::enforce_claim_rate_limits(&ctx, ty).await? {
+            if let Some(wait) = retry::enforce_claim_rate_limits(ctx, ty).await? {
                 ctx.db
                     .record_retryable_error(
                         job.job_id,
@@ -249,19 +249,18 @@ pub(super) async fn process_ready_state(
             if ty == IntentType::DelegateResource
                 && ctx.cfg.tron.mode == TronMode::Grpc
                 && !ctx.cfg.tron.delegate_resource_resell_enabled
+                && let Err(err) = ensure_delegate_reservation(ctx, job).await
             {
-                if let Err(err) = ensure_delegate_reservation(&ctx, &job).await {
-                    let msg = format!("delegate reservation failed: {err:#}");
-                    ctx.db
-                        .record_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            &msg,
-                            retry::retry_delay(job.attempts),
-                        )
-                        .await?;
-                    return Ok(());
-                }
+                let msg = format!("delegate reservation failed: {err:#}");
+                ctx.db
+                    .record_retryable_error(
+                        job.job_id,
+                        &ctx.instance_id,
+                        &msg,
+                        retry::retry_delay(job.attempts),
+                    )
+                    .await?;
+                return Ok(());
             }
 
             match ctx.hub.claim_intent(id).await {
@@ -286,7 +285,7 @@ pub(super) async fn process_ready_state(
                             "ready",
                             "failed_fatal",
                         );
-                        retry::record_fatal(&ctx, &job, &msg).await?;
+                        retry::record_fatal(ctx, job, &msg).await?;
                         return Ok(());
                     }
                     ctx.db
@@ -310,8 +309,8 @@ pub(super) async fn process_ready_state(
                     return Ok(());
                 }
                 if delete_stale_prepared_userop_if_needed(
-                    &ctx,
-                    &job,
+                    ctx,
+                    job,
                     kind,
                     r,
                     "deserialize claim userop",
@@ -327,12 +326,12 @@ pub(super) async fn process_ready_state(
                 .filter(|r| r.userop_hash.is_none() && r.state == "prepared")
                 .map(|r| r.userop_json.as_str());
             if row.is_none() || prepared_userop_json.is_some() {
-                if enforce_claim_submission_preconditions(&ctx, &job, ty).await? {
+                if enforce_claim_submission_preconditions(ctx, job, ty).await? {
                     return Ok(());
                 }
                 let should_retry = submit_safe4337_userop(
-                    &ctx,
-                    &job,
+                    ctx,
+                    job,
                     kind,
                     "claim_userop",
                     "acquire hub_userop_submit_sem (claim)",
@@ -398,14 +397,14 @@ pub(super) async fn process_ready_state(
                             .record_hub_userop_fatal_error(job.job_id, &ctx.instance_id, kind, &msg)
                             .await
                             .ok();
-                        retry::record_fatal(&ctx, &job, &msg).await?;
+                        retry::record_fatal(ctx, job, &msg).await?;
                     }
                     Ok(())
                 }
                 Ok(None) => Ok(()),
                 Err(err) => {
                     let msg = err.to_string();
-                    record_userop_poll_retryable(&ctx, &job, kind, &msg).await?;
+                    record_userop_poll_retryable(ctx, job, kind, &msg).await?;
                     Ok(())
                 }
             }
@@ -453,7 +452,7 @@ pub(super) async fn process_proof_built_state(
                     .await?;
                 ctx.telemetry
                     .job_state_transition(job.intent_type, "proof_built", "proved");
-                let _ = finalize_after_prove(&ctx, &job).await;
+                let _ = finalize_after_prove(ctx, job).await;
                 Ok(())
             }
             Err(err) => {
@@ -477,8 +476,8 @@ pub(super) async fn process_proof_built_state(
                     return Ok(());
                 }
                 if delete_stale_prepared_userop_if_needed(
-                    &ctx,
-                    &job,
+                    ctx,
+                    job,
                     kind,
                     r,
                     "deserialize prove userop",
@@ -496,8 +495,8 @@ pub(super) async fn process_proof_built_state(
             if row.is_none() || prepared_userop_json.is_some() {
                 let tron = tron.clone();
                 let should_retry = submit_safe4337_userop(
-                    &ctx,
-                    &job,
+                    ctx,
+                    job,
                     kind,
                     "prove_userop",
                     "acquire hub_userop_submit_sem (prove)",
@@ -562,7 +561,7 @@ pub(super) async fn process_proof_built_state(
                             "proof_built",
                             "proved",
                         );
-                        let _ = finalize_after_prove(&ctx, &job).await;
+                        let _ = finalize_after_prove(ctx, job).await;
                     } else {
                         let msg = format!(
                             "prove userop failed: {:?}",
@@ -572,14 +571,14 @@ pub(super) async fn process_proof_built_state(
                             .record_hub_userop_fatal_error(job.job_id, &ctx.instance_id, kind, &msg)
                             .await
                             .ok();
-                        retry::record_fatal(&ctx, &job, &msg).await?;
+                        retry::record_fatal(ctx, job, &msg).await?;
                     }
                     Ok(())
                 }
                 Ok(None) => Ok(()),
                 Err(err) => {
                     let msg = err.to_string();
-                    record_userop_poll_retryable(&ctx, &job, kind, &msg).await?;
+                    record_userop_poll_retryable(ctx, job, kind, &msg).await?;
                     Ok(())
                 }
             }

@@ -10,7 +10,10 @@ use e2e::{
         run_forge_create_mock_untron_v3, run_forge_create_untron_intents_with_args,
     },
     http::wait_for_http_ok,
-    pool_db::{fetch_current_intents, wait_for_intents_solved_and_settled, wait_for_pool_current_intents_count},
+    pool_db::{
+        fetch_current_intents, wait_for_intents_solved_and_settled,
+        wait_for_pool_current_intents_count,
+    },
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
     services::{spawn_indexer, spawn_solver_mock_custom},
@@ -42,7 +45,11 @@ async fn wait_for_solver_table(db_url: &str, table: &str, timeout: Duration) -> 
     }
 }
 
-async fn wait_for_no_job_for_intent(db_url: &str, intent_id_hex: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_no_job_for_intent(
+    db_url: &str,
+    intent_id_hex: &str,
+    timeout: Duration,
+) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
     let start = Instant::now();
     loop {

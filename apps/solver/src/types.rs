@@ -90,6 +90,7 @@ pub fn parse_b256(s: &str) -> Result<B256> {
     Ok(B256::from(out))
 }
 
+#[allow(dead_code)]
 pub fn parse_address(s: &str) -> Result<Address> {
     s.trim().parse().context("parse address")
 }

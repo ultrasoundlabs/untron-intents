@@ -75,7 +75,7 @@ async fn spawn_grpc_tcp_proxy(upstream: SocketAddr) -> Result<(String, watch::Se
                 Ok(v) => v,
                 Err(_) => return,
             };
-            let mut rx = rx.clone();
+            let rx = rx.clone();
             tokio::spawn(async move {
                 // If blocked, immediately drop.
                 if *rx.borrow() {
@@ -99,7 +99,12 @@ async fn spawn_grpc_tcp_proxy(upstream: SocketAddr) -> Result<(String, watch::Se
     Ok((format!("http://127.0.0.1:{}", addr.port()), tx))
 }
 
-async fn wait_for_job_state(db_url: &str, intent_id: &str, state: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_job_state(
+    db_url: &str,
+    intent_id: &str,
+    state: &str,
+    timeout: Duration,
+) -> Result<()> {
     let start = Instant::now();
     loop {
         let job = fetch_job_by_intent_id(db_url, intent_id).await?;
@@ -134,7 +139,9 @@ async fn wait_for_retry_recorded(
             return Ok(());
         }
         if start.elapsed() > timeout {
-            anyhow::bail!("timed out waiting for retryable error; job={job:?} retry_in_future={retry_in_future}");
+            anyhow::bail!(
+                "timed out waiting for retryable error; job={job:?} retry_in_future={retry_in_future}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -164,7 +171,7 @@ async fn e2e_solver_tron_grpc_retries_transient_broadcast_failure_with_backoff()
     let tron_http_port = tron.get_host_port_ipv4(9090).await?;
     let tron_grpc_port = tron.get_host_port_ipv4(50051).await?;
     let tron_http_base = format!("http://127.0.0.1:{tron_http_port}");
-    let tron_grpc_url = format!("http://127.0.0.1:{tron_grpc_port}");
+    let _tron_grpc_url = format!("http://127.0.0.1:{tron_grpc_port}");
 
     wait_for_tronbox_admin(&tron_http_base, Duration::from_secs(240)).await?;
     let keys = wait_for_tronbox_accounts(&tron_http_base, Duration::from_secs(240)).await?;
@@ -272,7 +279,13 @@ async fn e2e_solver_tron_grpc_retries_transient_broadcast_failure_with_backoff()
     wait_for_solver_table(&db_url, "jobs", Duration::from_secs(30)).await?;
 
     // Wait until we're ready to broadcast (tron_prepared), then simulate a transient node outage.
-    wait_for_job_state(&db_url, &intent_id, "tron_prepared", Duration::from_secs(180)).await?;
+    wait_for_job_state(
+        &db_url,
+        &intent_id,
+        "tron_prepared",
+        Duration::from_secs(180),
+    )
+    .await?;
     proxy_block_tx.send_replace(true);
 
     // The solver should record a retryable error with next_retry_at in the future.
@@ -288,26 +301,27 @@ async fn e2e_solver_tron_grpc_retries_transient_broadcast_failure_with_backoff()
     proxy_block_tx.send_replace(false);
 
     // The solver should recover and complete.
-    let _rows =
-        match wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300)).await {
-            Ok(rows) => rows,
-            Err(e) => {
-                let job = fetch_job_by_intent_id(&db_url, &intent_id).await?;
-                eprintln!(
-                    "solver.jobs diagnostic: intent_id={} job_id={} state={} attempts={} next_retry_at={} leased_by={:?} tron_txid={:?} last_error={:?} claim_tx_hash={:?} prove_tx_hash={:?}",
-                    intent_id,
-                    job.job_id,
-                    job.state,
-                    job.attempts,
-                    job.next_retry_at,
-                    job.leased_by,
-                    job.tron_txid,
-                    job.last_error,
-                    job.claim_tx_hash,
-                    job.prove_tx_hash,
-                );
-                return Err(e);
-            }
-        };
+    let _rows = match wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300))
+        .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            let job = fetch_job_by_intent_id(&db_url, &intent_id).await?;
+            eprintln!(
+                "solver.jobs diagnostic: intent_id={} job_id={} state={} attempts={} next_retry_at={} leased_by={:?} tron_txid={:?} last_error={:?} claim_tx_hash={:?} prove_tx_hash={:?}",
+                intent_id,
+                job.job_id,
+                job.state,
+                job.attempts,
+                job.next_retry_at,
+                job.leased_by,
+                job.tron_txid,
+                job.last_error,
+                job.claim_tx_hash,
+                job.prove_tx_hash,
+            );
+            return Err(e);
+        }
+    };
     Ok(())
 }

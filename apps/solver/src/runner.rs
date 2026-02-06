@@ -9,7 +9,7 @@ use crate::{
     policy::{BreakerQuery, PolicyEngine},
     pricing::Pricing,
     tron_backend::TronBackend,
-    types::{parse_b256, parse_hex_bytes, IntentType, JobState},
+    types::{IntentType, JobState, parse_b256, parse_hex_bytes},
 };
 use alloy::primitives::B256;
 use alloy::sol_types::SolValue;
@@ -148,13 +148,12 @@ impl Solver {
         // For Safe4337 mode: on restart, the bundler may have pending userops that are not yet
         // reflected in EntryPoint.getNonce(). Seed a local nonce floor from our persisted
         // submitted userops to avoid AA25 invalid nonce loops.
-        if cfg.hub.tx_mode == HubTxMode::Safe4337 {
-            if let Some(floor) = db
+        if cfg.hub.tx_mode == HubTxMode::Safe4337
+            && let Some(floor) = db
                 .hub_userop_nonce_floor_for_sender(hub.solver_address())
                 .await?
-            {
-                hub.safe4337_set_nonce_floor(floor).await?;
-            }
+        {
+            hub.safe4337_set_nonce_floor(floor).await?;
         }
 
         let indexer = IndexerClient::new(
@@ -272,35 +271,35 @@ impl Solver {
                 .insert_job_if_new(intent_id, row.intent_type, &specs, row.deadline)
                 .await?;
 
-            if let Some(q) = decision.rental_quote {
-                if let Some(job_id) = self.db.job_id_for_intent(intent_id).await? {
-                    let request_json = serde_json::json!({
-                        "quote": q.rendered_request,
-                        "quote_meta": {
-                            "duration_hours": q.duration_hours,
-                            "amount_units": q.amount_units,
-                            "cost_trx": q.cost_trx,
-                        }
-                    });
-                    let response_json = serde_json::json!({
-                        "quote": q.response_json
-                    });
-                    let _ = self
-                        .db
-                        .upsert_tron_rental(
-                            job_id,
-                            &q.provider,
-                            "energy",
-                            q.receiver_evm,
-                            q.balance_sun,
-                            q.lock_period,
-                            None,
-                            None,
-                            Some(&request_json),
-                            Some(&response_json),
-                        )
-                        .await;
-                }
+            if let Some(q) = decision.rental_quote
+                && let Some(job_id) = self.db.job_id_for_intent(intent_id).await?
+            {
+                let request_json = serde_json::json!({
+                    "quote": q.rendered_request,
+                    "quote_meta": {
+                        "duration_hours": q.duration_hours,
+                        "amount_units": q.amount_units,
+                        "cost_trx": q.cost_trx,
+                    }
+                });
+                let response_json = serde_json::json!({
+                    "quote": q.response_json
+                });
+                let _ = self
+                    .db
+                    .upsert_tron_rental(
+                        job_id,
+                        &q.provider,
+                        "energy",
+                        q.receiver_evm,
+                        q.balance_sun,
+                        q.lock_period,
+                        None,
+                        None,
+                        Some(&request_json),
+                        Some(&response_json),
+                    )
+                    .await;
             }
         }
 

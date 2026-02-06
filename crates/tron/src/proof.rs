@@ -819,8 +819,8 @@ mod tests {
             "amount word not found in calldata"
         );
 
-        assert_eq!(
-            tx0.is_transfer_from, false,
+        assert!(
+            !tx0.is_transfer_from,
             "fixture expects transfer (not transferFrom)"
         );
     }
@@ -1209,7 +1209,8 @@ mod tests {
         };
 
         let details =
-            super::compute_proof_from_block_ext(&block, &[tx_bytes.clone()], 1, txid).unwrap();
+            super::compute_proof_from_block_ext(&block, std::slice::from_ref(&tx_bytes), 1, txid)
+                .unwrap();
 
         assert_eq!(details.tx_index, 0);
         assert_eq!(details.tx_count, 1);

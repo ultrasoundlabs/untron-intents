@@ -10,7 +10,10 @@ use e2e::{
         run_forge_create_test_tron_tx_reader_no_sig, run_forge_create_untron_intents_with_args,
     },
     http::wait_for_http_ok,
-    pool_db::{fetch_current_intents, wait_for_intents_solved_and_settled, wait_for_pool_current_intents_count},
+    pool_db::{
+        fetch_current_intents, wait_for_intents_solved_and_settled,
+        wait_for_pool_current_intents_count,
+    },
     postgres::{configure_postgrest_roles, wait_for_postgres},
     process::KillOnDrop,
     services::{spawn_indexer, spawn_solver_tron_grpc_custom},
@@ -258,4 +261,3 @@ async fn e2e_two_solvers_only_one_broadcasts_final_tron_tx() -> Result<()> {
 
     Ok(())
 }
-

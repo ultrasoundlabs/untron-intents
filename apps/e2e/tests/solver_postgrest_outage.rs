@@ -47,7 +47,12 @@ fn docker_unpause(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn wait_for_job_count_for_intent(db_url: &str, intent_id_hex: &str, expected: i64, timeout: Duration) -> Result<()> {
+async fn wait_for_job_count_for_intent(
+    db_url: &str,
+    intent_id_hex: &str,
+    expected: i64,
+    timeout: Duration,
+) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
     let start = std::time::Instant::now();
     loop {
@@ -61,7 +66,9 @@ async fn wait_for_job_count_for_intent(db_url: &str, intent_id_hex: &str, expect
             return Ok(());
         }
         if start.elapsed() > timeout {
-            anyhow::bail!("timed out waiting for solver.jobs count={expected} for intent_id={intent_id_hex}, got {n}");
+            anyhow::bail!(
+                "timed out waiting for solver.jobs count={expected} for intent_id={intent_id_hex}, got {n}"
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }

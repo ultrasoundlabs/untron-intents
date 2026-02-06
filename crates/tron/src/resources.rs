@@ -61,7 +61,7 @@ fn ceil_div_u128(n: u128, d: u128) -> u128 {
     if d == 0 {
         return u128::MAX;
     }
-    (n + d - 1) / d
+    n.div_ceil(d)
 }
 
 /// Converts a desired delegated TRX amount (sun) into the minimum energy units to order so that a

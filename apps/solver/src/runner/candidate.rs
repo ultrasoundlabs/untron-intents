@@ -1,11 +1,11 @@
 use super::{
-    b256_to_bytes32, decode_trigger_contract_and_selector, duration_hours_for_lock_period_blocks,
-    RentalQuoteDecision, ShouldAttemptDecision, Solver,
+    RentalQuoteDecision, ShouldAttemptDecision, Solver, b256_to_bytes32,
+    decode_trigger_contract_and_selector, duration_hours_for_lock_period_blocks,
 };
 use crate::{
     config::TronMode,
     indexer::PoolOpenIntentRow,
-    types::{parse_b256, parse_hex_bytes, IntentType},
+    types::{IntentType, parse_b256, parse_hex_bytes},
 };
 use alloy::sol_types::SolValue;
 use anyhow::Result;
@@ -344,83 +344,84 @@ impl Solver {
         }
 
         // Dynamic breaker (if applicable).
-        if let Some(b) = eval.breaker {
-            if self.is_breaker_active(b).await? {
+        if let Some(b) = eval.breaker
+            && self.is_breaker_active(b).await?
+        {
+            if let Ok(id) = parse_b256(&row.id) {
+                let _ = self
+                    .db
+                    .upsert_intent_skip(
+                        b256_to_bytes32(id),
+                        row.intent_type,
+                        "breaker_active",
+                        None,
+                    )
+                    .await;
+            }
+            return Ok(ShouldAttemptDecision {
+                ok: false,
+                rental_quote: None,
+            });
+        }
+
+        // Optional Tron emulation gating: avoid claiming intents we know will revert.
+        if self.cfg.tron.emulation_enabled
+            && self.cfg.tron.mode == TronMode::Grpc
+            && matches!(
+                ty,
+                IntentType::TriggerSmartContract | IntentType::UsdtTransfer
+            )
+        {
+            let specs = parse_hex_bytes(&row.intent_specs)?;
+            let emu = self
+                .tron
+                .precheck_emulation(self.hub.as_ref(), ty, &specs)
+                .await;
+            if let Ok(id) = parse_b256(&row.id) {
+                let (contract, selector) = match ty {
+                    IntentType::TriggerSmartContract => {
+                        decode_trigger_contract_and_selector(&specs)
+                            .map(|(c, s)| (Some(c), s))
+                            .unwrap_or((None, None))
+                    }
+                    _ => (None, None),
+                };
+                let contract_bytes = contract.map(|c| c.as_slice().to_vec());
+                let selector_bytes = selector.map(|s| s.to_vec());
+                let _ = self
+                    .db
+                    .upsert_intent_emulation(
+                        b256_to_bytes32(id),
+                        row.intent_type,
+                        emu.ok,
+                        emu.reason.as_deref(),
+                        contract_bytes.as_deref(),
+                        selector_bytes.as_deref(),
+                    )
+                    .await;
+            }
+            if !emu.ok {
                 if let Ok(id) = parse_b256(&row.id) {
                     let _ = self
                         .db
                         .upsert_intent_skip(
                             b256_to_bytes32(id),
                             row.intent_type,
-                            "breaker_active",
+                            emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
                             None,
                         )
                         .await;
                 }
+                tracing::debug!(
+                    id = %row.id,
+                    intent_type = row.intent_type,
+                    reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
+                    "skip intent (tron emulation)"
+                );
                 return Ok(ShouldAttemptDecision {
                     ok: false,
                     rental_quote: None,
                 });
-            }
-        }
-
-        // Optional Tron emulation gating: avoid claiming intents we know will revert.
-        if self.cfg.tron.emulation_enabled && self.cfg.tron.mode == TronMode::Grpc {
-            if matches!(
-                ty,
-                IntentType::TriggerSmartContract | IntentType::UsdtTransfer
-            ) {
-                let specs = parse_hex_bytes(&row.intent_specs)?;
-                let emu = self
-                    .tron
-                    .precheck_emulation(self.hub.as_ref(), ty, &specs)
-                    .await;
-                if let Ok(id) = parse_b256(&row.id) {
-                    let (contract, selector) = match ty {
-                        IntentType::TriggerSmartContract => {
-                            decode_trigger_contract_and_selector(&specs)
-                                .map(|(c, s)| (Some(c), s))
-                                .unwrap_or((None, None))
-                        }
-                        _ => (None, None),
-                    };
-                    let contract_bytes = contract.map(|c| c.as_slice().to_vec());
-                    let selector_bytes = selector.map(|s| s.to_vec());
-                    let _ = self
-                        .db
-                        .upsert_intent_emulation(
-                            b256_to_bytes32(id),
-                            row.intent_type,
-                            emu.ok,
-                            emu.reason.as_deref(),
-                            contract_bytes.as_deref(),
-                            selector_bytes.as_deref(),
-                        )
-                        .await;
-                }
-                if !emu.ok {
-                    if let Ok(id) = parse_b256(&row.id) {
-                        let _ = self
-                            .db
-                            .upsert_intent_skip(
-                                b256_to_bytes32(id),
-                                row.intent_type,
-                                emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
-                                None,
-                            )
-                            .await;
-                    }
-                    tracing::debug!(
-                        id = %row.id,
-                        intent_type = row.intent_type,
-                        reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
-                        "skip intent (tron emulation)"
-                    );
-                    return Ok(ShouldAttemptDecision {
-                        ok: false,
-                        rental_quote: None,
-                    });
-                }
             }
         }
 

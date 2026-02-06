@@ -301,7 +301,7 @@ mod tests {
         let salt_nonce = U256::ZERO;
         let calldata = ISafeProxyFactory::createProxyWithNonceCall {
             singleton,
-            initializer: initializer.clone().into(),
+            initializer: initializer.clone(),
             saltNonce: salt_nonce,
         }
         .abi_encode();

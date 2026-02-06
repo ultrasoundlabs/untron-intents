@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
-    cast::{cast_abi_encode, run_cast_create_trigger_smart_contract_intent, run_cast_mint_mock_erc20},
+    cast::{
+        cast_abi_encode, run_cast_create_trigger_smart_contract_intent, run_cast_mint_mock_erc20,
+    },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
@@ -55,7 +57,11 @@ async fn wait_for_intent_skip_reason(
     }
 }
 
-async fn wait_for_no_job_for_intent(db_url: &str, intent_id_hex: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_no_job_for_intent(
+    db_url: &str,
+    intent_id_hex: &str,
+    timeout: Duration,
+) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
     let start = Instant::now();
     loop {
@@ -178,7 +184,10 @@ async fn e2e_solver_trigger_policy_allows_one_and_denies_one_mock_tron() -> Resu
     // If this fails, the solver cannot decode the intent specs and the test will hang.
     {
         let rows = fetch_current_intents(&db_url).await?;
-        let specs = rows.iter().map(|r| r.row.intent_specs.clone()).collect::<Vec<_>>();
+        let specs = rows
+            .iter()
+            .map(|r| r.row.intent_specs.clone())
+            .collect::<Vec<_>>();
         if !specs.contains(&expected_allowed_specs) || !specs.contains(&expected_denied_specs) {
             anyhow::bail!(
                 "unexpected intent_specs in projections.\nexpected_allowed={expected_allowed_specs}\nexpected_denied={expected_denied_specs}\nfound={specs:?}"

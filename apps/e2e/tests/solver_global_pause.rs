@@ -17,7 +17,6 @@ use e2e::{
     solver_db::fetch_job_by_intent_id,
     util::{find_free_port, require_bins},
 };
-use sqlx::Row;
 use std::time::{Duration, Instant};
 
 async fn wait_for_solver_table(db_url: &str, table: &str, timeout: Duration) -> Result<()> {
@@ -154,19 +153,30 @@ async fn e2e_solver_global_pause_blocks_claiming() -> Result<()> {
         let job = fetch_job_by_intent_id(&db_url, &intent_id).await;
         if let Ok(job) = job {
             if job.state != "ready" {
-                anyhow::bail!("expected job.state=ready under global pause, got {}", job.state);
+                anyhow::bail!(
+                    "expected job.state=ready under global pause, got {}",
+                    job.state
+                );
             }
-            if job.last_error.as_deref().unwrap_or("").contains("global_pause:") {
+            if job
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("global_pause:")
+            {
                 break;
             }
         }
 
         // Also assert the intent remains unclaimed on the pool side.
         let rows = fetch_current_intents(&db_url).await?;
-        if let Some(r) = rows.first() {
-            if r.row.solver.is_some() {
-                anyhow::bail!("expected intent to remain unclaimed while paused; solver={:?}", r.row.solver);
-            }
+        if let Some(r) = rows.first()
+            && r.row.solver.is_some()
+        {
+            anyhow::bail!(
+                "expected intent to remain unclaimed while paused; solver={:?}",
+                r.row.solver
+            );
         }
 
         if start.elapsed() > Duration::from_secs(60) {
@@ -177,4 +187,3 @@ async fn e2e_solver_global_pause_blocks_claiming() -> Result<()> {
 
     Ok(())
 }
-

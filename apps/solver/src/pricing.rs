@@ -54,10 +54,10 @@ impl Pricing {
             return Ok(v);
         }
 
-        if let Some((price, at)) = self.cached_trx {
-            if at.elapsed() <= self.cfg.trx_usd_ttl {
-                return Ok(price);
-            }
+        if let Some((price, at)) = self.cached_trx
+            && at.elapsed() <= self.cfg.trx_usd_ttl
+        {
+            return Ok(price);
         }
 
         let resp = self
@@ -86,10 +86,10 @@ impl Pricing {
             return Ok(v);
         }
 
-        if let Some((price, at)) = self.cached_eth {
-            if at.elapsed() <= self.cfg.eth_usd_ttl {
-                return Ok(price);
-            }
+        if let Some((price, at)) = self.cached_eth
+            && at.elapsed() <= self.cfg.eth_usd_ttl
+        {
+            return Ok(price);
         }
 
         let resp = self

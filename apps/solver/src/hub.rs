@@ -15,43 +15,43 @@ use std::time::Instant;
 use url::Url;
 
 alloy::sol! {
-	    struct Intent {
-	        uint8 intentType;
-	        bytes intentSpecs;
-	        address refundBeneficiary;
-	        address token;
-	        uint256 amount;
-	    }
+        struct Intent {
+            uint8 intentType;
+            bytes intentSpecs;
+            address refundBeneficiary;
+            address token;
+            uint256 amount;
+        }
 
-	    struct IntentState {
-	        Intent intent;
-	        uint256 solverClaimedAt;
-	        uint256 deadline;
-	        address solver;
-	        bool solved;
-	        bool funded;
-	        bool settled;
-	    }
+        struct IntentState {
+            Intent intent;
+            uint256 solverClaimedAt;
+            uint256 deadline;
+            address solver;
+            bool solved;
+            bool funded;
+            bool settled;
+        }
 
-	    #[sol(rpc)]
-	    interface IUntronIntents {
-	        function USDT() external view returns (address);
-	        function V3() external view returns (address);
-	        function claimIntent(bytes32 id) external;
-	        function proveIntentFill(bytes32 id, bytes[20] calldata blocks, bytes calldata encodedTx, bytes32[] calldata proof, uint256 index) external;
-	        function intents(bytes32 id)
-	            external
-	            view
-	            returns (
-	                Intent intent,
-	                uint256 solverClaimedAt,
-	                uint256 deadline,
-	                address solver,
-	                bool solved,
-	                bool funded,
-	                bool settled
-	            );
-	    }
+        #[sol(rpc)]
+        interface IUntronIntents {
+            function USDT() external view returns (address);
+            function V3() external view returns (address);
+            function claimIntent(bytes32 id) external;
+            function proveIntentFill(bytes32 id, bytes[20] calldata blocks, bytes calldata encodedTx, bytes32[] calldata proof, uint256 index) external;
+            function intents(bytes32 id)
+                external
+                view
+                returns (
+                    Intent intent,
+                    uint256 solverClaimedAt,
+                    uint256 deadline,
+                    address solver,
+                    bool solved,
+                    bool funded,
+                    bool settled
+                );
+        }
 
     #[sol(rpc)]
     interface IUntronV3 {
@@ -130,7 +130,7 @@ pub struct HubUserOpReceipt {
 
 enum HubClientInner {
     Eoa(HubEoaClient),
-    Safe4337(HubSafe4337Client),
+    Safe4337(Box<HubSafe4337Client>),
 }
 
 struct HubEoaClient {
@@ -251,7 +251,7 @@ impl HubClient {
         .context("init Safe4337UserOpSender")?;
 
         Ok(Self {
-            inner: HubClientInner::Safe4337(HubSafe4337Client {
+            inner: HubClientInner::Safe4337(Box::new(HubSafe4337Client {
                 pool,
                 provider,
                 solver: sender.safe_address(),
@@ -260,7 +260,7 @@ impl HubClient {
                 sender: tokio::sync::Mutex::new(sender),
                 http: Client::new(),
                 telemetry,
-            }),
+            })),
         })
     }
 
@@ -309,7 +309,7 @@ impl HubClient {
         let res = pool.USDT().call().await;
         let ok = res.is_ok();
         telemetry.hub_rpc_ms("pool_usdt", ok, started.elapsed().as_millis() as u64);
-        Ok(res.context("UntronIntents.USDT")?)
+        res.context("UntronIntents.USDT")
     }
 
     pub async fn pool_v3(&self) -> Result<Address> {
@@ -322,7 +322,7 @@ impl HubClient {
         let res = pool.V3().call().await;
         let ok = res.is_ok();
         telemetry.hub_rpc_ms("pool_v3", ok, started.elapsed().as_millis() as u64);
-        Ok(res.context("UntronIntents.V3")?)
+        res.context("UntronIntents.V3")
     }
 
     pub async fn hub_block_number(&self) -> Result<u64> {
@@ -334,7 +334,7 @@ impl HubClient {
         let res = provider.get_block_number().await;
         let ok = res.is_ok();
         telemetry.hub_rpc_ms("eth_blockNumber", ok, started.elapsed().as_millis() as u64);
-        Ok(res.context("eth_blockNumber")?)
+        res.context("eth_blockNumber")
     }
 
     pub async fn v3_tron_usdt(&self) -> Result<Address> {
@@ -357,9 +357,10 @@ impl HubClient {
                     .hub_rpc_ms("v3_tron_usdt", ok, started.elapsed().as_millis() as u64)
             }
         }
-        Ok(res.context("UntronV3.tronUsdt")?)
+        res.context("UntronV3.tronUsdt")
     }
 
+    #[allow(dead_code)]
     pub async fn v3_controller_address(&self) -> Result<Address> {
         let v3 = self.pool_v3().await?;
         let provider = match &self.inner {
@@ -382,7 +383,7 @@ impl HubClient {
                 started.elapsed().as_millis() as u64,
             ),
         }
-        Ok(res.context("UntronV3.CONTROLLER_ADDRESS")?)
+        res.context("UntronV3.CONTROLLER_ADDRESS")
     }
 
     pub async fn ensure_erc20_allowance(
@@ -707,7 +708,7 @@ impl HubSafe4337Client {
             .get_block_number()
             .await
             .context("eth_blockNumber")?;
-        let head_u64: u64 = head.try_into().unwrap_or(u64::MAX);
+        let head_u64: u64 = head;
         let from = head_u64.saturating_sub(10_000);
 
         let filter = Filter::new()
@@ -729,7 +730,7 @@ impl HubSafe4337Client {
         let tx_hash = log
             .transaction_hash
             .context("UserOperationEvent log missing transaction_hash")?;
-        let block_number = log.block_number.map(|n| n as u64);
+        let block_number = log.block_number;
 
         // EntryPoint v0.7 ABI-encoded data: (nonce, success, actualGasCost, actualGasUsed).
         let data = log.data().data.as_ref();
@@ -800,10 +801,10 @@ impl HubSafe4337Client {
                 anyhow::bail!("timeout waiting for userop receipt: {userop_hash}");
             }
 
-            if let Some(r) = self.get_userop_receipt(userop_hash).await? {
-                if let Some(txh) = r.tx_hash {
-                    return Ok(txh);
-                }
+            if let Some(r) = self.get_userop_receipt(userop_hash).await?
+                && let Some(txh) = r.tx_hash
+            {
+                return Ok(txh);
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -839,16 +840,16 @@ impl HubSafe4337Client {
     }
 }
 
-fn extract_userop_receipt_fields(
-    raw: &serde_json::Value,
-) -> Result<(
+type UserOpReceiptFields = (
     Option<B256>,
     Option<u64>,
     Option<bool>,
     Option<U256>,
     Option<U256>,
     Option<serde_json::Value>,
-)> {
+);
+
+fn extract_userop_receipt_fields(raw: &serde_json::Value) -> Result<UserOpReceiptFields> {
     // We keep this intentionally defensive: bundlers differ slightly in where fields appear.
     let tx_hash_str = raw
         .get("transactionHash")
@@ -892,18 +893,18 @@ fn extract_userop_receipt_fields(
 
 fn extract_u256_field(raw: &serde_json::Value, keys: &[&str]) -> Option<U256> {
     for k in keys {
-        if let Some(v) = raw.get(*k) {
-            if let Some(out) = parse_u256_json(v) {
-                return Some(out);
-            }
+        if let Some(v) = raw.get(*k)
+            && let Some(out) = parse_u256_json(v)
+        {
+            return Some(out);
         }
     }
     if let Some(r) = raw.get("receipt") {
         for k in keys {
-            if let Some(v) = r.get(*k) {
-                if let Some(out) = parse_u256_json(v) {
-                    return Some(out);
-                }
+            if let Some(v) = r.get(*k)
+                && let Some(out) = parse_u256_json(v)
+            {
+                return Some(out);
             }
         }
     }

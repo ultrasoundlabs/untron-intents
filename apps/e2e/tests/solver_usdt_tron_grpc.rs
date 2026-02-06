@@ -55,7 +55,6 @@ async fn wait_for_tron_tx_included(
     loop {
         match grpc.get_transaction_info_by_id(txid).await {
             Ok(info) => {
-                last_err = None;
                 if info.block_number > 0 {
                     return Ok(info);
                 }
@@ -361,7 +360,7 @@ async fn e2e_solver_tron_grpc_fills_usdt_transfer() -> Result<()> {
     if trigger.data.len() < 4 + 32 + 32 {
         anyhow::bail!("unexpected calldata length: {}", trigger.data.len());
     }
-    if &trigger.data[..4] != [0xa9, 0x05, 0x9c, 0xbb] {
+    if trigger.data[..4] != [0xa9, 0x05, 0x9c, 0xbb] {
         anyhow::bail!("unexpected selector: 0x{}", hex::encode(&trigger.data[..4]));
     }
     let to_word = &trigger.data[4..36];

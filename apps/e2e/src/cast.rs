@@ -316,6 +316,7 @@ pub fn run_cast_create_trx_transfer_intent_erc20(
     Ok(deadline_u64)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_cast_create_delegate_resource_intent(
     rpc_url: &str,
     private_key: &str,

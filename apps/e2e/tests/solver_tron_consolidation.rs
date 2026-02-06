@@ -55,7 +55,10 @@ async fn tx_receipt_status(rpc_url: &str, tx_hash: &str) -> Result<Option<bool>>
         .send()
         .await
         .context("eth_getTransactionReceipt")?;
-    let val = resp.json::<serde_json::Value>().await.context("decode receipt json")?;
+    let val = resp
+        .json::<serde_json::Value>()
+        .await
+        .context("decode receipt json")?;
     let Some(r) = val.get("result") else {
         return Ok(None);
     };

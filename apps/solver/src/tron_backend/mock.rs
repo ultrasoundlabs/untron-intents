@@ -36,7 +36,7 @@ pub async fn execute_trx_transfer(
         .await
         .context("mock setTransferTx")?;
 
-    Ok(TronExecution::ImmediateProof(empty_proof()))
+    Ok(TronExecution::ImmediateProof(Box::new(empty_proof())))
 }
 
 pub async fn execute_trigger_smart_contract(
@@ -66,7 +66,7 @@ pub async fn execute_trigger_smart_contract(
         .await
         .context("mock setTx")?;
 
-    Ok(TronExecution::ImmediateProof(empty_proof()))
+    Ok(TronExecution::ImmediateProof(Box::new(empty_proof())))
 }
 
 pub async fn execute_delegate_resource(
@@ -97,7 +97,7 @@ pub async fn execute_delegate_resource(
         .await
         .context("mock setDelegateResourceTx")?;
 
-    Ok(TronExecution::ImmediateProof(empty_proof()))
+    Ok(TronExecution::ImmediateProof(Box::new(empty_proof())))
 }
 
 pub async fn execute_usdt_transfer(
@@ -129,5 +129,5 @@ pub async fn execute_usdt_transfer(
         .await
         .context("mock setTx")?;
 
-    Ok(TronExecution::ImmediateProof(empty_proof()))
+    Ok(TronExecution::ImmediateProof(Box::new(empty_proof())))
 }

@@ -3,7 +3,7 @@ use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
     cast::{run_cast_create_trx_transfer_intent, run_cast_mint_mock_erc20},
-    docker::{start_postgres, start_postgrest, PostgresOptions, PostgrestOptions},
+    docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
         run_forge_build, run_forge_create_mock_erc20, run_forge_create_mock_tron_tx_reader,

@@ -84,7 +84,8 @@ pub async fn fetch_tron_tx_by_id_from_block(
             .context("Transaction missing raw_data")?;
         let raw_bytes = raw_data.encode_to_vec();
         let got = Sha256::digest(&raw_bytes);
-        if got.as_slice() == txid {
+        let got: [u8; 32] = got.into();
+        if got == txid {
             return Ok(tx);
         }
     }

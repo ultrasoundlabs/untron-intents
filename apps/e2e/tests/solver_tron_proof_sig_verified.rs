@@ -7,7 +7,8 @@ use e2e::{
     docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
         run_forge_build, run_forge_create_mock_erc20, run_forge_create_mock_untron_v3,
-        run_forge_create_test_tron_tx_reader_sig, run_forge_create_test_tron_tx_reader_sig_allowlist,
+        run_forge_create_test_tron_tx_reader_sig,
+        run_forge_create_test_tron_tx_reader_sig_allowlist,
         run_forge_create_untron_intents_with_args,
     },
     http::wait_for_http_ok,
@@ -20,7 +21,6 @@ use e2e::{
     util::{find_free_port, require_bins},
 };
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
 use sha2::Digest;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -31,7 +31,10 @@ use tokio::time::sleep;
 
 fn recover_signer_from_packed_block(block: &[u8]) -> Result<[u8; 20]> {
     if block.len() != 174 {
-        anyhow::bail!("unexpected packed header length: expected 174, got {}", block.len());
+        anyhow::bail!(
+            "unexpected packed header length: expected 174, got {}",
+            block.len()
+        );
     }
     let digest = sha2::Sha256::digest(&block[2..107]);
     let sig = &block[109..174];
@@ -44,7 +47,7 @@ fn recover_signer_from_packed_block(block: &[u8]) -> Result<[u8; 20]> {
         anyhow::bail!("invalid recovery id v={v}");
     }
     let recid = RecoveryId::from_byte(v).context("parse recovery id")?;
-    let vk = VerifyingKey::recover_from_prehash(digest.as_slice(), &sig, recid)
+    let vk = VerifyingKey::recover_from_prehash(digest.as_ref(), &sig, recid)
         .context("recover verifying key")?;
     let uncompressed = vk.to_encoded_point(false);
     let bytes = uncompressed.as_bytes();
@@ -81,7 +84,12 @@ async fn wait_for_solver_table(db_url: &str, table: &str, timeout: Duration) -> 
     }
 }
 
-async fn wait_for_job_state(db_url: &str, intent_id: &str, state: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_job_state(
+    db_url: &str,
+    intent_id: &str,
+    state: &str,
+    timeout: Duration,
+) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
     let intent_hex = intent_id.trim_start_matches("0x");
     let start = Instant::now();
@@ -105,17 +113,22 @@ async fn wait_for_job_state(db_url: &str, intent_id: &str, state: &str, timeout:
     }
 }
 
-async fn wait_for_prove_failure(db_url: &str, intent_id: &str, min_attempts: i32, timeout: Duration) -> Result<()> {
+async fn wait_for_prove_failure(
+    db_url: &str,
+    intent_id: &str,
+    min_attempts: i32,
+    timeout: Duration,
+) -> Result<()> {
     let start = Instant::now();
     loop {
         let job = fetch_job_by_intent_id(db_url, intent_id).await?;
-        if job.state == "proof_built" && job.attempts >= min_attempts && job.prove_tx_hash.is_none()
+        if job.state == "proof_built"
+            && job.attempts >= min_attempts
+            && job.prove_tx_hash.is_none()
+            && let Some(err) = job.last_error.as_ref()
+            && !err.is_empty()
         {
-            if let Some(err) = job.last_error.as_ref() {
-                if !err.is_empty() {
-                    return Ok(());
-                }
-            }
+            return Ok(());
         }
         if start.elapsed() > timeout {
             anyhow::bail!("timed out waiting for prove failure; job={job:?}");
@@ -125,7 +138,8 @@ async fn wait_for_prove_failure(db_url: &str, intent_id: &str, min_attempts: i32
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mutated_tx_bytes() -> Result<()> {
+async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mutated_tx_bytes()
+-> Result<()> {
     if !require_bins(&["docker", "anvil", "forge", "cast"]) {
         return Ok(());
     }
@@ -151,7 +165,7 @@ async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mut
 
     wait_for_tronbox_admin(&tron_http_base, Duration::from_secs(240)).await?;
     let keys = wait_for_tronbox_accounts(&tron_http_base, Duration::from_secs(240)).await?;
-    if keys.len() < 1 {
+    if keys.is_empty() {
         anyhow::bail!("expected at least 1 tronbox account, got {}", keys.len());
     }
     let tron_pk0 = keys[0].clone();
@@ -272,15 +286,17 @@ async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mut
         .to_string();
     let pool = sqlx::PgPool::connect(&db_url).await?;
 
-    let blocks: Vec<Vec<u8>> = sqlx::query_scalar(
-        "select blocks from solver.tron_proofs where txid = decode($1,'hex')",
-    )
-    .bind(&txid_hex)
-    .fetch_one(&pool)
-    .await
-    .context("load solver.tron_proofs.blocks")?;
+    let blocks: Vec<Vec<u8>> =
+        sqlx::query_scalar("select blocks from solver.tron_proofs where txid = decode($1,'hex')")
+            .bind(&txid_hex)
+            .fetch_one(&pool)
+            .await
+            .context("load solver.tron_proofs.blocks")?;
     if blocks.len() != 20 {
-        anyhow::bail!("unexpected blocks length: expected 20, got {}", blocks.len());
+        anyhow::bail!(
+            "unexpected blocks length: expected 20, got {}",
+            blocks.len()
+        );
     }
 
     // Configure a signature-verified reader against an allowlist derived from the proof's packed
@@ -293,8 +309,12 @@ async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mut
         }
         allowed.insert(signer);
     }
-    let allowed_hex: Vec<String> = allowed.into_iter().map(|a| format!("0x{}", hex::encode(a))).collect();
-    let strict_reader = run_forge_create_test_tron_tx_reader_sig_allowlist(&rpc_url, pk0, &allowed_hex)?;
+    let allowed_hex: Vec<String> = allowed
+        .into_iter()
+        .map(|a| format!("0x{}", hex::encode(a)))
+        .collect();
+    let strict_reader =
+        run_forge_create_test_tron_tx_reader_sig_allowlist(&rpc_url, pk0, &allowed_hex)?;
 
     // Point v3 at the strict reader (before proving).
     let status = std::process::Command::new("cast")
@@ -354,8 +374,13 @@ async fn e2e_solver_tron_grpc_proof_requires_sig_verified_reader_and_rejects_mut
         &[],
     )?);
 
-    wait_for_prove_failure(&db_url, &intent_id, attempts_before + 1, Duration::from_secs(120))
-        .await?;
+    wait_for_prove_failure(
+        &db_url,
+        &intent_id,
+        attempts_before + 1,
+        Duration::from_secs(120),
+    )
+    .await?;
     solver.kill_now();
 
     // Restore encoded_tx and verify the job can complete.

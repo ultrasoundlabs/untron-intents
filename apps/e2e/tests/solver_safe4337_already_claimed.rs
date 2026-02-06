@@ -4,8 +4,8 @@ use e2e::{
     anvil::spawn_anvil_with_block_time,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
     cast::{
-        run_cast_create_trx_transfer_intent, run_cast_entrypoint_deposit_to, run_cast_mint_mock_erc20,
-        run_cast_transfer_eth,
+        run_cast_create_trx_transfer_intent, run_cast_entrypoint_deposit_to,
+        run_cast_mint_mock_erc20, run_cast_transfer_eth,
     },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     docker_cleanup::cleanup_untron_e2e_containers,
@@ -26,13 +26,18 @@ use e2e::{
 };
 use std::time::{Duration, Instant};
 
-async fn wait_for_job_state(db_url: &str, intent_id: &str, expected: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_job_state(
+    db_url: &str,
+    intent_id: &str,
+    expected: &str,
+    timeout: Duration,
+) -> Result<()> {
     let start = Instant::now();
     loop {
-        if let Ok(job) = fetch_job_by_intent_id(db_url, intent_id).await {
-            if job.state == expected {
-                return Ok(());
-            }
+        if let Ok(job) = fetch_job_by_intent_id(db_url, intent_id).await
+            && job.state == expected
+        {
+            return Ok(());
         }
         if start.elapsed() > timeout {
             anyhow::bail!("timed out waiting for job state={expected} for intent_id={intent_id}");
@@ -150,8 +155,13 @@ async fn e2e_solver_safe4337_marks_already_claimed_as_fatal() -> Result<()> {
     run_cast_mint_mock_erc20(&rpc_url, pk0, &usdt, owner0, "5000000")?;
 
     // Start indexer (pool-only).
-    let mut indexer =
-        KillOnDrop::new(spawn_indexer(&db_url, &rpc_url, &intents_addr, "pool", None)?);
+    let mut indexer = KillOnDrop::new(spawn_indexer(
+        &db_url,
+        &rpc_url,
+        &intents_addr,
+        "pool",
+        None,
+    )?);
 
     // Create a TRX transfer intent.
     let to = "0x00000000000000000000000000000000000000aa";
@@ -234,7 +244,13 @@ async fn e2e_solver_safe4337_marks_already_claimed_as_fatal() -> Result<()> {
     )?);
 
     // Solver should mark the job as fatal (success=false receipt on claim userop).
-    wait_for_job_state(&db_url, &intent_id, "failed_fatal", Duration::from_secs(120)).await?;
+    wait_for_job_state(
+        &db_url,
+        &intent_id,
+        "failed_fatal",
+        Duration::from_secs(120),
+    )
+    .await?;
 
     // Ensure it isn't retry-looping: attempts should not grow once in failed_fatal.
     let job1 = fetch_job_by_intent_id(&db_url, &intent_id).await?;

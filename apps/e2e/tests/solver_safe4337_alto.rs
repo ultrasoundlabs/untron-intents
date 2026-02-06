@@ -47,7 +47,7 @@ impl LogCapture {
             let buf = Arc::clone(&buf);
             std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     let mut b = buf.lock().unwrap();
                     b.push(line);
                     if b.len() > 5000 {
@@ -61,7 +61,7 @@ impl LogCapture {
             let buf = Arc::clone(&buf);
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     let mut b = buf.lock().unwrap();
                     b.push(line);
                     if b.len() > 5000 {
@@ -146,18 +146,17 @@ async fn wait_for_alto_supported_entrypoints(alto_url: &str, expected: &str) -> 
         });
 
         let resp = client.post(alto_url).json(&payload).send().await;
-        if let Ok(resp) = resp {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if let Some(arr) = val.get("result").and_then(|v| v.as_array()) {
-                    let expected_lc = expected.to_ascii_lowercase();
-                    if arr
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .any(|s| s.to_ascii_lowercase() == expected_lc)
-                    {
-                        return Ok(());
-                    }
-                }
+        if let Ok(resp) = resp
+            && let Ok(val) = resp.json::<serde_json::Value>().await
+            && let Some(arr) = val.get("result").and_then(|v| v.as_array())
+        {
+            let expected_lc = expected.to_ascii_lowercase();
+            if arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|s| s.to_ascii_lowercase() == expected_lc)
+            {
+                return Ok(());
             }
         }
 
@@ -181,26 +180,27 @@ async fn wait_for_userop_tx_hash(alto_url: &str, userop_hash: &str) -> Result<St
         });
 
         let resp = client.post(alto_url).json(&payload).send().await;
-        if let Ok(resp) = resp {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if val.get("error").is_some() {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-                // Bundlers differ: some return `transactionHash` at the top level, others nest it
-                // under `receipt.transactionHash`.
-                let txh = val
-                    .pointer("/result/transactionHash")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        val.pointer("/result/receipt/transactionHash")
-                            .and_then(|v| v.as_str())
-                    });
-                if let Some(txh) = txh {
-                    if !txh.is_empty() && txh != "0x" {
-                        return Ok(txh.to_string());
-                    }
-                }
+        if let Ok(resp) = resp
+            && let Ok(val) = resp.json::<serde_json::Value>().await
+        {
+            if val.get("error").is_some() {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            // Bundlers differ: some return `transactionHash` at the top level, others nest it
+            // under `receipt.transactionHash`.
+            let txh = val
+                .pointer("/result/transactionHash")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    val.pointer("/result/receipt/transactionHash")
+                        .and_then(|v| v.as_str())
+                });
+            if let Some(txh) = txh
+                && !txh.is_empty()
+                && txh != "0x"
+            {
+                return Ok(txh.to_string());
             }
         }
 
@@ -222,20 +222,19 @@ async fn wait_for_tx_success(rpc_url: &str, tx_hash: &str) -> Result<()> {
             "params": [tx_hash]
         });
         let resp = client.post(rpc_url).json(&payload).send().await;
-        if let Ok(resp) = resp {
-            if let Ok(val) = resp.json::<serde_json::Value>().await {
-                if let Some(r) = val.get("result") {
-                    if r.is_null() {
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        continue;
-                    }
-                    let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                    if status.eq_ignore_ascii_case("0x1") {
-                        return Ok(());
-                    }
-                    anyhow::bail!("tx failed: {tx_hash} receipt={r}");
-                }
+        if let Ok(resp) = resp
+            && let Ok(val) = resp.json::<serde_json::Value>().await
+            && let Some(r) = val.get("result")
+        {
+            if r.is_null() {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
             }
+            let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            if status.eq_ignore_ascii_case("0x1") {
+                return Ok(());
+            }
+            anyhow::bail!("tx failed: {tx_hash} receipt={r}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

@@ -53,6 +53,7 @@ pub async fn fetch_energy_stake_totals(
     tron::resources::parse_energy_stake_totals(&msg).context("parse_energy_stake_totals")
 }
 
+#[allow(dead_code)]
 pub async fn fetch_net_stake_totals(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
@@ -72,6 +73,7 @@ pub async fn fetch_net_stake_totals(
     tron::resources::parse_net_stake_totals(&msg).context("parse_net_stake_totals")
 }
 
+#[allow(dead_code)]
 pub async fn fetch_trx_balance_sun(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,
@@ -99,6 +101,7 @@ pub async fn fetch_trx_balances_sun(
     Ok(out)
 }
 
+#[allow(dead_code)]
 pub async fn fetch_trc20_balance_u64(
     cfg: &TronConfig,
     telemetry: &SolverTelemetry,

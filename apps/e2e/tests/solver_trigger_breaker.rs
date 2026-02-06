@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use e2e::{
     anvil::spawn_anvil,
     binaries::{cargo_build_indexer_bins, cargo_build_solver_bin, run_migrations},
-    cast::{cast_abi_encode, run_cast_create_trigger_smart_contract_intent, run_cast_mint_mock_erc20},
+    cast::{
+        cast_abi_encode, run_cast_create_trigger_smart_contract_intent, run_cast_mint_mock_erc20,
+    },
     docker::{PostgresOptions, PostgrestOptions, start_postgres, start_postgrest},
     docker_cleanup::cleanup_untron_e2e_containers,
     forge::{
@@ -83,7 +85,11 @@ async fn wait_for_intent_skip_reason(
     }
 }
 
-async fn wait_for_no_job_for_intent(db_url: &str, intent_id_hex: &str, timeout: Duration) -> Result<()> {
+async fn wait_for_no_job_for_intent(
+    db_url: &str,
+    intent_id_hex: &str,
+    timeout: Duration,
+) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
     let start = Instant::now();
     loop {
@@ -279,7 +285,7 @@ async fn e2e_solver_trigger_breaker_suppresses_claims_tron_grpc() -> Result<()> 
         &rpc_url,
         pk0,
         &intents_addr,
-        &trigger_target,
+        trigger_target,
         "0",
         selector,
         1,
@@ -319,7 +325,8 @@ async fn e2e_solver_trigger_breaker_suppresses_claims_tron_grpc() -> Result<()> 
         ],
     )?);
 
-    if let Err(e) = wait_for_breaker_active(&db_url, trigger_target, selector, Duration::from_secs(180)).await
+    if let Err(e) =
+        wait_for_breaker_active(&db_url, trigger_target, selector, Duration::from_secs(180)).await
     {
         let job = fetch_job_by_intent_id(&db_url, &intent_id).await.ok();
         let skip_reason: Option<String> = {
@@ -352,7 +359,7 @@ async fn e2e_solver_trigger_breaker_suppresses_claims_tron_grpc() -> Result<()> 
         &rpc_url,
         pk0,
         &intents_addr,
-        &trigger_target,
+        trigger_target,
         "0",
         selector_variant,
         1,
@@ -379,8 +386,13 @@ async fn e2e_solver_trigger_breaker_suppresses_claims_tron_grpc() -> Result<()> 
         ],
     )?);
 
-    wait_for_intent_skip_reason(&db_url, &intent_id2, "breaker_active", Duration::from_secs(30))
-        .await?;
+    wait_for_intent_skip_reason(
+        &db_url,
+        &intent_id2,
+        "breaker_active",
+        Duration::from_secs(30),
+    )
+    .await?;
     wait_for_no_job_for_intent(&db_url, &intent_id2, Duration::from_secs(2)).await?;
 
     Ok(())

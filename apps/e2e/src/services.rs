@@ -51,6 +51,7 @@ pub fn spawn_solver_mock(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_solver_mock_with_enabled_types(
     db_url: &str,
     postgrest_url: &str,
@@ -82,6 +83,7 @@ pub fn spawn_solver_mock_with_enabled_types(
     cmd.spawn().context("spawn solver (mock)")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_solver_mock_custom(
     db_url: &str,
     postgrest_url: &str,
@@ -119,6 +121,7 @@ pub fn spawn_solver_mock_custom(
     cmd.spawn().context("spawn solver (mock custom)")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_solver_tron_grpc(
     db_url: &str,
     postgrest_url: &str,

@@ -21,7 +21,6 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 struct JobMini {
-    intent_id: String,
     state: String,
     last_error: Option<String>,
     claim_tx_hash: Option<String>,
@@ -69,7 +68,6 @@ async fn fetch_job_minis(db_url: &str, intent_ids: &[String]) -> Result<Vec<JobM
         if let Some(row) = row {
             let claim_hex: Option<String> = row.get("claim_tx_hash_hex");
             out.push(JobMini {
-                intent_id: id.clone(),
                 state: row.get("state"),
                 last_error: row.get("last_error"),
                 claim_tx_hash: claim_hex.map(|h| format!("0x{h}")),
@@ -79,7 +77,11 @@ async fn fetch_job_minis(db_url: &str, intent_ids: &[String]) -> Result<Vec<JobM
     Ok(out)
 }
 
-async fn wait_for_rate_limit_effect(db_url: &str, intent_ids: &[String], timeout: Duration) -> Result<()> {
+async fn wait_for_rate_limit_effect(
+    db_url: &str,
+    intent_ids: &[String],
+    timeout: Duration,
+) -> Result<()> {
     let start = Instant::now();
     loop {
         let jobs = fetch_job_minis(db_url, intent_ids).await?;

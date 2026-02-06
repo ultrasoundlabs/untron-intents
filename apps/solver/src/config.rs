@@ -98,6 +98,7 @@ pub struct HubConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TronConfig {
     pub mode: TronMode,
     pub grpc_url: String,
@@ -134,6 +135,7 @@ pub struct TronConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct JobConfig {
     pub tick_interval: Duration,
     pub tron_finality_blocks: u64,
@@ -962,7 +964,7 @@ pub fn load_config() -> Result<AppConfig> {
             global_pause_fatal_threshold: env.solver_global_pause_fatal_threshold,
             global_pause_window_secs: env.solver_global_pause_window_secs.max(1),
             global_pause_duration_secs: env.solver_global_pause_duration_secs.max(1),
-            breaker_mismatch_penalty: env.solver_breaker_mismatch_penalty.max(1).min(100),
+            breaker_mismatch_penalty: env.solver_breaker_mismatch_penalty.clamp(1, 100),
             delegate_reservation_ttl_secs: env.solver_delegate_reservation_ttl_secs.max(30),
             controller_rebalance_threshold_usdt: env.controller_rebalance_threshold_usdt,
             controller_rebalance_keep_usdt: env.controller_rebalance_keep_usdt,
@@ -985,7 +987,7 @@ pub fn load_config() -> Result<AppConfig> {
                 &env.solver_allowed_escrow_tokens_csv,
             )?,
 
-            trigger_contract_allowlist: trigger_contract_allowlist,
+            trigger_contract_allowlist,
             trigger_contract_denylist: parse_addresses_csv(
                 "SOLVER_TRIGGER_CONTRACT_DENYLIST_CSV",
                 &env.solver_trigger_contract_denylist_csv,

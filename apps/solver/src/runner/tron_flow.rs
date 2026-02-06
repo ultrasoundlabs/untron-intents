@@ -1,7 +1,7 @@
 use super::{
-    b256_to_bytes32, decode_trigger_contract_and_selector, duration_hours_for_lock_period_blocks,
-    ensure_delegate_reservation, looks_like_tron_contract_failure, looks_like_tron_server_busy,
-    retry, JobCtx, SolverJob,
+    JobCtx, SolverJob, b256_to_bytes32, decode_trigger_contract_and_selector,
+    duration_hours_for_lock_period_blocks, ensure_delegate_reservation,
+    looks_like_tron_contract_failure, looks_like_tron_server_busy, retry,
 };
 use crate::{
     config::TronMode,
@@ -54,15 +54,13 @@ pub(super) async fn process_claimed_state(
                 if ty == IntentType::TriggerSmartContract
                     && !looks_like_tron_server_busy(&msg)
                     && looks_like_tron_contract_failure(&msg)
-                {
-                    if let Some((contract, selector)) =
+                    && let Some((contract, selector)) =
                         decode_trigger_contract_and_selector(&job.intent_specs)
-                    {
-                        let _ = ctx
-                            .db
-                            .breaker_record_failure(contract, selector, &msg)
-                            .await;
-                    }
+                {
+                    let _ = ctx
+                        .db
+                        .breaker_record_failure(contract, selector, &msg)
+                        .await;
                 }
 
                 ctx.db
@@ -393,7 +391,7 @@ pub(super) async fn process_claimed_state(
                             .private_key_for_owner(&r.owner_address)
                             .context("delegate reservation owner not in configured keys")?
                     }
-                    None => ensure_delegate_reservation(&ctx, &job).await?,
+                    None => ensure_delegate_reservation(ctx, job).await?,
                 };
                 ctx.tron
                     .prepare_delegate_resource_with_key(ctx.hub.as_ref(), id, pk, &job.intent_specs)
@@ -410,15 +408,13 @@ pub(super) async fn process_claimed_state(
                 if ty == IntentType::TriggerSmartContract
                     && !looks_like_tron_server_busy(&msg)
                     && looks_like_tron_contract_failure(&msg)
-                {
-                    if let Some((contract, selector)) =
+                    && let Some((contract, selector)) =
                         decode_trigger_contract_and_selector(&job.intent_specs)
-                    {
-                        let _ = ctx
-                            .db
-                            .breaker_record_failure(contract, selector, &msg)
-                            .await;
-                    }
+                {
+                    let _ = ctx
+                        .db
+                        .breaker_record_failure(contract, selector, &msg)
+                        .await;
                 }
 
                 ctx.db
@@ -637,11 +633,11 @@ pub(super) async fn process_tron_sent_state(
 
                     if contract != alloy::primitives::Address::ZERO {
                         let mut mismatch = false;
-                        if ctx.cfg.tron.emulation_enabled && ctx.cfg.tron.mode == TronMode::Grpc {
-                            if let Ok(Some(emu)) = ctx.db.get_intent_emulation(job.intent_id).await
-                            {
-                                mismatch = emu.ok;
-                            }
+                        if ctx.cfg.tron.emulation_enabled
+                            && ctx.cfg.tron.mode == TronMode::Grpc
+                            && let Ok(Some(emu)) = ctx.db.get_intent_emulation(job.intent_id).await
+                        {
+                            mismatch = emu.ok;
                         }
                         if mismatch {
                             ctx.telemetry.emulation_mismatch();
@@ -666,7 +662,7 @@ pub(super) async fn process_tron_sent_state(
                     }
                 }
 
-                retry::record_fatal(&ctx, &job, &msg).await?;
+                retry::record_fatal(ctx, job, &msg).await?;
                 return Ok(());
             }
             ctx.db

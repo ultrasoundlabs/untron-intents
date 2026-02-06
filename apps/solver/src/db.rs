@@ -34,6 +34,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
 ];
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SolverJob {
     pub job_id: i64,
     pub intent_id: [u8; 32],
@@ -74,6 +75,7 @@ pub struct TronSignedTxRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TronRentalRow {
     pub provider: String,
     pub resource: String,
@@ -87,6 +89,7 @@ pub struct TronRentalRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct IntentSkipSummaryRow {
     pub reason: String,
     pub intent_type: Option<i16>,
@@ -95,6 +98,7 @@ pub struct IntentSkipSummaryRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct IntentEmulationRow {
     pub ok: bool,
     pub reason: Option<String>,
@@ -104,6 +108,7 @@ pub struct IntentEmulationRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DelegateReservationRow {
     pub owner_address: Vec<u8>,
     pub resource: i16,
@@ -127,6 +132,7 @@ impl HubUserOpKind {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct HubUserOpRow {
     pub userop_id: i64,
     pub state: String,
@@ -406,6 +412,7 @@ impl SolverDb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_tron_prepared(
         &self,
         job_id: i64,
@@ -564,6 +571,7 @@ impl SolverDb {
         Ok(row)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_tron_rental(
         &self,
         job_id: i64,
@@ -1231,6 +1239,7 @@ impl SolverDb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_hub_userop_included(
         &self,
         job_id: i64,
@@ -1285,7 +1294,7 @@ impl SolverDb {
         kind: HubUserOpKind,
         lookback: i64,
     ) -> Result<Option<U256>> {
-        let lookback = lookback.max(1).min(10_000);
+        let lookback = lookback.clamp(1, 10_000);
         let rows = sqlx::query(
             "select actual_gas_cost_wei::text as v \
              from solver.hub_userops \
@@ -1498,13 +1507,14 @@ impl SolverDb {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn intent_skip_summary(
         &self,
         since_secs: i64,
         limit: i64,
     ) -> Result<Vec<IntentSkipSummaryRow>> {
-        let since_secs = since_secs.max(1).min(365 * 24 * 3600);
-        let limit = limit.max(1).min(1_000);
+        let since_secs = since_secs.clamp(1, 365 * 24 * 3600);
+        let limit = limit.clamp(1, 1_000);
         let rows = sqlx::query(
             "select \
                 reason, \
@@ -1587,7 +1597,7 @@ impl SolverDb {
         intent_type: i16,
         lookback: i64,
     ) -> Result<Option<i64>> {
-        let lookback = lookback.max(1).min(10_000);
+        let lookback = lookback.clamp(1, 10_000);
         let v: Option<f64> = sqlx::query_scalar(
             "select avg(t.fee_sun)::float8 \
              from ( \
