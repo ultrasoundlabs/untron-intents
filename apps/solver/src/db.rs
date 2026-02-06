@@ -323,20 +323,33 @@ impl SolverDb {
         Ok(out)
     }
 
-    pub async fn update_job_state(&self, job_id: i64, leased_by: &str, state: &str) -> Result<()> {
+    async fn update_job_state_from(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        state: &str,
+        expected_states: &[&str],
+    ) -> Result<()> {
+        let expected_states: Vec<String> =
+            expected_states.iter().map(|s| (*s).to_string()).collect();
         let n = sqlx::query(
             "update solver.jobs set state = $1, updated_at = now() \
-             where job_id = $2 and leased_by = $3 and lease_until >= now()",
+             where job_id = $2 and leased_by = $3 and lease_until >= now() \
+               and state = any($4::text[])",
         )
         .bind(state)
         .bind(job_id)
         .bind(leased_by)
+        .bind(&expected_states)
         .execute(&self.pool)
         .await
         .context("update solver.jobs state")?
         .rows_affected();
         if n != 1 {
-            anyhow::bail!("lost job lease for job_id={job_id}");
+            anyhow::bail!(
+                "rejected state transition for job_id={job_id}: expected one of {:?} -> {state}",
+                expected_states
+            );
         }
         Ok(())
     }
@@ -349,7 +362,8 @@ impl SolverDb {
     ) -> Result<()> {
         let n = sqlx::query(
             "update solver.jobs set state='claimed', claim_tx_hash=$1, updated_at=now() \
-             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state='ready'",
         )
         .bind(claim_tx_hash.to_vec())
         .bind(job_id)
@@ -372,7 +386,8 @@ impl SolverDb {
     ) -> Result<()> {
         let n = sqlx::query(
             "update solver.jobs set state='tron_sent', tron_txid=$1, updated_at=now() \
-             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state in ('claimed','tron_prepared')",
         )
         .bind(tron_txid.to_vec())
         .bind(job_id)
@@ -423,7 +438,8 @@ impl SolverDb {
 
         let n = sqlx::query(
             "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
-             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state='claimed'",
         )
         .bind(txid.to_vec())
         .bind(job_id)
@@ -483,7 +499,8 @@ impl SolverDb {
 
         let n = sqlx::query(
             "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
-             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state='claimed'",
         )
         .bind(final_tx.txid.to_vec())
         .bind(job_id)
@@ -739,8 +756,13 @@ impl SolverDb {
     }
 
     pub async fn record_proof_built(&self, job_id: i64, leased_by: &str) -> Result<()> {
-        self.update_job_state(job_id, leased_by, "proof_built")
-            .await
+        self.update_job_state_from(
+            job_id,
+            leased_by,
+            "proof_built",
+            &["tron_sent", "proof_built"],
+        )
+        .await
     }
 
     pub async fn record_prove(
@@ -751,7 +773,8 @@ impl SolverDb {
     ) -> Result<()> {
         let n = sqlx::query(
             "update solver.jobs set state='proved', prove_tx_hash=$1, updated_at=now() \
-             where job_id=$2 and leased_by=$3 and lease_until >= now()",
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state='proof_built'",
         )
         .bind(prove_tx_hash.to_vec())
         .bind(job_id)
@@ -767,11 +790,27 @@ impl SolverDb {
     }
 
     pub async fn record_job_state(&self, job_id: i64, leased_by: &str, state: &str) -> Result<()> {
-        self.update_job_state(job_id, leased_by, state).await
+        let expected: &[&str] = match state {
+            "proved_waiting_funding" => &["proved", "proved_waiting_funding"],
+            "proved_waiting_settlement" => &[
+                "proved",
+                "proved_waiting_funding",
+                "proved_waiting_settlement",
+            ],
+            "done" => &[
+                "proved",
+                "proved_waiting_funding",
+                "proved_waiting_settlement",
+                "done",
+            ],
+            _ => anyhow::bail!("unsupported record_job_state transition target: {state}"),
+        };
+        self.update_job_state_from(job_id, leased_by, state, expected)
+            .await
     }
 
     pub async fn record_done(&self, job_id: i64, leased_by: &str) -> Result<()> {
-        self.update_job_state(job_id, leased_by, "done").await
+        self.record_job_state(job_id, leased_by, "done").await
     }
 
     pub async fn record_retryable_error(
@@ -789,7 +828,8 @@ impl SolverDb {
                 next_retry_at = now() + make_interval(secs => $2), \
                 lease_until = now(), \
                 updated_at = now() \
-             where job_id=$3 and leased_by=$4",
+             where job_id=$3 and leased_by=$4 \
+               and state not in ('done', 'failed_fatal')",
         )
         .bind(err)
         .bind(secs)
@@ -812,7 +852,8 @@ impl SolverDb {
                 last_error = $1, \
                 lease_until = now(), \
                 updated_at = now() \
-             where job_id=$2 and leased_by=$3",
+             where job_id=$2 and leased_by=$3 \
+               and state <> 'done'",
         )
         .bind(err)
         .bind(job_id)

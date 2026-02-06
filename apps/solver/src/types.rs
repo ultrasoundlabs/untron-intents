@@ -98,3 +98,35 @@ pub fn parse_u256_dec(s: &str) -> Result<U256> {
     let s = s.trim();
     U256::from_str_radix(s, 10).context("parse u256 decimal")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::JobState;
+
+    #[test]
+    fn job_state_roundtrip_db_strings() {
+        let states = [
+            JobState::Ready,
+            JobState::Claimed,
+            JobState::TronPrepared,
+            JobState::TronSent,
+            JobState::ProofBuilt,
+            JobState::Proved,
+            JobState::ProvedWaitingFunding,
+            JobState::ProvedWaitingSettlement,
+            JobState::Done,
+            JobState::FailedFatal,
+        ];
+
+        for state in states {
+            let db = state.as_db_str();
+            let parsed = JobState::parse(db).expect("parse known state");
+            assert_eq!(parsed, state, "roundtrip mismatch for state={db}");
+        }
+    }
+
+    #[test]
+    fn job_state_parse_rejects_unknown() {
+        assert!(JobState::parse("not_a_real_state").is_err());
+    }
+}

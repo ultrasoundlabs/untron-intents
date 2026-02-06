@@ -1,10 +1,10 @@
 use super::{
-    b256_to_bytes32, ensure_delegate_reservation, finalize_after_prove, retry, JobCtx, SolverJob,
-    INTENT_CLAIM_DEPOSIT,
+    INTENT_CLAIM_DEPOSIT, JobCtx, SolverJob, b256_to_bytes32, ensure_delegate_reservation,
+    finalize_after_prove, retry,
 };
 use crate::{
     config::{HubTxMode, TronMode},
-    db::HubUserOpKind,
+    db::{HubUserOpKind, HubUserOpRow},
     hub::TronProof,
     types::{IntentType, JobState},
 };
@@ -12,7 +12,165 @@ use alloy::primitives::{B256, U256};
 use alloy::rpc::types::eth::erc4337::PackedUserOperation;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, Result};
-use std::time::Instant;
+use std::{future::Future, time::Instant};
+
+async fn enforce_claim_submission_preconditions(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    ty: IntentType,
+) -> Result<bool> {
+    if let Some(wait) = retry::enforce_claim_rate_limits(ctx, ty).await? {
+        ctx.db
+            .record_retryable_error(
+                job.job_id,
+                &ctx.instance_id,
+                "claim_rate_limited",
+                std::time::Duration::from_secs(u64::try_from(wait).unwrap_or(60)),
+            )
+            .await?;
+        return Ok(true);
+    }
+    if ty == IntentType::DelegateResource
+        && ctx.cfg.tron.mode == TronMode::Grpc
+        && !ctx.cfg.tron.delegate_resource_resell_enabled
+    {
+        if let Err(err) = ensure_delegate_reservation(ctx, job).await {
+            let msg = format!("delegate reservation failed: {err:#}");
+            ctx.db
+                .record_retryable_error(
+                    job.job_id,
+                    &ctx.instance_id,
+                    &msg,
+                    retry::retry_delay(job.attempts),
+                )
+                .await?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn delete_stale_prepared_userop_if_needed(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    kind: HubUserOpKind,
+    row: &HubUserOpRow,
+    deserialize_ctx: &'static str,
+) -> Result<bool> {
+    if row.userop_hash.is_none() && row.state == "prepared" {
+        let u: PackedUserOperation =
+            serde_json::from_str(&row.userop_json).context(deserialize_ctx)?;
+        let chain_nonce = ctx.hub.safe4337_chain_nonce().await?;
+        if u.nonce < chain_nonce {
+            ctx.db
+                .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
+                .await
+                .ok();
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn submit_safe4337_userop<F, Fut>(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    kind: HubUserOpKind,
+    metric_name: &'static str,
+    sem_ctx: &'static str,
+    deserialize_ctx: &'static str,
+    serialize_ctx: &'static str,
+    build_userop_ctx: &'static str,
+    build_userop: F,
+    prepared_userop_json: Option<&str>,
+) -> Result<bool>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<PackedUserOperation>>,
+{
+    let _permit = ctx.hub_userop_submit_sem.acquire().await.context(sem_ctx)?;
+
+    let userop = if let Some(json) = prepared_userop_json {
+        serde_json::from_str::<PackedUserOperation>(json).context(deserialize_ctx)?
+    } else {
+        let userop = build_userop().await.context(build_userop_ctx)?;
+        let json = serde_json::to_string(&userop).context(serialize_ctx)?;
+        ctx.db
+            .insert_hub_userop_prepared(job.job_id, &ctx.instance_id, kind, &json)
+            .await?;
+        userop
+    };
+
+    let started = Instant::now();
+    match ctx.hub.safe4337_send_userop(userop).await {
+        Ok(userop_hash) => {
+            ctx.telemetry.hub_userop_ok();
+            ctx.telemetry
+                .hub_submit_ms(metric_name, true, started.elapsed().as_millis() as u64);
+            ctx.db
+                .record_hub_userop_submitted(job.job_id, &ctx.instance_id, kind, &userop_hash)
+                .await?;
+            Ok(false)
+        }
+        Err(err) => {
+            ctx.telemetry.hub_userop_err();
+            ctx.telemetry
+                .hub_submit_ms(metric_name, false, started.elapsed().as_millis() as u64);
+            let msg = err.to_string();
+            if msg.contains("AA25 invalid account nonce") {
+                ctx.db
+                    .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
+                    .await
+                    .ok();
+            }
+            ctx.db
+                .record_hub_userop_retryable_error(
+                    job.job_id,
+                    &ctx.instance_id,
+                    kind,
+                    &msg,
+                    retry::retry_delay(job.attempts),
+                )
+                .await
+                .ok();
+            ctx.db
+                .record_retryable_error(
+                    job.job_id,
+                    &ctx.instance_id,
+                    &msg,
+                    retry::retry_delay(job.attempts),
+                )
+                .await?;
+            Ok(true)
+        }
+    }
+}
+
+async fn record_userop_poll_retryable(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    kind: HubUserOpKind,
+    msg: &str,
+) -> Result<()> {
+    ctx.db
+        .record_hub_userop_retryable_error(
+            job.job_id,
+            &ctx.instance_id,
+            kind,
+            msg,
+            retry::retry_delay(job.attempts),
+        )
+        .await
+        .ok();
+    ctx.db
+        .record_retryable_error(
+            job.job_id,
+            &ctx.instance_id,
+            msg,
+            retry::retry_delay(job.attempts),
+        )
+        .await
+}
 
 pub(super) async fn process_ready_state(
     ctx: &JobCtx,
@@ -151,217 +309,47 @@ pub(super) async fn process_ready_state(
                 if r.state == "included" {
                     return Ok(());
                 }
-                // If we have a prepared-but-not-submitted op, ensure it isn't stale
-                // (nonce already used onchain). Stale prepared ops can happen if we
-                // back off for a long time while other ops progress.
-                if r.userop_hash.is_none() && r.state == "prepared" {
-                    let u: PackedUserOperation =
-                        serde_json::from_str(&r.userop_json).context("deserialize claim userop")?;
-                    let chain_nonce = ctx.hub.safe4337_chain_nonce().await?;
-                    if u.nonce < chain_nonce {
-                        ctx.db
-                            .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
-                            .await
-                            .ok();
-                        row = None;
-                    }
+                if delete_stale_prepared_userop_if_needed(
+                    &ctx,
+                    &job,
+                    kind,
+                    r,
+                    "deserialize claim userop",
+                )
+                .await?
+                {
+                    row = None;
                 }
             }
 
-            match row {
-                None => {
-                    if let Some(wait) = retry::enforce_claim_rate_limits(&ctx, ty).await? {
-                        ctx.db
-                            .record_retryable_error(
-                                job.job_id,
-                                &ctx.instance_id,
-                                "claim_rate_limited",
-                                std::time::Duration::from_secs(u64::try_from(wait).unwrap_or(60)),
-                            )
-                            .await?;
-                        return Ok(());
-                    }
-                    if ty == IntentType::DelegateResource
-                        && ctx.cfg.tron.mode == TronMode::Grpc
-                        && !ctx.cfg.tron.delegate_resource_resell_enabled
-                    {
-                        if let Err(err) = ensure_delegate_reservation(&ctx, &job).await {
-                            let msg = format!("delegate reservation failed: {err:#}");
-                            ctx.db
-                                .record_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    &msg,
-                                    retry::retry_delay(job.attempts),
-                                )
-                                .await?;
-                            return Ok(());
-                        }
-                    }
-                    let _permit = ctx
-                        .hub_userop_submit_sem
-                        .acquire()
-                        .await
-                        .context("acquire hub_userop_submit_sem (claim)")?;
-                    let call = crate::hub::IUntronIntents::claimIntentCall { id };
-                    let userop = ctx
-                        .hub
-                        .safe4337_build_call_userop(ctx.hub.pool_address(), call.abi_encode())
-                        .await
-                        .context("build claimIntent userop")?;
-                    let json = serde_json::to_string(&userop).context("serialize claim userop")?;
-                    ctx.db
-                        .insert_hub_userop_prepared(job.job_id, &ctx.instance_id, kind, &json)
-                        .await?;
-                    let started = Instant::now();
-                    match ctx.hub.safe4337_send_userop(userop).await {
-                        Ok(userop_hash) => {
-                            ctx.telemetry.hub_userop_ok();
-                            ctx.telemetry.hub_submit_ms(
-                                "claim_userop",
-                                true,
-                                started.elapsed().as_millis() as u64,
-                            );
-                            ctx.db
-                                .record_hub_userop_submitted(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    kind,
-                                    &userop_hash,
-                                )
-                                .await?;
-                        }
-                        Err(err) => {
-                            ctx.telemetry.hub_userop_err();
-                            ctx.telemetry.hub_submit_ms(
-                                "claim_userop",
-                                false,
-                                started.elapsed().as_millis() as u64,
-                            );
-                            let msg = err.to_string();
-                            if msg.contains("AA25 invalid account nonce") {
-                                ctx.db
-                                    .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
-                                    .await
-                                    .ok();
-                            }
-                            ctx.db
-                                .record_hub_userop_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    kind,
-                                    &msg,
-                                    retry::retry_delay(job.attempts),
-                                )
-                                .await
-                                .ok();
-                            ctx.db
-                                .record_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    &msg,
-                                    retry::retry_delay(job.attempts),
-                                )
-                                .await?;
-                            return Ok(());
-                        }
-                    }
+            let prepared_userop_json = row
+                .as_ref()
+                .filter(|r| r.userop_hash.is_none() && r.state == "prepared")
+                .map(|r| r.userop_json.as_str());
+            if row.is_none() || prepared_userop_json.is_some() {
+                if enforce_claim_submission_preconditions(&ctx, &job, ty).await? {
+                    return Ok(());
                 }
-                Some(r) => {
-                    if r.userop_hash.is_none() && r.state == "prepared" {
-                        if let Some(wait) = retry::enforce_claim_rate_limits(&ctx, ty).await? {
-                            ctx.db
-                                .record_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    "claim_rate_limited",
-                                    std::time::Duration::from_secs(
-                                        u64::try_from(wait).unwrap_or(60),
-                                    ),
-                                )
-                                .await?;
-                            return Ok(());
-                        }
-                        if ty == IntentType::DelegateResource && ctx.cfg.tron.mode == TronMode::Grpc
-                        {
-                            if let Err(err) = ensure_delegate_reservation(&ctx, &job).await {
-                                let msg = format!("delegate reservation failed: {err:#}");
-                                ctx.db
-                                    .record_retryable_error(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        &msg,
-                                        retry::retry_delay(job.attempts),
-                                    )
-                                    .await?;
-                                return Ok(());
-                            }
-                        }
-                        let _permit = ctx
-                            .hub_userop_submit_sem
-                            .acquire()
+                let should_retry = submit_safe4337_userop(
+                    &ctx,
+                    &job,
+                    kind,
+                    "claim_userop",
+                    "acquire hub_userop_submit_sem (claim)",
+                    "deserialize claim userop",
+                    "serialize claim userop",
+                    "build claimIntent userop",
+                    || async {
+                        let call = crate::hub::IUntronIntents::claimIntentCall { id };
+                        ctx.hub
+                            .safe4337_build_call_userop(ctx.hub.pool_address(), call.abi_encode())
                             .await
-                            .context("acquire hub_userop_submit_sem (claim)")?;
-                        let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
-                            .context("deserialize claim userop")?;
-                        let started = Instant::now();
-                        match ctx.hub.safe4337_send_userop(u).await {
-                            Ok(userop_hash) => {
-                                ctx.telemetry.hub_userop_ok();
-                                ctx.telemetry.hub_submit_ms(
-                                    "claim_userop",
-                                    true,
-                                    started.elapsed().as_millis() as u64,
-                                );
-                                ctx.db
-                                    .record_hub_userop_submitted(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        kind,
-                                        &userop_hash,
-                                    )
-                                    .await?;
-                            }
-                            Err(err) => {
-                                ctx.telemetry.hub_userop_err();
-                                ctx.telemetry.hub_submit_ms(
-                                    "claim_userop",
-                                    false,
-                                    started.elapsed().as_millis() as u64,
-                                );
-                                let msg = err.to_string();
-                                if msg.contains("AA25 invalid account nonce") {
-                                    ctx.db
-                                        .delete_hub_userop_prepared(
-                                            job.job_id,
-                                            &ctx.instance_id,
-                                            kind,
-                                        )
-                                        .await
-                                        .ok();
-                                }
-                                ctx.db
-                                    .record_hub_userop_retryable_error(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        kind,
-                                        &msg,
-                                        retry::retry_delay(job.attempts),
-                                    )
-                                    .await
-                                    .ok();
-                                ctx.db
-                                    .record_retryable_error(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        &msg,
-                                        retry::retry_delay(job.attempts),
-                                    )
-                                    .await?;
-                                return Ok(());
-                            }
-                        }
-                    }
+                    },
+                    prepared_userop_json,
+                )
+                .await?;
+                if should_retry {
+                    return Ok(());
                 }
             }
 
@@ -417,24 +405,7 @@ pub(super) async fn process_ready_state(
                 Ok(None) => Ok(()),
                 Err(err) => {
                     let msg = err.to_string();
-                    ctx.db
-                        .record_hub_userop_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            kind,
-                            &msg,
-                            retry::retry_delay(job.attempts),
-                        )
-                        .await
-                        .ok();
-                    ctx.db
-                        .record_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            &msg,
-                            retry::retry_delay(job.attempts),
-                        )
-                        .await?;
+                    record_userop_poll_retryable(&ctx, &job, kind, &msg).await?;
                     Ok(())
                 }
             }
@@ -505,164 +476,51 @@ pub(super) async fn process_proof_built_state(
                 if r.state == "included" {
                     return Ok(());
                 }
-                if r.userop_hash.is_none() && r.state == "prepared" {
-                    let u: PackedUserOperation =
-                        serde_json::from_str(&r.userop_json).context("deserialize prove userop")?;
-                    let chain_nonce = ctx.hub.safe4337_chain_nonce().await?;
-                    if u.nonce < chain_nonce {
-                        ctx.db
-                            .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
-                            .await
-                            .ok();
-                        row = None;
-                    }
+                if delete_stale_prepared_userop_if_needed(
+                    &ctx,
+                    &job,
+                    kind,
+                    r,
+                    "deserialize prove userop",
+                )
+                .await?
+                {
+                    row = None;
                 }
             }
 
-            match row {
-                None => {
-                    let _permit = ctx
-                        .hub_userop_submit_sem
-                        .acquire()
-                        .await
-                        .context("acquire hub_userop_submit_sem (prove)")?;
-                    let call = crate::hub::IUntronIntents::proveIntentFillCall {
-                        id,
-                        blocks: tron.blocks.map(alloy::primitives::Bytes::from),
-                        encodedTx: tron.encoded_tx.into(),
-                        proof: tron.proof,
-                        index: tron.index,
-                    };
-                    let userop = ctx
-                        .hub
-                        .safe4337_build_call_userop(ctx.hub.pool_address(), call.abi_encode())
-                        .await
-                        .context("build proveIntentFill userop")?;
-                    let json = serde_json::to_string(&userop).context("serialize prove userop")?;
-                    ctx.db
-                        .insert_hub_userop_prepared(job.job_id, &ctx.instance_id, kind, &json)
-                        .await?;
-                    let started = Instant::now();
-                    match ctx.hub.safe4337_send_userop(userop).await {
-                        Ok(userop_hash) => {
-                            ctx.telemetry.hub_userop_ok();
-                            ctx.telemetry.hub_submit_ms(
-                                "prove_userop",
-                                true,
-                                started.elapsed().as_millis() as u64,
-                            );
-                            ctx.db
-                                .record_hub_userop_submitted(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    kind,
-                                    &userop_hash,
-                                )
-                                .await?;
-                        }
-                        Err(err) => {
-                            ctx.telemetry.hub_userop_err();
-                            ctx.telemetry.hub_submit_ms(
-                                "prove_userop",
-                                false,
-                                started.elapsed().as_millis() as u64,
-                            );
-                            let msg = err.to_string();
-                            if msg.contains("AA25 invalid account nonce") {
-                                ctx.db
-                                    .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
-                                    .await
-                                    .ok();
-                            }
-                            ctx.db
-                                .record_hub_userop_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    kind,
-                                    &msg,
-                                    retry::retry_delay(job.attempts),
-                                )
-                                .await
-                                .ok();
-                            ctx.db
-                                .record_retryable_error(
-                                    job.job_id,
-                                    &ctx.instance_id,
-                                    &msg,
-                                    retry::retry_delay(job.attempts),
-                                )
-                                .await?;
-                            return Ok(());
-                        }
-                    }
-                }
-                Some(r) => {
-                    if r.userop_hash.is_none() && r.state == "prepared" {
-                        let _permit = ctx
-                            .hub_userop_submit_sem
-                            .acquire()
+            let prepared_userop_json = row
+                .as_ref()
+                .filter(|r| r.userop_hash.is_none() && r.state == "prepared")
+                .map(|r| r.userop_json.as_str());
+            if row.is_none() || prepared_userop_json.is_some() {
+                let tron = tron.clone();
+                let should_retry = submit_safe4337_userop(
+                    &ctx,
+                    &job,
+                    kind,
+                    "prove_userop",
+                    "acquire hub_userop_submit_sem (prove)",
+                    "deserialize prove userop",
+                    "serialize prove userop",
+                    "build proveIntentFill userop",
+                    || async move {
+                        let call = crate::hub::IUntronIntents::proveIntentFillCall {
+                            id,
+                            blocks: tron.blocks.map(alloy::primitives::Bytes::from),
+                            encodedTx: tron.encoded_tx.into(),
+                            proof: tron.proof,
+                            index: tron.index,
+                        };
+                        ctx.hub
+                            .safe4337_build_call_userop(ctx.hub.pool_address(), call.abi_encode())
                             .await
-                            .context("acquire hub_userop_submit_sem (prove)")?;
-                        let u: PackedUserOperation = serde_json::from_str(&r.userop_json)
-                            .context("deserialize prove userop")?;
-                        let started = Instant::now();
-                        match ctx.hub.safe4337_send_userop(u).await {
-                            Ok(userop_hash) => {
-                                ctx.telemetry.hub_userop_ok();
-                                ctx.telemetry.hub_submit_ms(
-                                    "prove_userop",
-                                    true,
-                                    started.elapsed().as_millis() as u64,
-                                );
-                                ctx.db
-                                    .record_hub_userop_submitted(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        kind,
-                                        &userop_hash,
-                                    )
-                                    .await?;
-                            }
-                            Err(err) => {
-                                ctx.telemetry.hub_userop_err();
-                                ctx.telemetry.hub_submit_ms(
-                                    "prove_userop",
-                                    false,
-                                    started.elapsed().as_millis() as u64,
-                                );
-                                let msg = err.to_string();
-                                if msg.contains("AA25 invalid account nonce") {
-                                    ctx.db
-                                        .delete_hub_userop_prepared(
-                                            job.job_id,
-                                            &ctx.instance_id,
-                                            kind,
-                                        )
-                                        .await
-                                        .ok();
-                                }
-                                ctx.db
-                                    .record_hub_userop_retryable_error(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        kind,
-                                        &msg,
-                                        retry::retry_delay(job.attempts),
-                                    )
-                                    .await
-                                    .ok();
-                                ctx.db
-                                    .record_retryable_error(
-                                        job.job_id,
-                                        &ctx.instance_id,
-                                        &msg,
-                                        retry::retry_delay(job.attempts),
-                                    )
-                                    .await?;
-                                return Ok(());
-                            }
-                        }
-                    }
+                    },
+                    prepared_userop_json,
+                )
+                .await?;
+                if should_retry {
+                    return Ok(());
                 }
             }
 
@@ -721,24 +579,7 @@ pub(super) async fn process_proof_built_state(
                 Ok(None) => Ok(()),
                 Err(err) => {
                     let msg = err.to_string();
-                    ctx.db
-                        .record_hub_userop_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            kind,
-                            &msg,
-                            retry::retry_delay(job.attempts),
-                        )
-                        .await
-                        .ok();
-                    ctx.db
-                        .record_retryable_error(
-                            job.job_id,
-                            &ctx.instance_id,
-                            &msg,
-                            retry::retry_delay(job.attempts),
-                        )
-                        .await?;
+                    record_userop_poll_retryable(&ctx, &job, kind, &msg).await?;
                     Ok(())
                 }
             }
