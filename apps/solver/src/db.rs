@@ -360,14 +360,16 @@ impl SolverDb {
         leased_by: &str,
         claim_tx_hash: [u8; 32],
     ) -> Result<()> {
+        let expected_states = expected_state_binds("claimed")?;
         let n = sqlx::query(
             "update solver.jobs set state='claimed', claim_tx_hash=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
-               and state='ready'",
+               and state = any($4::text[])",
         )
         .bind(claim_tx_hash.to_vec())
         .bind(job_id)
         .bind(leased_by)
+        .bind(expected_states)
         .execute(&self.pool)
         .await
         .context("record claim")?
@@ -384,14 +386,16 @@ impl SolverDb {
         leased_by: &str,
         tron_txid: [u8; 32],
     ) -> Result<()> {
+        let expected_states = expected_state_binds("tron_sent")?;
         let n = sqlx::query(
             "update solver.jobs set state='tron_sent', tron_txid=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
-               and state in ('claimed','tron_prepared')",
+               and state = any($4::text[])",
         )
         .bind(tron_txid.to_vec())
         .bind(job_id)
         .bind(leased_by)
+        .bind(expected_states)
         .execute(&self.pool)
         .await
         .context("record tron txid")?
@@ -412,6 +416,7 @@ impl SolverDb {
         energy_required: Option<i64>,
         tx_size_bytes: Option<i64>,
     ) -> Result<()> {
+        let expected_states = expected_state_binds("tron_prepared")?;
         let mut tx = self.pool.begin().await.context("begin tron_prepared tx")?;
 
         sqlx::query(
@@ -439,11 +444,12 @@ impl SolverDb {
         let n = sqlx::query(
             "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
-               and state='claimed'",
+               and state = any($4::text[])",
         )
         .bind(txid.to_vec())
         .bind(job_id)
         .bind(leased_by)
+        .bind(expected_states)
         .execute(&mut *tx)
         .await
         .context("record tron_prepared")?
@@ -463,6 +469,7 @@ impl SolverDb {
         pre_txs: &[TronSignedTxRow],
         final_tx: &TronSignedTxRow,
     ) -> Result<()> {
+        let expected_states = expected_state_binds("tron_prepared")?;
         let mut tx = self.pool.begin().await.context("begin tron_plan tx")?;
 
         // Replace any previous plan for this job idempotently.
@@ -500,11 +507,12 @@ impl SolverDb {
         let n = sqlx::query(
             "update solver.jobs set state='tron_prepared', tron_txid=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
-               and state='claimed'",
+               and state = any($4::text[])",
         )
         .bind(final_tx.txid.to_vec())
         .bind(job_id)
         .bind(leased_by)
+        .bind(expected_states)
         .execute(&mut *tx)
         .await
         .context("record tron_prepared (plan)")?
@@ -760,7 +768,7 @@ impl SolverDb {
             job_id,
             leased_by,
             "proof_built",
-            &["tron_sent", "proof_built"],
+            expected_previous_states_for_transition("proof_built")?,
         )
         .await
     }
@@ -771,14 +779,16 @@ impl SolverDb {
         leased_by: &str,
         prove_tx_hash: [u8; 32],
     ) -> Result<()> {
+        let expected_states = expected_state_binds("proved")?;
         let n = sqlx::query(
             "update solver.jobs set state='proved', prove_tx_hash=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
-               and state='proof_built'",
+               and state = any($4::text[])",
         )
         .bind(prove_tx_hash.to_vec())
         .bind(job_id)
         .bind(leased_by)
+        .bind(expected_states)
         .execute(&self.pool)
         .await
         .context("record prove")?
@@ -790,21 +800,7 @@ impl SolverDb {
     }
 
     pub async fn record_job_state(&self, job_id: i64, leased_by: &str, state: &str) -> Result<()> {
-        let expected: &[&str] = match state {
-            "proved_waiting_funding" => &["proved", "proved_waiting_funding"],
-            "proved_waiting_settlement" => &[
-                "proved",
-                "proved_waiting_funding",
-                "proved_waiting_settlement",
-            ],
-            "done" => &[
-                "proved",
-                "proved_waiting_funding",
-                "proved_waiting_settlement",
-                "done",
-            ],
-            _ => anyhow::bail!("unsupported record_job_state transition target: {state}"),
-        };
+        let expected = expected_previous_states_for_transition(state)?;
         self.update_job_state_from(job_id, leased_by, state, expected)
             .await
     }
@@ -1724,6 +1720,43 @@ fn breaker_backoff_secs(fail_count: i32) -> i64 {
     }
 }
 
+fn expected_previous_states_for_transition(next_state: &str) -> Result<&'static [&'static str]> {
+    match next_state {
+        "claimed" => Ok(&["ready"]),
+        "tron_prepared" => Ok(&["claimed"]),
+        "tron_sent" => Ok(&["claimed", "tron_prepared"]),
+        "proof_built" => Ok(&["tron_sent", "proof_built"]),
+        "proved" => Ok(&["proof_built"]),
+        "proved_waiting_funding" => Ok(&["proved", "proved_waiting_funding"]),
+        "proved_waiting_settlement" => Ok(&[
+            "proved",
+            "proved_waiting_funding",
+            "proved_waiting_settlement",
+        ]),
+        "done" => Ok(&[
+            "proved",
+            "proved_waiting_funding",
+            "proved_waiting_settlement",
+            "done",
+        ]),
+        _ => anyhow::bail!("unsupported record_job_state transition target: {next_state}"),
+    }
+}
+
+fn expected_state_binds(next_state: &str) -> Result<Vec<String>> {
+    Ok(expected_previous_states_for_transition(next_state)?
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect())
+}
+
+#[cfg(test)]
+fn transition_allowed(from_state: &str, to_state: &str) -> bool {
+    expected_previous_states_for_transition(to_state)
+        .map(|expected| expected.contains(&from_state))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod breaker_tests {
     use super::breaker_backoff_secs;
@@ -1737,6 +1770,69 @@ mod breaker_tests {
         assert_eq!(breaker_backoff_secs(4), 21600);
         assert_eq!(breaker_backoff_secs(5), 86400);
         assert_eq!(breaker_backoff_secs(100), 86400);
+    }
+}
+
+#[cfg(test)]
+mod job_state_transition_tests {
+    use super::{
+        expected_previous_states_for_transition, expected_state_binds, transition_allowed,
+    };
+
+    #[test]
+    fn transition_matrix_allows_expected_forward_edges() {
+        assert!(transition_allowed("ready", "claimed"));
+        assert!(transition_allowed("claimed", "tron_prepared"));
+        assert!(transition_allowed("claimed", "tron_sent"));
+        assert!(transition_allowed("tron_prepared", "tron_sent"));
+        assert!(transition_allowed("tron_sent", "proof_built"));
+        assert!(transition_allowed("proof_built", "proof_built"));
+        assert!(transition_allowed("proof_built", "proved"));
+        assert!(transition_allowed("proved", "proved_waiting_funding"));
+        assert!(transition_allowed(
+            "proved_waiting_funding",
+            "proved_waiting_settlement"
+        ));
+        assert!(transition_allowed("proved_waiting_settlement", "done"));
+        assert!(transition_allowed("done", "done"));
+    }
+
+    #[test]
+    fn transition_matrix_rejects_invalid_or_regressive_edges() {
+        assert!(!transition_allowed("ready", "proved"));
+        assert!(!transition_allowed("claimed", "proved"));
+        assert!(!transition_allowed("tron_sent", "claimed"));
+        assert!(!transition_allowed("done", "proved"));
+        assert!(!transition_allowed("failed_fatal", "done"));
+    }
+
+    #[test]
+    fn transition_target_validation_and_bind_encoding_are_stable() {
+        let proved_waiting_settlement =
+            expected_previous_states_for_transition("proved_waiting_settlement")
+                .expect("known transition target");
+        assert_eq!(
+            proved_waiting_settlement,
+            &[
+                "proved",
+                "proved_waiting_funding",
+                "proved_waiting_settlement"
+            ]
+        );
+
+        let done_binds = expected_state_binds("done").expect("done bind encoding");
+        assert_eq!(
+            done_binds,
+            vec![
+                "proved".to_string(),
+                "proved_waiting_funding".to_string(),
+                "proved_waiting_settlement".to_string(),
+                "done".to_string()
+            ]
+        );
+
+        assert!(expected_previous_states_for_transition("not_a_real_state").is_err());
+        assert!(expected_state_binds("not_a_real_state").is_err());
     }
 }
 
