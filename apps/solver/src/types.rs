@@ -21,6 +21,53 @@ impl IntentType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobState {
+    Ready,
+    Claimed,
+    TronPrepared,
+    TronSent,
+    ProofBuilt,
+    Proved,
+    ProvedWaitingFunding,
+    ProvedWaitingSettlement,
+    Done,
+    FailedFatal,
+}
+
+impl JobState {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Claimed => "claimed",
+            Self::TronPrepared => "tron_prepared",
+            Self::TronSent => "tron_sent",
+            Self::ProofBuilt => "proof_built",
+            Self::Proved => "proved",
+            Self::ProvedWaitingFunding => "proved_waiting_funding",
+            Self::ProvedWaitingSettlement => "proved_waiting_settlement",
+            Self::Done => "done",
+            Self::FailedFatal => "failed_fatal",
+        }
+    }
+
+    pub fn parse(v: &str) -> Result<Self> {
+        match v {
+            "ready" => Ok(Self::Ready),
+            "claimed" => Ok(Self::Claimed),
+            "tron_prepared" => Ok(Self::TronPrepared),
+            "tron_sent" => Ok(Self::TronSent),
+            "proof_built" => Ok(Self::ProofBuilt),
+            "proved" => Ok(Self::Proved),
+            "proved_waiting_funding" => Ok(Self::ProvedWaitingFunding),
+            "proved_waiting_settlement" => Ok(Self::ProvedWaitingSettlement),
+            "done" => Ok(Self::Done),
+            "failed_fatal" => Ok(Self::FailedFatal),
+            other => anyhow::bail!("unknown job state: {other}"),
+        }
+    }
+}
+
 pub fn parse_hex_bytes(s: &str) -> Result<Vec<u8>> {
     let trimmed = s.trim();
     if trimmed == "0x" || trimmed.is_empty() {
