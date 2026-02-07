@@ -2,7 +2,6 @@ mod abi;
 mod config;
 mod db;
 mod hub;
-mod hub_cost;
 mod indexer;
 mod metrics;
 mod policy;

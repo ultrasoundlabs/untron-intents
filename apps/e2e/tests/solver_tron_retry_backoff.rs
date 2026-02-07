@@ -107,12 +107,25 @@ async fn wait_for_job_state(
 ) -> Result<()> {
     let start = Instant::now();
     loop {
-        let job = fetch_job_by_intent_id(db_url, intent_id).await?;
-        if job.state == state {
-            return Ok(());
+        match fetch_job_by_intent_id(db_url, intent_id).await {
+            Ok(job) => {
+                if job.state == state {
+                    return Ok(());
+                }
+            }
+            Err(err) => {
+                // On slower CI hosts, the solver may not have inserted the job row yet.
+                // Treat row-not-found as a poll miss, not a hard failure.
+                let row_not_found = err
+                    .chain()
+                    .any(|e| e.to_string().contains("no rows returned by a query"));
+                if !row_not_found {
+                    return Err(err);
+                }
+            }
         }
         if start.elapsed() > timeout {
-            anyhow::bail!("timed out waiting for job.state={state}; job={job:?}");
+            anyhow::bail!("timed out waiting for job.state={state} for intent_id={intent_id}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
@@ -127,21 +140,39 @@ async fn wait_for_retry_recorded(
     let pool = sqlx::PgPool::connect(db_url).await?;
     let start = Instant::now();
     loop {
-        let job = fetch_job_by_intent_id(db_url, intent_id).await?;
-        let retry_in_future: bool = sqlx::query_scalar(
+        let mut have_row = false;
+        let mut attempts = 0;
+        let mut last_error_present = false;
+
+        match fetch_job_by_intent_id(db_url, intent_id).await {
+            Ok(job) => {
+                have_row = true;
+                attempts = job.attempts;
+                last_error_present = job.last_error.is_some();
+            }
+            Err(err) => {
+                let row_not_found = err
+                    .chain()
+                    .any(|e| e.to_string().contains("no rows returned by a query"));
+                if !row_not_found {
+                    return Err(err);
+                }
+            }
+        }
+
+        let retry_in_future = sqlx::query_scalar::<_, bool>(
             "select next_retry_at > now() from solver.jobs where intent_id = decode($1,'hex')",
         )
         .bind(intent_id.trim_start_matches("0x"))
-        .fetch_one(&pool)
-        .await?;
+        .fetch_optional(&pool)
+        .await?
+        .unwrap_or(false);
 
-        if job.attempts >= min_attempts && job.last_error.is_some() && retry_in_future {
+        if have_row && attempts >= min_attempts && last_error_present && retry_in_future {
             return Ok(());
         }
         if start.elapsed() > timeout {
-            anyhow::bail!(
-                "timed out waiting for retryable error; job={job:?} retry_in_future={retry_in_future}"
-            );
+            anyhow::bail!("timed out waiting for retryable error; retry_in_future={retry_in_future}");
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

@@ -3,7 +3,6 @@ use crate::{
     config::{AppConfig, HubTxMode},
     db::SolverDb,
     db::{HubUserOpKind, SolverJob},
-    hub_cost::estimate_hub_cost_usd_from_userops,
     indexer::IndexerClient,
     metrics::SolverTelemetry,
     policy::{BreakerQuery, PolicyEngine},
@@ -25,6 +24,7 @@ mod job;
 mod retry;
 mod tron_flow;
 
+use alloy::primitives::U256;
 use context::{JobCtx, JobTypeSems};
 use job::process_job;
 use job::{
@@ -35,6 +35,28 @@ use job::{
 
 const INTENT_CLAIM_DEPOSIT: u64 = 1_000_000;
 const LEASE_FOR_SECS: u64 = 30;
+
+pub fn estimate_hub_cost_usd_from_userops(
+    eth_usd: f64,
+    claim_actual_gas_cost_wei: U256,
+    prove_actual_gas_cost_wei: U256,
+    headroom_ppm: u64,
+) -> Option<f64> {
+    fn wei_to_eth_f64(wei: U256) -> Option<f64> {
+        // Typical mainnet costs fit in u128; keep it simple and deterministic.
+        let w: u128 = wei.try_into().ok()?;
+        Some((w as f64) / 1e18)
+    }
+
+    if !(eth_usd.is_finite()) || eth_usd <= 0.0 {
+        return None;
+    }
+    let wei = claim_actual_gas_cost_wei.saturating_add(prove_actual_gas_cost_wei);
+    let eth = wei_to_eth_f64(wei)?;
+    let mut usd = eth * eth_usd;
+    usd *= 1.0 + (headroom_ppm.min(1_000_000) as f64 / 1e6);
+    Some(usd)
+}
 
 struct ShouldAttemptDecision {
     ok: bool,
@@ -395,5 +417,20 @@ impl Solver {
         let mut usd = (fee_sun as f64 / 1e6) * trx_usd;
         usd *= 1.0 + (self.cfg.policy.tron_fee_headroom_ppm as f64 / 1e6);
         Ok(usd)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estimate_hub_cost_usd_applies_headroom() {
+        // 0.001 ETH @ $2,000 => $2.0
+        let eth_usd = 2_000.0;
+        let claim = U256::from(500_000_000_000_000u64); // 0.0005
+        let prove = U256::from(500_000_000_000_000u64); // 0.0005
+        let usd = estimate_hub_cost_usd_from_userops(eth_usd, claim, prove, 100_000).unwrap();
+        assert!((usd - 2.2).abs() < 1e-9);
     }
 }
