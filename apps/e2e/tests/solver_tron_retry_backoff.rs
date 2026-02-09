@@ -172,7 +172,9 @@ async fn wait_for_retry_recorded(
             return Ok(());
         }
         if start.elapsed() > timeout {
-            anyhow::bail!("timed out waiting for retryable error; retry_in_future={retry_in_future}");
+            anyhow::bail!(
+                "timed out waiting for retryable error; retry_in_future={retry_in_future}"
+            );
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }

@@ -108,6 +108,33 @@ impl SolverDb {
         Ok(out)
     }
 
+    pub async fn renew_job_lease(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        lease_for: Duration,
+    ) -> Result<()> {
+        let secs: i64 = lease_for.as_secs().try_into().unwrap_or(60);
+        let n = sqlx::query(
+            "update solver.jobs set \
+                lease_until = now() + make_interval(secs => $1), \
+                updated_at = now() \
+             where job_id = $2 and leased_by = $3 and lease_until >= now() \
+               and state not in ('done', 'failed_fatal')",
+        )
+        .bind(secs)
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("renew solver.jobs lease")?
+        .rows_affected();
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
     pub(super) async fn update_job_state_from(
         &self,
         job_id: i64,

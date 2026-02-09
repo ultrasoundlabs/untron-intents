@@ -1,4 +1,4 @@
-use super::super::{JobCtx, SolverJob, retry};
+use super::super::{JobCtx, LEASE_FOR_SECS, SolverJob, retry};
 use crate::{
     db::{TronSignedTxRow, TronTxCostsRow},
     types::IntentType,
@@ -38,6 +38,14 @@ pub(crate) async fn process_tron_prepared_state(
     };
 
     for row in &txs {
+        ctx.db
+            .renew_job_lease(
+                job.job_id,
+                &ctx.instance_id,
+                std::time::Duration::from_secs(LEASE_FOR_SECS),
+            )
+            .await?;
+
         // If already included, skip.
         let included = match ctx.tron.fetch_transaction_info(row.txid).await {
             Ok(Some(info)) => info.block_number > 0,
@@ -84,7 +92,18 @@ pub(crate) async fn process_tron_prepared_state(
 
         // Wait until included so subsequent steps are reliably funded.
         let started = Instant::now();
+        let mut next_lease_refresh = started + std::time::Duration::from_secs(10);
         loop {
+            if Instant::now() >= next_lease_refresh {
+                ctx.db
+                    .renew_job_lease(
+                        job.job_id,
+                        &ctx.instance_id,
+                        std::time::Duration::from_secs(LEASE_FOR_SECS),
+                    )
+                    .await?;
+                next_lease_refresh = Instant::now() + std::time::Duration::from_secs(10);
+            }
             if started.elapsed() > std::time::Duration::from_secs(60) {
                 ctx.db
                     .record_retryable_error(

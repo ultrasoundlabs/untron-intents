@@ -34,7 +34,7 @@ use job::{
 };
 
 const INTENT_CLAIM_DEPOSIT: u64 = 1_000_000;
-const LEASE_FOR_SECS: u64 = 30;
+pub(super) const LEASE_FOR_SECS: u64 = 30;
 
 pub fn estimate_hub_cost_usd_from_userops(
     eth_usd: f64,
