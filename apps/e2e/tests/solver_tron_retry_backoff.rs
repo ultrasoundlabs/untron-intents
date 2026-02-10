@@ -979,27 +979,30 @@ async fn e2e_solver_tron_grpc_recovers_after_transition_state_mismatch() -> Resu
 
     wait_for_solver_table(&db_url, "jobs", Duration::from_secs(30)).await?;
     wait_for_job_state(&db_url, &intent_id, "tron_sent", Duration::from_secs(180)).await?;
-
     let pool = sqlx::PgPool::connect(&db_url).await?;
-    let start = Instant::now();
-    let mut flipped = false;
-    while start.elapsed() < Duration::from_secs(10) {
-        let n = sqlx::query(
-            "update solver.jobs \
-             set state = 'claimed', updated_at = now() \
-             where intent_id = decode($1,'hex') and state = 'tron_sent'",
-        )
-        .bind(intent_id.trim_start_matches("0x"))
-        .execute(&pool)
-        .await?
-        .rows_affected();
-        if n == 1 {
-            flipped = true;
-            break;
+    let pool_for_flips = pool.clone();
+    let intent_id_for_flips = intent_id.trim_start_matches("0x").to_string();
+    let mut flipper = tokio::spawn(async move {
+        let started = Instant::now();
+        let mut flips = 0u64;
+        while started.elapsed() < Duration::from_secs(8) {
+            let n = sqlx::query(
+                "update solver.jobs \
+                 set state = 'claimed', updated_at = now() \
+                 where intent_id = decode($1,'hex') and state = 'tron_sent'",
+            )
+            .bind(intent_id_for_flips.as_str())
+            .execute(&pool_for_flips)
+            .await
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
+            flips += n;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(flipped, "failed to flip job state from tron_sent to claimed");
+        flips
+    });
+    let flips = (&mut flipper).await.unwrap_or(0);
+    assert!(flips > 0, "expected to force at least one tron_sent->claimed mismatch");
 
     let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300)).await?;
     let job = fetch_job_by_intent_id(&db_url, &intent_id).await?;
@@ -1129,7 +1132,7 @@ async fn e2e_solver_tron_grpc_recovers_after_transition_job_not_found() -> Resul
 
     let pool = sqlx::PgPool::connect(&db_url).await?;
     let row = sqlx::query(
-        "select intent_type, intent_specs, deadline, attempts, claim_tx_hash, tron_txid \
+        "select job_id, intent_type, intent_specs, deadline, attempts, claim_tx_hash, tron_txid \
          from solver.jobs \
          where intent_id = decode($1,'hex')",
     )
@@ -1137,6 +1140,7 @@ async fn e2e_solver_tron_grpc_recovers_after_transition_job_not_found() -> Resul
     .fetch_one(&pool)
     .await?;
 
+    let original_job_id: i64 = row.try_get("job_id")?;
     let intent_type: i16 = row.try_get("intent_type")?;
     let intent_specs: Vec<u8> = row.try_get("intent_specs")?;
     let deadline: i64 = row.try_get("deadline")?;
@@ -1152,6 +1156,15 @@ async fn e2e_solver_tron_grpc_recovers_after_transition_job_not_found() -> Resul
     .await?
     .rows_affected();
     assert_eq!(deleted, 1, "expected to delete one tron_sent job row");
+    let old_job_still_exists: bool =
+        sqlx::query_scalar("select exists(select 1 from solver.jobs where job_id = $1)")
+            .bind(original_job_id)
+            .fetch_one(&pool)
+            .await?;
+    assert!(
+        !old_job_still_exists,
+        "old job_id should be absent to exercise job_not_found transition path"
+    );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -1177,6 +1190,16 @@ async fn e2e_solver_tron_grpc_recovers_after_transition_job_not_found() -> Resul
     .await?
     .rows_affected();
     assert_eq!(inserted, 1, "expected to reinsert deleted job row");
+    let replacement_job_id: i64 = sqlx::query_scalar(
+        "select job_id from solver.jobs where intent_id = decode($1,'hex')",
+    )
+    .bind(intent_id.trim_start_matches("0x"))
+    .fetch_one(&pool)
+    .await?;
+    assert_ne!(
+        replacement_job_id, original_job_id,
+        "replacement row must have a different job_id so the in-flight transition hits job_not_found"
+    );
 
     let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300)).await?;
     let job = fetch_job_by_intent_id(&db_url, &intent_id).await?;
