@@ -26,6 +26,7 @@
     "contracts:bind:rust": "forge bind --root packages/contracts --crate-name untron-intents-bindings --bindings-path crates/bindings --select UntronIntentsIndex --select IntentsForwarderIndex --overwrite",
     "indexer:build": "pnpm contracts:bind:rust && cargo build -p indexer",
     "contracts:anvil:multichain": "bash packages/contracts/scripts/multichain-anvil.sh",
+    "test:e2e:retry-backoff:timed": "bash scripts/e2e-retry-backoff-timed.sh",
     "openapi:build": "node infra/openapi-sidecar/build.mjs",
     "ai": "repomix -o /dev/null --copy --quiet",
     "ai:loud": "repomix -o /dev/null --copy"
