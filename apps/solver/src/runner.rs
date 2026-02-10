@@ -14,11 +14,11 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 mod candidate;
 mod context;
+mod executor;
 mod hub_flow;
 mod job;
 mod lease;
@@ -27,7 +27,7 @@ mod tron_flow;
 
 use alloy::primitives::U256;
 use context::{JobCtx, JobTypeSems};
-use job::process_job;
+use executor::execute_leased_jobs;
 use job::{
     b256_to_bytes32, decode_trigger_contract_and_selector, duration_hours_for_lock_period_blocks,
     ensure_delegate_reservation, finalize_after_prove, looks_like_tron_contract_failure,
@@ -330,38 +330,7 @@ impl Solver {
             telemetry: self.telemetry.clone(),
         };
 
-        let mut set = JoinSet::new();
-        for job in jobs {
-            let ctx = ctx.clone();
-            set.spawn(async move {
-                let intent_type = job.intent_type;
-                let telemetry = ctx.telemetry.clone();
-                let ty = match IntentType::from_i16(job.intent_type) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        tracing::warn!(err = %err, "unknown intent type in job");
-                        return;
-                    }
-                };
-                let _permit = match ctx.job_type_sems.for_intent_type(ty).acquire_owned().await {
-                    Ok(p) => p,
-                    Err(err) => {
-                        tracing::warn!(err = %err, "failed to acquire job type permit");
-                        return;
-                    }
-                };
-                if let Err(err) = process_job(ctx, job).await {
-                    let reason = classify_job_error(&err);
-                    telemetry.job_failure_reason(intent_type, reason);
-                    tracing::warn!(err = %err, "job failed");
-                }
-            });
-        }
-        while let Some(res) = set.join_next().await {
-            if let Err(err) = res {
-                tracing::warn!(err = %err, "job task panicked");
-            }
-        }
+        execute_leased_jobs(ctx, jobs).await;
         Ok(())
     }
 
@@ -429,38 +398,6 @@ impl Solver {
     }
 }
 
-fn classify_job_error(err: &anyhow::Error) -> &'static str {
-    if chain_contains(err, "[transition_reject:state_mismatch]") {
-        return "transition_state_mismatch";
-    }
-    if chain_contains(err, "[transition_reject:lease_expired]") {
-        return "transition_lease_expired";
-    }
-    if chain_contains(err, "[transition_reject:lease_owner_mismatch]") {
-        return "transition_lease_owner_mismatch";
-    }
-    if chain_contains(err, "[transition_reject:job_not_found]") {
-        return "transition_job_not_found";
-    }
-    if chain_contains(err, "lost job lease") {
-        return "lost_job_lease";
-    }
-    if chain_contains(err, "delegate_capacity_insufficient") {
-        return "delegate_capacity_insufficient";
-    }
-    if chain_contains(err, "global solver pause active") {
-        return "global_pause";
-    }
-    if chain_contains(err, "indexer lag too high") {
-        return "indexer_lag";
-    }
-    "other"
-}
-
-fn chain_contains(err: &anyhow::Error, needle: &str) -> bool {
-    err.chain().any(|cause| cause.to_string().contains(needle))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,22 +410,5 @@ mod tests {
         let prove = U256::from(500_000_000_000_000u64); // 0.0005
         let usd = estimate_hub_cost_usd_from_userops(eth_usd, claim, prove, 100_000).unwrap();
         assert!((usd - 2.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn classify_job_error_maps_transition_reasons() {
-        let err = anyhow::anyhow!("[transition_reject:lease_expired] rejected transition");
-        assert_eq!(classify_job_error(&err), "transition_lease_expired");
-
-        let err = anyhow::anyhow!("[transition_reject:state_mismatch] rejected transition");
-        assert_eq!(classify_job_error(&err), "transition_state_mismatch");
-    }
-
-    #[test]
-    fn classify_job_error_uses_chain_messages() {
-        let err: anyhow::Error = Err::<(), _>(anyhow::anyhow!("lost job lease for job_id=7"))
-            .context("outer context")
-            .unwrap_err();
-        assert_eq!(classify_job_error(&err), "lost_job_lease");
     }
 }
