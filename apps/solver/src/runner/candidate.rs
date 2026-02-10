@@ -192,12 +192,11 @@ impl Solver {
         let mut rental_cost_usd: f64 = 0.0;
         let mut delegate_resource_resell: bool = false;
 
-        // Pre-claim inventory check for multi-key TRX/USDT: if we can't fill (and can't consolidate
+        // Pre-claim inventory check for TRX/USDT: if we can't fill (and can't consolidate
         // within configured limits), skip before we spend the claim deposit.
         let mut required_pre_txs: usize = 0;
         if self.cfg.tron.mode == TronMode::Grpc
             && matches!(ty, IntentType::TrxTransfer | IntentType::UsdtTransfer)
-            && (self.cfg.tron.private_keys.len() > 1 || self.cfg.jobs.consolidation_enabled)
         {
             let specs = parse_hex_bytes(&row.intent_specs)?;
             match self
