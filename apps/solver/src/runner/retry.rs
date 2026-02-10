@@ -70,3 +70,35 @@ pub(super) async fn enforce_claim_rate_limits(ctx: &JobCtx, ty: IntentType) -> R
     }
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::retry_delay;
+
+    #[test]
+    fn retry_delay_grows_monotonically_until_cap() {
+        let mut prev = std::time::Duration::from_secs(0);
+        for attempts in 0..=16 {
+            let d = retry_delay(attempts);
+            assert!(
+                d >= prev,
+                "retry_delay regressed at attempts={attempts}: prev={prev:?} next={d:?}"
+            );
+            assert!(d <= std::time::Duration::from_secs(300));
+            prev = d;
+        }
+    }
+
+    #[test]
+    fn retry_delay_caps_at_five_minutes_after_ten_attempts() {
+        for attempts in [10, 11, 20, i32::MAX] {
+            assert_eq!(retry_delay(attempts), std::time::Duration::from_secs(300));
+        }
+    }
+
+    #[test]
+    fn retry_delay_clamps_negative_attempts_to_initial_backoff() {
+        assert_eq!(retry_delay(-1), std::time::Duration::from_secs(1));
+        assert_eq!(retry_delay(i32::MIN), std::time::Duration::from_secs(1));
+    }
+}
