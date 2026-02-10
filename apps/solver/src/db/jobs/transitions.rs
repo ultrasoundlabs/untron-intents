@@ -48,9 +48,9 @@ pub(crate) fn expected_previous_state_names_for(next_state: JobState) -> &'stati
 }
 
 pub(crate) fn expected_state_binds_for(next_state: JobState) -> Vec<String> {
-    expected_previous_state_names_for(next_state)
+    expected_previous_states_for(next_state)
         .iter()
-        .map(|s| (*s).to_string())
+        .map(|s| s.as_db_str().to_string())
         .collect()
 }
 
