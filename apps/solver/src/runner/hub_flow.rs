@@ -71,6 +71,23 @@ async fn delete_stale_prepared_userop_if_needed(
     Ok(false)
 }
 
+fn should_rebuild_prepared_userop_on_submit_error(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("aa25 invalid account nonce")
+        || m.contains("invalid account nonce")
+        || m.contains("nonce too low")
+        || m.contains("nonce too high")
+        || m.contains("replacement transaction underpriced")
+        || m.contains("underpriced")
+        || m.contains("fee too low")
+        || m.contains("max fee per gas less than block base fee")
+        || m.contains("maxfeepergas")
+        || m.contains("maxpriorityfeepergas")
+        || (m.contains("aa3") && m.contains("paymaster"))
+        || (m.contains("paymaster")
+            && (m.contains("expired") || m.contains("deposit") || m.contains("stake")))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn submit_safe4337_userop<F, Fut>(
     ctx: &JobCtx,
@@ -117,7 +134,7 @@ where
             ctx.telemetry
                 .hub_submit_ms(metric_name, false, started.elapsed().as_millis() as u64);
             let msg = err.to_string();
-            if msg.contains("AA25 invalid account nonce") {
+            if should_rebuild_prepared_userop_on_submit_error(&msg) {
                 ctx.db
                     .delete_hub_userop_prepared(job.job_id, &ctx.instance_id, kind)
                     .await
@@ -143,6 +160,45 @@ where
                 .await?;
             Ok(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_rebuild_prepared_userop_on_submit_error;
+
+    #[test]
+    fn rebuild_userop_on_nonce_errors() {
+        assert!(should_rebuild_prepared_userop_on_submit_error(
+            "AA25 invalid account nonce",
+        ));
+        assert!(should_rebuild_prepared_userop_on_submit_error(
+            "nonce too low",
+        ));
+    }
+
+    #[test]
+    fn rebuild_userop_on_fee_errors() {
+        assert!(should_rebuild_prepared_userop_on_submit_error(
+            "replacement transaction underpriced",
+        ));
+        assert!(should_rebuild_prepared_userop_on_submit_error(
+            "max fee per gas less than block base fee",
+        ));
+    }
+
+    #[test]
+    fn rebuild_userop_on_paymaster_errors() {
+        assert!(should_rebuild_prepared_userop_on_submit_error(
+            "AA31 paymaster deposit too low",
+        ));
+    }
+
+    #[test]
+    fn keep_prepared_userop_for_non_rebuild_errors() {
+        assert!(!should_rebuild_prepared_userop_on_submit_error(
+            "insufficient funds for transfer",
+        ));
     }
 }
 
