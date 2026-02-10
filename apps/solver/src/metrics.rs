@@ -12,6 +12,7 @@ pub struct SolverTelemetry {
 struct Inner {
     jobs_total: Counter<u64>,
     job_errors_total: Counter<u64>,
+    job_failures_by_reason_total: Counter<u64>,
     hub_userops_total: Counter<u64>,
     hub_userop_errors_total: Counter<u64>,
     tron_txs_total: Counter<u64>,
@@ -47,6 +48,10 @@ impl SolverTelemetry {
         let job_errors_total = meter
             .u64_counter("solver.job_errors_total")
             .with_description("Total job errors")
+            .build();
+        let job_failures_by_reason_total = meter
+            .u64_counter("solver.job_failures_by_reason_total")
+            .with_description("Total job failures partitioned by reason")
             .build();
         let hub_userops_total = meter
             .u64_counter("solver.hub_userops_total")
@@ -158,6 +163,7 @@ impl SolverTelemetry {
             inner: Arc::new(Inner {
                 jobs_total,
                 job_errors_total,
+                job_failures_by_reason_total,
                 hub_userops_total,
                 hub_userop_errors_total,
                 tron_txs_total,
@@ -196,6 +202,14 @@ impl SolverTelemetry {
         self.inner.jobs_total.add(1, &attrs);
         self.inner.job_errors_total.add(1, &attrs);
         self.inner.job_ms.record(ms, &attrs);
+    }
+
+    pub fn job_failure_reason(&self, intent_type: i16, reason: &'static str) {
+        let attrs = [
+            KeyValue::new("intent_type", intent_type as i64),
+            KeyValue::new("reason", reason),
+        ];
+        self.inner.job_failures_by_reason_total.add(1, &attrs);
     }
 
     pub fn hub_userop_ok(&self) {

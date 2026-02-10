@@ -158,9 +158,46 @@ impl SolverDb {
         .context("update solver.jobs state")?
         .rows_affected();
         if n != 1 {
+            let diag = sqlx::query(
+                "select state, leased_by, (lease_until >= now()) as lease_valid \
+                 from solver.jobs where job_id = $1",
+            )
+            .bind(job_id)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten();
+
+            let mut reason = "unknown_conflict";
+            let mut current_state: Option<String> = None;
+            let mut current_leased_by: Option<String> = None;
+            let mut lease_valid: Option<bool> = None;
+
+            if let Some(row) = diag {
+                current_state = row.try_get("state").ok();
+                current_leased_by = row.try_get("leased_by").ok();
+                lease_valid = row.try_get("lease_valid").ok();
+
+                if let Some(cs) = current_state.as_deref() {
+                    if !expected_states.iter().any(|s| s == cs) {
+                        reason = "state_mismatch";
+                    } else if current_leased_by.as_deref() != Some(leased_by) {
+                        reason = "lease_owner_mismatch";
+                    } else if lease_valid == Some(false) {
+                        reason = "lease_expired";
+                    }
+                }
+            } else {
+                reason = "job_not_found";
+            }
+
             anyhow::bail!(
-                "rejected state transition for job_id={job_id}: expected one of {:?} -> {state}",
-                expected_states
+                "[transition_reject:{reason}] rejected state transition for job_id={job_id}: expected one of {:?} -> {} (current_state={:?}, leased_by={:?}, lease_valid={:?})",
+                expected_states,
+                state,
+                current_state,
+                current_leased_by,
+                lease_valid
             );
         }
         Ok(())
