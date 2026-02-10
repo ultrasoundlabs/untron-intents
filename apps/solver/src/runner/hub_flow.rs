@@ -172,6 +172,76 @@ async fn record_userop_poll_retryable(
         .await
 }
 
+fn included_userop_failure_message(prefix: &str, row: &HubUserOpRow) -> String {
+    match row.receipt_json.as_deref() {
+        Some(receipt) => format!("{prefix}: {receipt}"),
+        None => prefix.to_string(),
+    }
+}
+
+async fn reconcile_included_claim_userop(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    row: &HubUserOpRow,
+) -> Result<()> {
+    if !row.success.unwrap_or(false) {
+        let msg = included_userop_failure_message("claim userop failed", row);
+        retry::record_fatal(ctx, job, &msg).await?;
+        return Ok(());
+    }
+
+    let Some(tx_hash) = row.tx_hash else {
+        ctx.db
+            .record_retryable_error(
+                job.job_id,
+                &ctx.instance_id,
+                "claim userop included without tx_hash",
+                retry::retry_delay(job.attempts),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    ctx.db
+        .record_claim(job.job_id, &ctx.instance_id, tx_hash)
+        .await?;
+    ctx.telemetry
+        .job_state_transition(job.intent_type, "ready", "claimed");
+    Ok(())
+}
+
+async fn reconcile_included_prove_userop(
+    ctx: &JobCtx,
+    job: &SolverJob,
+    row: &HubUserOpRow,
+) -> Result<()> {
+    if !row.success.unwrap_or(false) {
+        let msg = included_userop_failure_message("prove userop failed", row);
+        retry::record_fatal(ctx, job, &msg).await?;
+        return Ok(());
+    }
+
+    let Some(tx_hash) = row.tx_hash else {
+        ctx.db
+            .record_retryable_error(
+                job.job_id,
+                &ctx.instance_id,
+                "prove userop included without tx_hash",
+                retry::retry_delay(job.attempts),
+            )
+            .await?;
+        return Ok(());
+    };
+
+    ctx.db
+        .record_prove(job.job_id, &ctx.instance_id, tx_hash)
+        .await?;
+    ctx.telemetry
+        .job_state_transition(job.intent_type, "proof_built", "proved");
+    let _ = finalize_after_prove(ctx, job).await;
+    Ok(())
+}
+
 pub(super) async fn process_ready_state(
     ctx: &JobCtx,
     job: &SolverJob,
@@ -278,15 +348,46 @@ pub(super) async fn process_ready_state(
                 }
                 Err(err) => {
                     let msg = err.to_string();
-                    // If already claimed, don't keep retrying.
                     if msg.contains("AlreadyClaimed") {
-                        ctx.telemetry.job_state_transition(
-                            job.intent_type,
-                            "ready",
-                            "failed_fatal",
-                        );
-                        retry::record_fatal(ctx, job, &msg).await?;
-                        return Ok(());
+                        match ctx.hub.intent_solver(id).await {
+                            Ok(solver) if solver == ctx.hub.solver_address() => {
+                                ctx.db
+                                    .record_job_state(
+                                        job.job_id,
+                                        &ctx.instance_id,
+                                        JobState::Claimed,
+                                    )
+                                    .await?;
+                                ctx.telemetry.job_state_transition(
+                                    job.intent_type,
+                                    "ready",
+                                    "claimed",
+                                );
+                                return Ok(());
+                            }
+                            Ok(_) => {
+                                ctx.telemetry.job_state_transition(
+                                    job.intent_type,
+                                    "ready",
+                                    "failed_fatal",
+                                );
+                                retry::record_fatal(ctx, job, &msg).await?;
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                let reconcile_msg =
+                                    format!("already claimed; failed to reconcile solver: {err:#}");
+                                ctx.db
+                                    .record_retryable_error(
+                                        job.job_id,
+                                        &ctx.instance_id,
+                                        &reconcile_msg,
+                                        retry::retry_delay(job.attempts),
+                                    )
+                                    .await?;
+                                return Ok(());
+                            }
+                        }
                     }
                     ctx.db
                         .record_retryable_error(
@@ -304,8 +405,9 @@ pub(super) async fn process_ready_state(
             let kind = HubUserOpKind::Claim;
             let mut row = ctx.db.get_hub_userop(job.job_id, kind).await?;
             if let Some(r) = row.as_ref() {
-                // If we've already included it, we should have advanced state.
+                // Recover from partial persistence: included userop without advanced job state.
                 if r.state == "included" {
+                    reconcile_included_claim_userop(ctx, job, r).await?;
                     return Ok(());
                 }
                 if delete_stale_prepared_userop_if_needed(
@@ -457,22 +559,53 @@ pub(super) async fn process_proof_built_state(
             }
             Err(err) => {
                 let msg = err.to_string();
-                ctx.db
-                    .record_retryable_error(
-                        job.job_id,
-                        &ctx.instance_id,
-                        &msg,
-                        retry::retry_delay(job.attempts),
-                    )
-                    .await?;
-                Ok(())
+                match ctx.hub.intent_status(id).await {
+                    Ok(status) if status.solved => {
+                        ctx.db
+                            .record_job_state(job.job_id, &ctx.instance_id, JobState::Proved)
+                            .await?;
+                        ctx.telemetry.job_state_transition(
+                            job.intent_type,
+                            "proof_built",
+                            "proved",
+                        );
+                        let _ = finalize_after_prove(ctx, job).await;
+                        Ok(())
+                    }
+                    Ok(_) => {
+                        ctx.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &ctx.instance_id,
+                                &msg,
+                                retry::retry_delay(job.attempts),
+                            )
+                            .await?;
+                        Ok(())
+                    }
+                    Err(status_err) => {
+                        let combined =
+                            format!("prove failed: {msg}; intent_status failed: {status_err:#}");
+                        ctx.db
+                            .record_retryable_error(
+                                job.job_id,
+                                &ctx.instance_id,
+                                &combined,
+                                retry::retry_delay(job.attempts),
+                            )
+                            .await?;
+                        Ok(())
+                    }
+                }
             }
         },
         HubTxMode::Safe4337 => {
             let kind = HubUserOpKind::Prove;
             let mut row = ctx.db.get_hub_userop(job.job_id, kind).await?;
             if let Some(r) = row.as_ref() {
+                // Recover from partial persistence: included userop without advanced job state.
                 if r.state == "included" {
+                    reconcile_included_prove_userop(ctx, job, r).await?;
                     return Ok(());
                 }
                 if delete_stale_prepared_userop_if_needed(
