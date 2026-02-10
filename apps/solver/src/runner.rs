@@ -61,6 +61,7 @@ pub fn estimate_hub_cost_usd_from_userops(
 struct ShouldAttemptDecision {
     ok: bool,
     rental_quote: Option<RentalQuoteDecision>,
+    skip_reason: Option<&'static str>,
 }
 
 struct RentalQuoteDecision {
@@ -260,6 +261,9 @@ impl Solver {
         for row in rows {
             let decision = self.should_attempt(&row).await?;
             if !decision.ok {
+                if let Some(reason) = decision.skip_reason {
+                    self.telemetry.candidate_skip(row.intent_type, reason);
+                }
                 continue;
             }
             let id = parse_b256(&row.id)?;

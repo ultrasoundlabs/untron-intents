@@ -12,6 +12,26 @@ use anyhow::Result;
 use std::time::Instant;
 
 impl Solver {
+    async fn skip_intent(
+        &self,
+        row: &PoolOpenIntentRow,
+        db_reason: &str,
+        details: Option<&str>,
+        metric_reason: &'static str,
+    ) -> Result<ShouldAttemptDecision> {
+        if let Ok(id) = parse_b256(&row.id) {
+            let _ = self
+                .db
+                .upsert_intent_skip(b256_to_bytes32(id), row.intent_type, db_reason, details)
+                .await;
+        }
+        Ok(ShouldAttemptDecision {
+            ok: false,
+            rental_quote: None,
+            skip_reason: Some(metric_reason),
+        })
+    }
+
     async fn quote_best_energy_rental(
         &self,
         receiver: tron::TronAddress,
@@ -188,26 +208,19 @@ impl Solver {
                 Ok(inv) => {
                     required_pre_txs = inv.required_pre_txs;
                     if !inv.ok {
-                        if let Ok(id) = parse_b256(&row.id) {
-                            let details = serde_json::json!({
-                                "reason": inv.reason,
-                                "required_pre_txs": inv.required_pre_txs,
-                            })
-                            .to_string();
-                            let _ = self
-                                .db
-                                .upsert_intent_skip(
-                                    b256_to_bytes32(id),
-                                    row.intent_type,
-                                    inv.reason.unwrap_or("inventory_insufficient"),
-                                    Some(&details),
-                                )
-                                .await;
-                        }
-                        return Ok(ShouldAttemptDecision {
-                            ok: false,
-                            rental_quote: None,
-                        });
+                        let details = serde_json::json!({
+                            "reason": inv.reason,
+                            "required_pre_txs": inv.required_pre_txs,
+                        })
+                        .to_string();
+                        return self
+                            .skip_intent(
+                                row,
+                                inv.reason.unwrap_or("inventory_insufficient"),
+                                Some(&details),
+                                "inventory_insufficient",
+                            )
+                            .await;
                     }
                 }
                 Err(err) => {
@@ -262,21 +275,14 @@ impl Solver {
                                     Ok(v) => v,
                                     Err(err) => {
                                         tracing::warn!(err = %err, "trx_usd unavailable; skipping rental quote");
-                                        if let Ok(id) = parse_b256(&row.id) {
-                                            let _ = self
-                                                .db
-                                                .upsert_intent_skip(
-                                                    b256_to_bytes32(id),
-                                                    row.intent_type,
-                                                    "rental_quote_no_price",
-                                                    None,
-                                                )
-                                                .await;
-                                        }
-                                        return Ok(ShouldAttemptDecision {
-                                            ok: false,
-                                            rental_quote: None,
-                                        });
+                                        return self
+                                            .skip_intent(
+                                                row,
+                                                "rental_quote_no_price",
+                                                None,
+                                                "rental_quote_no_price",
+                                            )
+                                            .await;
                                     }
                                 };
                                 rental_cost_usd = q.cost_trx * trx_usd;
@@ -289,21 +295,14 @@ impl Solver {
                                     err = %err,
                                     "energy rental quote failed; skipping intent"
                                 );
-                                if let Ok(id) = parse_b256(&row.id) {
-                                    let _ = self
-                                        .db
-                                        .upsert_intent_skip(
-                                            b256_to_bytes32(id),
-                                            row.intent_type,
-                                            "rental_quote_failed",
-                                            Some(&format!("{err:#}")),
-                                        )
-                                        .await;
-                                }
-                                return Ok(ShouldAttemptDecision {
-                                    ok: false,
-                                    rental_quote: None,
-                                });
+                                return self
+                                    .skip_intent(
+                                        row,
+                                        "rental_quote_failed",
+                                        Some(&format!("{err:#}")),
+                                        "rental_quote_failed",
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -323,45 +322,22 @@ impl Solver {
             )
             .await?;
         if !eval.allowed {
-            if let Ok(id) = parse_b256(&row.id) {
-                let _ = self
-                    .db
-                    .upsert_intent_skip(
-                        b256_to_bytes32(id),
-                        row.intent_type,
-                        eval.reason.as_deref().unwrap_or("policy_reject"),
-                        None,
-                    )
-                    .await;
-            }
+            let db_reason = eval.reason.as_deref().unwrap_or("policy_reject");
             if let Some(reason) = eval.reason.as_deref() {
                 tracing::debug!(id = %row.id, intent_type = row.intent_type, reason, "skip intent");
             }
-            return Ok(ShouldAttemptDecision {
-                ok: false,
-                rental_quote: None,
-            });
+            return self
+                .skip_intent(row, db_reason, None, "policy_reject")
+                .await;
         }
 
         // Dynamic breaker (if applicable).
         if let Some(b) = eval.breaker
             && self.is_breaker_active(b).await?
         {
-            if let Ok(id) = parse_b256(&row.id) {
-                let _ = self
-                    .db
-                    .upsert_intent_skip(
-                        b256_to_bytes32(id),
-                        row.intent_type,
-                        "breaker_active",
-                        None,
-                    )
-                    .await;
-            }
-            return Ok(ShouldAttemptDecision {
-                ok: false,
-                rental_quote: None,
-            });
+            return self
+                .skip_intent(row, "breaker_active", None, "breaker_active")
+                .await;
         }
 
         // Optional Tron emulation gating: avoid claiming intents we know will revert.
@@ -401,27 +377,16 @@ impl Solver {
                     .await;
             }
             if !emu.ok {
-                if let Ok(id) = parse_b256(&row.id) {
-                    let _ = self
-                        .db
-                        .upsert_intent_skip(
-                            b256_to_bytes32(id),
-                            row.intent_type,
-                            emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
-                            None,
-                        )
-                        .await;
-                }
+                let db_reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed");
                 tracing::debug!(
                     id = %row.id,
                     intent_type = row.intent_type,
-                    reason = emu.reason.as_deref().unwrap_or("tron_emulation_failed"),
+                    reason = db_reason,
                     "skip intent (tron emulation)"
                 );
-                return Ok(ShouldAttemptDecision {
-                    ok: false,
-                    rental_quote: None,
-                });
+                return self
+                    .skip_intent(row, db_reason, None, "tron_emulation_failed")
+                    .await;
             }
         }
 
@@ -448,6 +413,7 @@ impl Solver {
                         return Ok(ShouldAttemptDecision {
                             ok: true,
                             rental_quote,
+                            skip_reason: None,
                         });
                     }
                 };
@@ -462,6 +428,7 @@ impl Solver {
                         return Ok(ShouldAttemptDecision {
                             ok: true,
                             rental_quote,
+                            skip_reason: None,
                         });
                     }
                 };
@@ -484,29 +451,22 @@ impl Solver {
                 if crate::tron_backend::select_delegate_executor_index(&avail, &resv, needed)
                     .is_none()
                 {
-                    if let Ok(id) = parse_b256(&row.id) {
-                        let details = serde_json::json!({
-                            "needed_sun": needed,
-                            "resource": intent.resource,
-                            "owners": owners,
-                            "available_sun": avail,
-                            "reserved_sun": resv,
-                        })
-                        .to_string();
-                        let _ = self
-                            .db
-                            .upsert_intent_skip(
-                                b256_to_bytes32(id),
-                                row.intent_type,
-                                "delegate_capacity_insufficient",
-                                Some(&details),
-                            )
-                            .await;
-                    }
-                    return Ok(ShouldAttemptDecision {
-                        ok: false,
-                        rental_quote: None,
-                    });
+                    let details = serde_json::json!({
+                        "needed_sun": needed,
+                        "resource": intent.resource,
+                        "owners": owners,
+                        "available_sun": avail,
+                        "reserved_sun": resv,
+                    })
+                    .to_string();
+                    return self
+                        .skip_intent(
+                            row,
+                            "delegate_capacity_insufficient",
+                            Some(&details),
+                            "delegate_capacity_insufficient",
+                        )
+                        .await;
                 }
             }
         }
@@ -514,6 +474,7 @@ impl Solver {
         Ok(ShouldAttemptDecision {
             ok: true,
             rental_quote,
+            skip_reason: None,
         })
     }
 }

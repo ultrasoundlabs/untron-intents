@@ -25,6 +25,7 @@ struct Inner {
     rental_quotes_total: Counter<u64>,
     rental_orders_total: Counter<u64>,
     rental_provider_freezes_total: Counter<u64>,
+    candidate_skips_total: Counter<u64>,
 
     job_ms: Histogram<u64>,
     hub_submit_ms: Histogram<u64>,
@@ -104,6 +105,10 @@ impl SolverTelemetry {
             .u64_counter("solver.rental_provider_freezes_total")
             .with_description("Total rental provider freeze events")
             .build();
+        let candidate_skips_total = meter
+            .u64_counter("solver.candidate_skips_total")
+            .with_description("Total candidate intents skipped before job creation")
+            .build();
 
         let job_ms = meter
             .u64_histogram("solver.job_ms")
@@ -176,6 +181,7 @@ impl SolverTelemetry {
                 rental_quotes_total,
                 rental_orders_total,
                 rental_provider_freezes_total,
+                candidate_skips_total,
                 job_ms,
                 hub_submit_ms,
                 tron_broadcast_ms,
@@ -275,6 +281,14 @@ impl SolverTelemetry {
     pub fn rental_provider_frozen(&self, provider: &str) {
         let attrs = [KeyValue::new("provider", provider.to_string())];
         self.inner.rental_provider_freezes_total.add(1, &attrs);
+    }
+
+    pub fn candidate_skip(&self, intent_type: i16, reason: &'static str) {
+        let attrs = [
+            KeyValue::new("intent_type", intent_type as i64),
+            KeyValue::new("reason", reason),
+        ];
+        self.inner.candidate_skips_total.add(1, &attrs);
     }
 
     pub fn hub_submit_ms(&self, name: &'static str, ok: bool, ms: u64) {
