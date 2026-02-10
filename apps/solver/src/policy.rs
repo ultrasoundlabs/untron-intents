@@ -11,6 +11,8 @@ use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolValue;
 use anyhow::{Context, Result};
 
+const TRON_BLOCK_TIME_SECS: u64 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BreakerQuery {
     pub contract: Address,
@@ -281,7 +283,7 @@ impl PolicyEngine {
                     }
                 }
                 if let Some(max) = self.cfg.max_delegate_lock_period_secs {
-                    let v = match u256_to_u64_checked(intent.lockPeriod) {
+                    let v_blocks = match u256_to_u64_checked(intent.lockPeriod) {
                         Ok(v) => v,
                         Err(_) => {
                             return Ok(StaticCheckOutcome {
@@ -290,7 +292,8 @@ impl PolicyEngine {
                             });
                         }
                     };
-                    if v > max {
+                    let v_secs = lock_period_secs_from_blocks(v_blocks);
+                    if v_secs > max {
                         return Ok(StaticCheckOutcome {
                             breaker: None,
                             reject_reason: Some("delegate_lock_cap".to_string()),
@@ -373,6 +376,10 @@ fn u256_to_u64_checked(v: U256) -> Result<u64> {
         .map_err(|_| anyhow::anyhow!("u256 out of u64 range"))
 }
 
+fn lock_period_secs_from_blocks(lock_period_blocks: u64) -> u64 {
+    lock_period_blocks.saturating_mul(TRON_BLOCK_TIME_SECS)
+}
+
 pub fn estimate_cost_usd(
     cfg: &PolicyConfig,
     ty: IntentType,
@@ -403,9 +410,9 @@ pub fn estimate_cost_usd(
             let intent = DelegateResourceIntent::abi_decode(&specs)
                 .context("decode DelegateResourceIntent")?;
             let sun: f64 = intent.balanceSun.to_string().parse().unwrap_or(0.0);
-            let lock: f64 = intent.lockPeriod.to_string().parse().unwrap_or(0.0);
+            let lock_blocks = u256_to_u64_checked(intent.lockPeriod).unwrap_or(u64::MAX);
             let principal_usd = (sun / 1e6) * trx_usd;
-            let day_frac = lock / 86400.0;
+            let day_frac = lock_period_secs_from_blocks(lock_blocks) as f64 / 86400.0;
 
             principal_usd * (cfg.capital_lock_ppm_per_day as f64 / 1e6) * day_frac
         }
@@ -507,12 +514,43 @@ mod tests {
             receiver: Address::ZERO,
             resource: 1,
             balanceSun: U256::from(1_000_000u64), // 1 TRX (1e6 sun)
-            lockPeriod: U256::from(86_400u64),    // 1 day
+            lockPeriod: U256::from(28_800u64),    // 1 day in Tron blocks
         };
         let specs_hex = format!("0x{}", hex::encode(intent.abi_encode()));
         let cost = estimate_cost_usd(&c, IntentType::DelegateResource, &specs_hex, 0.5).unwrap();
         // principal = $0.50; 10%/day => $0.05
         assert!((cost - 0.05).abs() < 1e-9, "cost={cost}");
+    }
+
+    #[tokio::test]
+    async fn delegate_lock_cap_treats_lock_period_as_blocks() {
+        let mut c = cfg();
+        c.enabled_intent_types = vec![IntentType::DelegateResource];
+        c.max_delegate_lock_period_secs = Some(86_400); // 1 day in seconds
+
+        let intent = DelegateResourceIntent {
+            receiver: Address::ZERO,
+            resource: 1,
+            balanceSun: U256::from(1_000_000u64),
+            lockPeriod: U256::from(28_801u64), // 1 day + 1 block
+        };
+
+        let row = row_for(IntentType::DelegateResource, intent.abi_encode(), 2_000_000);
+        let mut pricing = Pricing::new(PricingConfig {
+            trx_usd_override: Some(0.3),
+            trx_usd_ttl: std::time::Duration::from_secs(60),
+            trx_usd_url: "http://example.invalid".to_string(),
+            eth_usd_override: Some(2_000.0),
+            eth_usd_ttl: std::time::Duration::from_secs(60),
+            eth_usd_url: "http://example.invalid".to_string(),
+        });
+
+        let eval = PolicyEngine::new(c)
+            .evaluate_open_intent(&row, 1_000_000, &mut pricing, 0.0, 0.0, false)
+            .await
+            .unwrap();
+        assert!(!eval.allowed);
+        assert_eq!(eval.reason.as_deref(), Some("delegate_lock_cap"));
     }
 
     #[tokio::test]
