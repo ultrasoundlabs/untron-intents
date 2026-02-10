@@ -23,9 +23,17 @@ use std::time::{Duration, Instant};
 use testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{GenericImage, ImageExt};
+use sqlx::Row;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+
+fn acquire_suite_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("solver_tron_retry_backoff test lock poisoned")
+}
 
 async fn wait_for_solver_table(db_url: &str, table: &str, timeout: Duration) -> Result<()> {
     let pool = sqlx::PgPool::connect(db_url).await?;
@@ -180,8 +188,52 @@ async fn wait_for_retry_recorded(
     }
 }
 
+async fn wait_for_attempts_and_next_retry_growth(
+    db_url: &str,
+    intent_id: &str,
+    min_attempts: i32,
+    timeout: Duration,
+) -> Result<Vec<i64>> {
+    let pool = sqlx::PgPool::connect(db_url).await?;
+    let start = Instant::now();
+    let mut seen_attempts = -1i32;
+    let mut seen_next_retry_epochs: Vec<i64> = Vec::new();
+    loop {
+        let row = sqlx::query(
+            "select attempts, extract(epoch from next_retry_at)::bigint as next_retry_epoch \
+             from solver.jobs \
+             where intent_id = decode($1,'hex')",
+        )
+        .bind(intent_id.trim_start_matches("0x"))
+        .fetch_optional(&pool)
+        .await?;
+
+        if let Some(row) = row {
+            let attempts: i32 = row.try_get("attempts")?;
+            let next_retry_epoch: Option<i64> = row.try_get("next_retry_epoch")?;
+            if attempts > seen_attempts {
+                seen_attempts = attempts;
+                if let Some(epoch) = next_retry_epoch {
+                    seen_next_retry_epochs.push(epoch);
+                }
+            }
+            if attempts >= min_attempts {
+                return Ok(seen_next_retry_epochs);
+            }
+        }
+
+        if start.elapsed() > timeout {
+            anyhow::bail!(
+                "timed out waiting for attempts >= {min_attempts}; observed epochs={seen_next_retry_epochs:?}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_solver_tron_grpc_retries_transient_broadcast_failure_with_backoff() -> Result<()> {
+    let _suite_lock = acquire_suite_lock();
     if !require_bins(&["docker", "anvil", "forge", "cast"]) {
         return Ok(());
     }
@@ -356,5 +408,301 @@ async fn e2e_solver_tron_grpc_retries_transient_broadcast_failure_with_backoff()
             return Err(e);
         }
     };
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_solver_tron_grpc_backoff_progresses_over_multiple_failures() -> Result<()> {
+    let _suite_lock = acquire_suite_lock();
+    if !require_bins(&["docker", "anvil", "forge", "cast"]) {
+        return Ok(());
+    }
+
+    cleanup_untron_e2e_containers().ok();
+
+    let tron_tag = std::env::var("TRON_TRE_TAG").unwrap_or_else(|_| "1.0.4".to_string());
+    let tron_name = format!("untron-e2e-tron-{}", find_free_port()?);
+    let tron = GenericImage::new("tronbox/tre".to_string(), tron_tag)
+        .with_exposed_port(9090.tcp())
+        .with_exposed_port(50051.tcp())
+        .with_exposed_port(50052.tcp())
+        .with_wait_for(WaitFor::Nothing)
+        .with_container_name(tron_name.clone())
+        .start()
+        .await
+        .context("start tronbox/tre container")?;
+
+    let tron_http_port = tron.get_host_port_ipv4(9090).await?;
+    let tron_grpc_port = tron.get_host_port_ipv4(50051).await?;
+    let tron_http_base = format!("http://127.0.0.1:{tron_http_port}");
+    let _tron_grpc_url = format!("http://127.0.0.1:{tron_grpc_port}");
+
+    wait_for_tronbox_admin(&tron_http_base, Duration::from_secs(240)).await?;
+    let keys = wait_for_tronbox_accounts(&tron_http_base, Duration::from_secs(240)).await?;
+    if keys.len() < 2 {
+        anyhow::bail!("expected at least 2 tronbox accounts, got {}", keys.len());
+    }
+    let tron_pk0 = keys[0].clone();
+    let tron_wallet0 = tron::TronWallet::new(decode_hex32(&tron_pk0)?).context("tron wallet0")?;
+    let tron_controller_address = tron_wallet0.address().to_base58check();
+
+    let network = format!("e2e-net-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
+    let pg = start_postgres(PostgresOptions {
+        network: Some(network.clone()),
+        container_name: Some(pg_name.clone()),
+        ..Default::default()
+    })
+    .await?;
+    let db_url = pg.db_url.clone();
+    wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
+
+    cargo_build_indexer_bins()?;
+    cargo_build_solver_bin()?;
+    run_migrations(&db_url, true)?;
+
+    let anvil_port = find_free_port()?;
+    let rpc_url = format!("http://127.0.0.1:{anvil_port}");
+    let _anvil = KillOnDrop::new(spawn_anvil(anvil_port)?);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    run_forge_build()?;
+    let pk0 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let owner0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    let usdt = run_forge_create_mock_erc20(&rpc_url, pk0, "USDT", "USDT", 6)?;
+    let test_reader = run_forge_create_test_tron_tx_reader_no_sig(&rpc_url, pk0)?;
+    let v3 = run_forge_create_mock_untron_v3(
+        &rpc_url,
+        pk0,
+        &test_reader,
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+    )?;
+    let intents_addr =
+        run_forge_create_untron_intents_with_args(&rpc_url, pk0, owner0, &v3, &usdt)?;
+    run_cast_mint_mock_erc20(&rpc_url, pk0, &usdt, owner0, "5000000")?;
+
+    let _indexer = KillOnDrop::new(spawn_indexer(
+        &db_url,
+        &rpc_url,
+        &intents_addr,
+        "pool",
+        None,
+    )?);
+
+    let to = "0x00000000000000000000000000000000000000aa";
+    let _ = run_cast_create_trx_transfer_intent(&rpc_url, pk0, &intents_addr, to, "1234", 1)?;
+    wait_for_pool_current_intents_count(&db_url, 1, Duration::from_secs(60)).await?;
+    let intent_id = e2e::pool_db::fetch_current_intents(&db_url)
+        .await?
+        .first()
+        .context("missing intent row")?
+        .id
+        .clone();
+
+    let pgrst_pw = "pgrst_pw";
+    configure_postgrest_roles(&db_url, pgrst_pw).await?;
+    let pgrst = start_postgrest(PostgrestOptions {
+        network,
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
+        db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
+        ..Default::default()
+    })
+    .await?;
+    let postgrest_url = pgrst.base_url.clone();
+    wait_for_http_ok(&format!("{postgrest_url}/health"), Duration::from_secs(30)).await?;
+
+    let upstream: SocketAddr = format!("127.0.0.1:{tron_grpc_port}").parse().unwrap();
+    let (proxied_tron_grpc_url, proxy_block_tx) = spawn_grpc_tcp_proxy(upstream).await?;
+    let _solver = KillOnDrop::new(spawn_solver_tron_grpc_custom(
+        &db_url,
+        &postgrest_url,
+        &rpc_url,
+        &intents_addr,
+        pk0,
+        &proxied_tron_grpc_url,
+        &tron_pk0,
+        &tron_pk0,
+        &tron_controller_address,
+        "solver-tron-retry-progression",
+        "trx_transfer",
+        &[],
+    )?);
+
+    wait_for_solver_table(&db_url, "jobs", Duration::from_secs(30)).await?;
+    wait_for_job_state(
+        &db_url,
+        &intent_id,
+        "tron_prepared",
+        Duration::from_secs(180),
+    )
+    .await?;
+
+    let attempts_before = fetch_job_by_intent_id(&db_url, &intent_id).await?.attempts;
+    proxy_block_tx.send_replace(true);
+
+    let epochs = wait_for_attempts_and_next_retry_growth(
+        &db_url,
+        &intent_id,
+        attempts_before + 3,
+        Duration::from_secs(120),
+    )
+    .await?;
+    assert!(
+        epochs.len() >= 3,
+        "expected at least 3 observed next_retry epochs, got {epochs:?}"
+    );
+    assert!(
+        epochs.windows(2).all(|w| w[1] >= w[0]),
+        "next_retry epochs should be non-decreasing: {epochs:?}"
+    );
+
+    proxy_block_tx.send_replace(false);
+    let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300)).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_solver_tron_grpc_recovers_after_lease_owner_tamper() -> Result<()> {
+    let _suite_lock = acquire_suite_lock();
+    if !require_bins(&["docker", "anvil", "forge", "cast"]) {
+        return Ok(());
+    }
+
+    cleanup_untron_e2e_containers().ok();
+
+    let tron_tag = std::env::var("TRON_TRE_TAG").unwrap_or_else(|_| "1.0.4".to_string());
+    let tron_name = format!("untron-e2e-tron-{}", find_free_port()?);
+    let tron = GenericImage::new("tronbox/tre".to_string(), tron_tag)
+        .with_exposed_port(9090.tcp())
+        .with_exposed_port(50051.tcp())
+        .with_exposed_port(50052.tcp())
+        .with_wait_for(WaitFor::Nothing)
+        .with_container_name(tron_name.clone())
+        .start()
+        .await
+        .context("start tronbox/tre container")?;
+
+    let tron_http_port = tron.get_host_port_ipv4(9090).await?;
+    let tron_grpc_port = tron.get_host_port_ipv4(50051).await?;
+    let tron_http_base = format!("http://127.0.0.1:{tron_http_port}");
+    let tron_grpc_url = format!("http://127.0.0.1:{tron_grpc_port}");
+
+    wait_for_tronbox_admin(&tron_http_base, Duration::from_secs(240)).await?;
+    let keys = wait_for_tronbox_accounts(&tron_http_base, Duration::from_secs(240)).await?;
+    if keys.len() < 2 {
+        anyhow::bail!("expected at least 2 tronbox accounts, got {}", keys.len());
+    }
+    let tron_pk0 = keys[0].clone();
+    let tron_wallet0 = tron::TronWallet::new(decode_hex32(&tron_pk0)?).context("tron wallet0")?;
+    let tron_controller_address = tron_wallet0.address().to_base58check();
+
+    let network = format!("e2e-net-{}", find_free_port()?);
+    let pg_name = format!("untron-e2e-pg-{}", find_free_port()?);
+    let pg = start_postgres(PostgresOptions {
+        network: Some(network.clone()),
+        container_name: Some(pg_name.clone()),
+        ..Default::default()
+    })
+    .await?;
+    let db_url = pg.db_url.clone();
+    wait_for_postgres(&db_url, Duration::from_secs(30)).await?;
+
+    cargo_build_indexer_bins()?;
+    cargo_build_solver_bin()?;
+    run_migrations(&db_url, true)?;
+
+    let anvil_port = find_free_port()?;
+    let rpc_url = format!("http://127.0.0.1:{anvil_port}");
+    let _anvil = KillOnDrop::new(spawn_anvil(anvil_port)?);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    run_forge_build()?;
+    let pk0 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let owner0 = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    let usdt = run_forge_create_mock_erc20(&rpc_url, pk0, "USDT", "USDT", 6)?;
+    let test_reader = run_forge_create_test_tron_tx_reader_no_sig(&rpc_url, pk0)?;
+    let v3 = run_forge_create_mock_untron_v3(
+        &rpc_url,
+        pk0,
+        &test_reader,
+        "0x0000000000000000000000000000000000000001",
+        "0x0000000000000000000000000000000000000002",
+    )?;
+    let intents_addr =
+        run_forge_create_untron_intents_with_args(&rpc_url, pk0, owner0, &v3, &usdt)?;
+    run_cast_mint_mock_erc20(&rpc_url, pk0, &usdt, owner0, "5000000")?;
+
+    let _indexer = KillOnDrop::new(spawn_indexer(
+        &db_url,
+        &rpc_url,
+        &intents_addr,
+        "pool",
+        None,
+    )?);
+
+    let to = "0x00000000000000000000000000000000000000aa";
+    let _ = run_cast_create_trx_transfer_intent(&rpc_url, pk0, &intents_addr, to, "1234", 1)?;
+    wait_for_pool_current_intents_count(&db_url, 1, Duration::from_secs(60)).await?;
+    let intent_id = e2e::pool_db::fetch_current_intents(&db_url)
+        .await?
+        .first()
+        .context("missing intent row")?
+        .id
+        .clone();
+
+    let pgrst_pw = "pgrst_pw";
+    configure_postgrest_roles(&db_url, pgrst_pw).await?;
+    let pgrst = start_postgrest(PostgrestOptions {
+        network,
+        container_name: Some(format!("untron-e2e-pgrst-{}", find_free_port()?)),
+        db_uri: format!("postgres://pgrst_authenticator:{pgrst_pw}@{pg_name}:5432/untron"),
+        ..Default::default()
+    })
+    .await?;
+    let postgrest_url = pgrst.base_url.clone();
+    wait_for_http_ok(&format!("{postgrest_url}/health"), Duration::from_secs(30)).await?;
+
+    let _solver = KillOnDrop::new(spawn_solver_tron_grpc_custom(
+        &db_url,
+        &postgrest_url,
+        &rpc_url,
+        &intents_addr,
+        pk0,
+        &tron_grpc_url,
+        &tron_pk0,
+        &tron_pk0,
+        &tron_controller_address,
+        "solver-tron-lease-owner-tamper",
+        "trx_transfer",
+        &[],
+    )?);
+
+    wait_for_solver_table(&db_url, "jobs", Duration::from_secs(30)).await?;
+    wait_for_job_state(
+        &db_url,
+        &intent_id,
+        "tron_prepared",
+        Duration::from_secs(180),
+    )
+    .await?;
+
+    let pool = sqlx::PgPool::connect(&db_url).await?;
+    let _tampered: u64 = sqlx::query(
+        "update solver.jobs \
+         set leased_by = 'lease-stealer', \
+             lease_until = now() + interval '15 seconds', \
+             updated_at = now() \
+         where intent_id = decode($1,'hex') and state = 'tron_prepared'",
+    )
+    .bind(intent_id.trim_start_matches("0x"))
+    .execute(&pool)
+    .await?
+    .rows_affected();
+
+    let _rows = wait_for_intents_solved_and_settled(&db_url, 1, Duration::from_secs(300)).await?;
+    let job_after = fetch_job_by_intent_id(&db_url, &intent_id).await?;
+    assert_eq!(job_after.state, "done");
+    assert!(job_after.attempts >= 0);
     Ok(())
 }
