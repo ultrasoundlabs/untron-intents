@@ -90,7 +90,11 @@ pub(super) async fn finalize_after_prove(ctx: &JobCtx, job: &SolverJob) -> Resul
                 }
                 if status.solved && !status.funded {
                     ctx.db
-                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
+                        .record_job_state(
+                            job.job_id,
+                            &ctx.instance_id,
+                            JobState::ProvedWaitingFunding,
+                        )
                         .await?;
                     ctx.telemetry.job_state_transition(
                         job.intent_type,
@@ -101,7 +105,11 @@ pub(super) async fn finalize_after_prove(ctx: &JobCtx, job: &SolverJob) -> Resul
                 }
                 if status.solved && status.funded && !status.settled {
                     ctx.db
-                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
+                        .record_job_state(
+                            job.job_id,
+                            &ctx.instance_id,
+                            JobState::ProvedWaitingSettlement,
+                        )
                         .await?;
                     ctx.telemetry.job_state_transition(
                         job.intent_type,

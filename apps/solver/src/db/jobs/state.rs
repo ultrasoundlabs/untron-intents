@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::JobState;
 
 impl SolverDb {
     pub async fn record_claim(
@@ -7,7 +8,7 @@ impl SolverDb {
         leased_by: &str,
         claim_tx_hash: [u8; 32],
     ) -> Result<()> {
-        let expected_states = super::transitions::expected_state_binds("claimed")?;
+        let expected_states = super::transitions::expected_state_binds_for(JobState::Claimed);
         let n = sqlx::query(
             "update solver.jobs set state='claimed', claim_tx_hash=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
@@ -33,7 +34,7 @@ impl SolverDb {
         leased_by: &str,
         tron_txid: [u8; 32],
     ) -> Result<()> {
-        let expected_states = super::transitions::expected_state_binds("tron_sent")?;
+        let expected_states = super::transitions::expected_state_binds_for(JobState::TronSent);
         let n = sqlx::query(
             "update solver.jobs set state='tron_sent', tron_txid=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
@@ -57,8 +58,8 @@ impl SolverDb {
         self.update_job_state_from(
             job_id,
             leased_by,
-            "proof_built",
-            super::transitions::expected_previous_states_for_transition("proof_built")?,
+            JobState::ProofBuilt.as_db_str(),
+            super::transitions::expected_previous_state_names_for(JobState::ProofBuilt),
         )
         .await
     }
@@ -69,7 +70,7 @@ impl SolverDb {
         leased_by: &str,
         prove_tx_hash: [u8; 32],
     ) -> Result<()> {
-        let expected_states = super::transitions::expected_state_binds("proved")?;
+        let expected_states = super::transitions::expected_state_binds_for(JobState::Proved);
         let n = sqlx::query(
             "update solver.jobs set state='proved', prove_tx_hash=$1, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
@@ -89,14 +90,19 @@ impl SolverDb {
         Ok(())
     }
 
-    pub async fn record_job_state(&self, job_id: i64, leased_by: &str, state: &str) -> Result<()> {
-        let expected = super::transitions::expected_previous_states_for_transition(state)?;
-        self.update_job_state_from(job_id, leased_by, state, expected)
+    pub async fn record_job_state(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        state: JobState,
+    ) -> Result<()> {
+        let expected = super::transitions::expected_previous_state_names_for(state);
+        self.update_job_state_from(job_id, leased_by, state.as_db_str(), expected)
             .await
     }
 
     pub async fn record_done(&self, job_id: i64, leased_by: &str) -> Result<()> {
-        self.record_job_state(job_id, leased_by, "done").await
+        self.record_job_state(job_id, leased_by, JobState::Done).await
     }
 
     pub async fn record_retryable_error(

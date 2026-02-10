@@ -617,7 +617,11 @@ pub(super) async fn process_proved_state(
             if row.solved && !row.funded {
                 if state != JobState::ProvedWaitingFunding {
                     ctx.db
-                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_funding")
+                        .record_job_state(
+                            job.job_id,
+                            &ctx.instance_id,
+                            JobState::ProvedWaitingFunding,
+                        )
                         .await?;
                     ctx.telemetry.job_state_transition(
                         job.intent_type,
@@ -630,7 +634,11 @@ pub(super) async fn process_proved_state(
             if row.solved && row.funded && !row.settled {
                 if state != JobState::ProvedWaitingSettlement {
                     ctx.db
-                        .record_job_state(job.job_id, &ctx.instance_id, "proved_waiting_settlement")
+                        .record_job_state(
+                            job.job_id,
+                            &ctx.instance_id,
+                            JobState::ProvedWaitingSettlement,
+                        )
                         .await?;
                     ctx.telemetry.job_state_transition(
                         job.intent_type,
