@@ -15,7 +15,6 @@ use anyhow::{Context, Result};
 use std::{future::Future, time::Instant};
 
 const CLAIM_WINDOW_SECS: i64 = 120;
-const SAFE4337_MAX_CLAIMED_UNPROVED_JOBS: i64 = 1;
 
 fn now_unix_secs() -> i64 {
     std::time::SystemTime::now()
@@ -62,8 +61,13 @@ async fn enforce_claim_submission_preconditions(
     ty: IntentType,
 ) -> Result<bool> {
     if ctx.cfg.hub.tx_mode == HubTxMode::Safe4337 {
+        let safe4337_max_claimed_unproved_jobs = i64::try_from(
+            ctx.cfg.jobs.safe4337_max_claimed_unproved_jobs,
+        )
+        .unwrap_or(i64::MAX)
+        .max(1);
         let claimed_unproved = ctx.db.count_claimed_unproved_jobs().await?;
-        if claimed_unproved >= SAFE4337_MAX_CLAIMED_UNPROVED_JOBS {
+        if claimed_unproved >= safe4337_max_claimed_unproved_jobs {
             ctx.db
                 .record_retryable_error(
                     job.job_id,

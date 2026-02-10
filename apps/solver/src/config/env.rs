@@ -109,6 +109,8 @@ pub(super) struct Env {
 
     #[serde(default)]
     pub solver_max_in_flight_jobs: u64,
+    #[serde(default)]
+    pub solver_safe4337_max_claimed_unproved_jobs: u64,
 
     #[serde(default)]
     pub solver_concurrency_trx_transfer: u64,
@@ -297,6 +299,7 @@ impl Default for Env {
             process_controller_max_events: 100,
             fill_max_claims: 50,
             solver_max_in_flight_jobs: 50,
+            solver_safe4337_max_claimed_unproved_jobs: 1,
             solver_concurrency_trx_transfer: 4,
             solver_concurrency_usdt_transfer: 2,
             solver_concurrency_delegate_resource: 1,

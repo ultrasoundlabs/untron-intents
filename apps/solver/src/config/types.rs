@@ -143,6 +143,8 @@ pub struct JobConfig {
     pub process_controller_max_events: u64,
     pub fill_max_claims: u64,
     pub max_in_flight_jobs: u64,
+    /// Max number of claimed/unproved jobs allowed before new Safe4337 claims are backpressured.
+    pub safe4337_max_claimed_unproved_jobs: u64,
 
     /// Max concurrent jobs per intent type (best-effort backpressure).
     pub concurrency_trx_transfer: u64,

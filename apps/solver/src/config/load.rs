@@ -223,6 +223,9 @@ pub(super) fn load_config() -> Result<AppConfig> {
                 .solver_max_in_flight_jobs
                 .max(1)
                 .min(env.fill_max_claims.max(1)),
+            safe4337_max_claimed_unproved_jobs: env
+                .solver_safe4337_max_claimed_unproved_jobs
+                .max(1),
             concurrency_trx_transfer: env.solver_concurrency_trx_transfer.max(1),
             concurrency_usdt_transfer: env.solver_concurrency_usdt_transfer.max(1),
             concurrency_delegate_resource: env.solver_concurrency_delegate_resource.max(1),
