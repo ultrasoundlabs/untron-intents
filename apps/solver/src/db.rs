@@ -20,6 +20,7 @@ pub struct SolverJob {
     pub intent_type: i16,
     pub intent_specs: Vec<u8>,
     pub deadline: i64,
+    pub claim_window_expires_at_unix: Option<i64>,
     pub state: String,
     pub attempts: i32,
     pub tron_txid: Option<[u8; 32]>,

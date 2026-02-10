@@ -39,6 +39,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
         14,
         include_str!("../../db/migrations/0014_rental_provider_freeze.sql"),
     ),
+    (
+        15,
+        include_str!("../../db/migrations/0015_claim_window_deadline.sql"),
+    ),
 ];
 
 impl SolverDb {

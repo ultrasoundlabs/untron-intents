@@ -556,6 +556,25 @@ impl HubClient {
         Ok(state.solver)
     }
 
+    pub async fn intent_solver_claimed_at(&self, id: B256) -> Result<(Address, u64)> {
+        let (pool, provider, telemetry) = match &self.inner {
+            HubClientInner::Eoa(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+            HubClientInner::Safe4337(c) => (c.pool, c.provider.clone(), c.telemetry.clone()),
+        };
+        let pool = IUntronIntents::new(pool, provider);
+        let started = Instant::now();
+        let res = pool.intents(id).call().await;
+        let ok = res.is_ok();
+        telemetry.hub_rpc_ms(
+            "intent_solver_claimed_at",
+            ok,
+            started.elapsed().as_millis() as u64,
+        );
+        let state = res.context("IUntronIntents.intents")?;
+        let solver_claimed_at = u64::try_from(state.solverClaimedAt).unwrap_or(u64::MAX);
+        Ok((state.solver, solver_claimed_at))
+    }
+
     pub async fn mock_set_transfer_tx(
         &self,
         reader: Address,

@@ -14,11 +14,67 @@ use alloy::sol_types::SolCall;
 use anyhow::{Context, Result};
 use std::{future::Future, time::Instant};
 
+const CLAIM_WINDOW_SECS: i64 = 120;
+const SAFE4337_MAX_CLAIMED_UNPROVED_JOBS: i64 = 1;
+
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+async fn refresh_claim_window_expires_at(ctx: &JobCtx, job: &SolverJob, id: B256) -> Result<()> {
+    let fallback = now_unix_secs().saturating_add(CLAIM_WINDOW_SECS);
+    let expires_at_unix = match ctx.hub.intent_solver_claimed_at(id).await {
+        Ok((solver, claimed_at)) if solver == ctx.hub.solver_address() && claimed_at > 0 => {
+            i64::try_from(claimed_at)
+                .unwrap_or(i64::MAX)
+                .saturating_add(CLAIM_WINDOW_SECS)
+        }
+        Ok((solver, claimed_at)) => {
+            tracing::warn!(
+                id = %id,
+                solver = ?solver,
+                claimed_at,
+                "unable to confirm onchain claim timestamp for this solver; using fallback expiry"
+            );
+            fallback
+        }
+        Err(err) => {
+            tracing::warn!(
+                id = %id,
+                err = %err,
+                "failed to fetch onchain claim timestamp; using fallback expiry"
+            );
+            fallback
+        }
+    };
+    ctx.db
+        .set_claim_window_expires_at(job.job_id, &ctx.instance_id, Some(expires_at_unix))
+        .await?;
+    Ok(())
+}
+
 async fn enforce_claim_submission_preconditions(
     ctx: &JobCtx,
     job: &SolverJob,
     ty: IntentType,
 ) -> Result<bool> {
+    if ctx.cfg.hub.tx_mode == HubTxMode::Safe4337 {
+        let claimed_unproved = ctx.db.count_claimed_unproved_jobs().await?;
+        if claimed_unproved >= SAFE4337_MAX_CLAIMED_UNPROVED_JOBS {
+            ctx.db
+                .record_retryable_error(
+                    job.job_id,
+                    &ctx.instance_id,
+                    "claim_window_backpressure",
+                    std::time::Duration::from_secs(5),
+                )
+                .await?;
+            return Ok(true);
+        }
+    }
     if let Some(wait) = retry::enforce_claim_rate_limits(ctx, ty).await? {
         ctx.db
             .record_retryable_error(
@@ -238,6 +294,7 @@ fn included_userop_failure_message(prefix: &str, row: &HubUserOpRow) -> String {
 async fn reconcile_included_claim_userop(
     ctx: &JobCtx,
     job: &SolverJob,
+    id: B256,
     row: &HubUserOpRow,
 ) -> Result<()> {
     if !row.success.unwrap_or(false) {
@@ -261,6 +318,7 @@ async fn reconcile_included_claim_userop(
     ctx.db
         .record_claim(job.job_id, &ctx.instance_id, tx_hash)
         .await?;
+    refresh_claim_window_expires_at(ctx, job, id).await?;
     ctx.telemetry
         .job_state_transition(job.intent_type, "ready", "claimed");
     Ok(())
@@ -398,6 +456,7 @@ pub(super) async fn process_ready_state(
                             b256_to_bytes32(receipt.transaction_hash),
                         )
                         .await?;
+                    refresh_claim_window_expires_at(ctx, job, id).await?;
                     ctx.telemetry
                         .job_state_transition(job.intent_type, "ready", "claimed");
                     Ok(())
@@ -414,6 +473,7 @@ pub(super) async fn process_ready_state(
                                         JobState::Claimed,
                                     )
                                     .await?;
+                                refresh_claim_window_expires_at(ctx, job, id).await?;
                                 ctx.telemetry.job_state_transition(
                                     job.intent_type,
                                     "ready",
@@ -463,7 +523,7 @@ pub(super) async fn process_ready_state(
             if let Some(r) = row.as_ref() {
                 // Recover from partial persistence: included userop without advanced job state.
                 if r.state == "included" {
-                    reconcile_included_claim_userop(ctx, job, r).await?;
+                    reconcile_included_claim_userop(ctx, job, id, r).await?;
                     return Ok(());
                 }
                 if delete_stale_prepared_userop_if_needed(
@@ -544,6 +604,7 @@ pub(super) async fn process_ready_state(
                         ctx.db
                             .record_claim(job.job_id, &ctx.instance_id, b256_to_bytes32(tx_hash))
                             .await?;
+                        refresh_claim_window_expires_at(ctx, job, id).await?;
                         ctx.telemetry
                             .job_state_transition(job.intent_type, "ready", "claimed");
                     } else {

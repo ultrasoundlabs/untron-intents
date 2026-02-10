@@ -72,7 +72,7 @@ impl SolverDb {
     ) -> Result<()> {
         let expected_states = super::transitions::expected_state_binds_for(JobState::Proved);
         let n = sqlx::query(
-            "update solver.jobs set state='proved', prove_tx_hash=$1, updated_at=now() \
+            "update solver.jobs set state='proved', prove_tx_hash=$1, claim_window_expires_at=null, updated_at=now() \
              where job_id=$2 and leased_by=$3 and lease_until >= now() \
                and state = any($4::text[])",
         )
@@ -83,6 +83,33 @@ impl SolverDb {
         .execute(&self.pool)
         .await
         .context("record prove")?
+        .rows_affected();
+        if n != 1 {
+            anyhow::bail!("lost job lease for job_id={job_id}");
+        }
+        Ok(())
+    }
+
+    pub async fn set_claim_window_expires_at(
+        &self,
+        job_id: i64,
+        leased_by: &str,
+        claim_window_expires_at_unix: Option<i64>,
+    ) -> Result<()> {
+        let claim_window_expires_at_secs = claim_window_expires_at_unix.map(|v| v as f64);
+        let n = sqlx::query(
+            "update solver.jobs set \
+                claim_window_expires_at = to_timestamp($1::double precision), \
+                updated_at = now() \
+             where job_id=$2 and leased_by=$3 and lease_until >= now() \
+               and state in ('claimed', 'tron_prepared', 'tron_sent', 'proof_built')",
+        )
+        .bind(claim_window_expires_at_secs)
+        .bind(job_id)
+        .bind(leased_by)
+        .execute(&self.pool)
+        .await
+        .context("set claim_window_expires_at")?
         .rows_affected();
         if n != 1 {
             anyhow::bail!("lost job lease for job_id={job_id}");
@@ -211,6 +238,18 @@ impl SolverDb {
         .fetch_one(&self.pool)
         .await
         .context("count_recent_fatal_errors")?;
+        Ok(row.try_get::<i64, _>("n")?)
+    }
+
+    pub async fn count_claimed_unproved_jobs(&self) -> Result<i64> {
+        let row = sqlx::query(
+            "select count(*)::bigint as n \
+             from solver.jobs \
+             where state in ('claimed', 'tron_prepared', 'tron_sent', 'proof_built')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .context("count_claimed_unproved_jobs")?;
         Ok(row.try_get::<i64, _>("n")?)
     }
 

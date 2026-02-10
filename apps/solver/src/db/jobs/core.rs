@@ -87,7 +87,10 @@ impl SolverDb {
                         (lease_until is null or lease_until < now()) \
                         or (leased_by = $2 and lease_until >= now()) \
                     ) \
-                order by job_id asc \
+                order by \
+                    (case when state in ('claimed', 'tron_prepared', 'tron_sent', 'proof_built') then 0 else 1 end) asc, \
+                    claim_window_expires_at asc nulls last, \
+                    job_id asc \
                 limit $1 \
                 for update skip locked \
             ) \
@@ -97,7 +100,9 @@ impl SolverDb {
                 updated_at = now() \
             from cte \
             where j.job_id = cte.job_id \
-            returning j.job_id, j.intent_id, j.intent_type, j.intent_specs, j.deadline, j.state, j.attempts, j.tron_txid",
+            returning j.job_id, j.intent_id, j.intent_type, j.intent_specs, j.deadline, \
+                      extract(epoch from j.claim_window_expires_at)::bigint as claim_window_expires_at_unix, \
+                      j.state, j.attempts, j.tron_txid",
         )
         .bind(limit)
         .bind(leased_by)
@@ -127,6 +132,7 @@ impl SolverDb {
                 intent_type: row.try_get("intent_type")?,
                 intent_specs: row.try_get("intent_specs")?,
                 deadline: row.try_get("deadline")?,
+                claim_window_expires_at_unix: row.try_get("claim_window_expires_at_unix")?,
                 state: row.try_get("state")?,
                 attempts: row.try_get("attempts")?,
                 tron_txid,
