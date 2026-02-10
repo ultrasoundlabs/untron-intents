@@ -1,4 +1,4 @@
-use super::super::{JobCtx, LEASE_FOR_SECS, SolverJob, retry};
+use super::super::{JobCtx, SolverJob, lease, retry};
 use crate::{
     db::{TronSignedTxRow, TronTxCostsRow},
     types::IntentType,
@@ -38,13 +38,7 @@ pub(crate) async fn process_tron_prepared_state(
     };
 
     for row in &txs {
-        ctx.db
-            .renew_job_lease(
-                job.job_id,
-                &ctx.instance_id,
-                std::time::Duration::from_secs(LEASE_FOR_SECS),
-            )
-            .await?;
+        lease::renew_job_lease(ctx, job.job_id).await?;
 
         // If already included, skip.
         let included = match ctx.tron.fetch_transaction_info(row.txid).await {
@@ -67,7 +61,12 @@ pub(crate) async fn process_tron_prepared_state(
             .await
             .context("acquire tron_broadcast_sem")?;
         let started = Instant::now();
-        let res = ctx.tron.broadcast_signed_tx(&row.tx_bytes).await;
+        let res = lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron.broadcast_signed_tx(&row.tx_bytes),
+        )
+        .await;
         let ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(()) => {
@@ -91,56 +90,48 @@ pub(crate) async fn process_tron_prepared_state(
         }
 
         // Wait until included so subsequent steps are reliably funded.
-        let started = Instant::now();
-        let mut next_lease_refresh = started + std::time::Duration::from_secs(10);
-        loop {
-            if Instant::now() >= next_lease_refresh {
-                ctx.db
-                    .renew_job_lease(
-                        job.job_id,
-                        &ctx.instance_id,
-                        std::time::Duration::from_secs(LEASE_FOR_SECS),
-                    )
-                    .await?;
-                next_lease_refresh = Instant::now() + std::time::Duration::from_secs(10);
-            }
-            if started.elapsed() > std::time::Duration::from_secs(60) {
-                ctx.db
-                    .record_retryable_error(
-                        job.job_id,
-                        &ctx.instance_id,
-                        "tron tx inclusion timeout",
-                        retry::retry_delay(job.attempts),
-                    )
-                    .await?;
-                return Ok(());
-            }
-            match ctx.tron.fetch_transaction_info(row.txid).await {
-                Ok(Some(info)) if info.block_number > 0 => {
-                    let receipt = info.receipt.as_ref();
-                    let costs = TronTxCostsRow {
-                        fee_sun: Some(info.fee),
-                        energy_usage_total: receipt.map(|r| r.energy_usage_total),
-                        net_usage: receipt.map(|r| r.net_usage),
-                        energy_fee_sun: receipt.map(|r| r.energy_fee),
-                        net_fee_sun: receipt.map(|r| r.net_fee),
-                        block_number: Some(info.block_number),
-                        block_timestamp: Some(info.block_time_stamp),
-                        result_code: Some(info.result),
-                        result_message: Some(
-                            String::from_utf8_lossy(&info.res_message).into_owned(),
-                        ),
-                    };
-                    let _ = ctx
-                        .db
-                        .upsert_tron_tx_costs(job.job_id, row.txid, Some(job.intent_type), &costs)
-                        .await;
-                    break;
+        let wait_inclusion = async {
+            let started = Instant::now();
+            loop {
+                if started.elapsed() > std::time::Duration::from_secs(60) {
+                    anyhow::bail!("tron tx inclusion timeout");
                 }
-                _ => {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                match ctx.tron.fetch_transaction_info(row.txid).await {
+                    Ok(Some(info)) if info.block_number > 0 => {
+                        let receipt = info.receipt.as_ref();
+                        let costs = TronTxCostsRow {
+                            fee_sun: Some(info.fee),
+                            energy_usage_total: receipt.map(|r| r.energy_usage_total),
+                            net_usage: receipt.map(|r| r.net_usage),
+                            energy_fee_sun: receipt.map(|r| r.energy_fee),
+                            net_fee_sun: receipt.map(|r| r.net_fee),
+                            block_number: Some(info.block_number),
+                            block_timestamp: Some(info.block_time_stamp),
+                            result_code: Some(info.result),
+                            result_message: Some(
+                                String::from_utf8_lossy(&info.res_message).into_owned(),
+                            ),
+                        };
+                        let _ = ctx
+                            .db
+                            .upsert_tron_tx_costs(job.job_id, row.txid, Some(job.intent_type), &costs)
+                            .await;
+                        return Ok(());
+                    }
+                    _ => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
                 }
             }
+        };
+        if let Err(err) = lease::with_lease_heartbeat(ctx, job.job_id, wait_inclusion).await {
+            ctx.db
+                .record_retryable_error(
+                    job.job_id,
+                    &ctx.instance_id,
+                    &err.to_string(),
+                    retry::retry_delay(job.attempts),
+                )
+                .await?;
+            return Ok(());
         }
     }
 

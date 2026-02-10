@@ -1,11 +1,10 @@
 use super::super::{
-    JobCtx, LEASE_FOR_SECS, SolverJob, decode_trigger_contract_and_selector, retry,
+    JobCtx, SolverJob, decode_trigger_contract_and_selector, lease, retry,
 };
 use crate::{config::TronMode, db::TronProofRow, db::TronTxCostsRow, types::IntentType};
 use alloy::primitives::B256;
 use anyhow::Result;
 use std::time::Instant;
-use tokio::time::MissedTickBehavior;
 
 pub(crate) async fn process_tron_sent_state(
     ctx: &JobCtx,
@@ -26,32 +25,8 @@ pub(crate) async fn process_tron_sent_state(
     };
     tracing::info!(id = %id, "building tron proof");
     let started = Instant::now();
-    ctx.db
-        .renew_job_lease(
-            job.job_id,
-            &ctx.instance_id,
-            std::time::Duration::from_secs(LEASE_FOR_SECS),
-        )
-        .await?;
-
-    let mut build_proof = Box::pin(ctx.tron.build_proof(txid));
-    let mut lease_tick = tokio::time::interval(std::time::Duration::from_secs(10));
-    lease_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    lease_tick.tick().await;
-    let tron = match loop {
-        tokio::select! {
-            res = &mut build_proof => break res,
-            _ = lease_tick.tick() => {
-                ctx.db
-                    .renew_job_lease(
-                        job.job_id,
-                        &ctx.instance_id,
-                        std::time::Duration::from_secs(LEASE_FOR_SECS),
-                    )
-                    .await?;
-            }
-        }
-    } {
+    let tron = match lease::with_lease_heartbeat(ctx, job.job_id, ctx.tron.build_proof(txid)).await
+    {
         Ok(v) => v,
         Err(err) => {
             ctx.telemetry

@@ -21,6 +21,7 @@ mod candidate;
 mod context;
 mod hub_flow;
 mod job;
+mod lease;
 mod retry;
 mod tron_flow;
 

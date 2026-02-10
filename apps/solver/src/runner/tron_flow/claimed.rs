@@ -1,7 +1,7 @@
 use super::super::{
     JobCtx, SolverJob, b256_to_bytes32, decode_trigger_contract_and_selector,
     duration_hours_for_lock_period_blocks, ensure_delegate_reservation,
-    looks_like_tron_contract_failure, looks_like_tron_server_busy, retry,
+    lease, looks_like_tron_contract_failure, looks_like_tron_server_busy, retry,
 };
 use crate::{
     config::TronMode,
@@ -29,16 +29,25 @@ pub(crate) async fn process_claimed_state(
     // whole plan as (pre txs + final tx), then broadcast them in order in tron_prepared.
     if matches!(ty, IntentType::TrxTransfer | IntentType::UsdtTransfer) {
         let plan = match ty {
-            IntentType::TrxTransfer => ctx
-                .tron
-                .prepare_trx_transfer_plan(&job.intent_specs)
+            IntentType::TrxTransfer => {
+                lease::with_lease_heartbeat(
+                    ctx,
+                    job.job_id,
+                    ctx.tron.prepare_trx_transfer_plan(&job.intent_specs),
+                )
                 .await
-                .context("prepare trx transfer plan")?,
-            IntentType::UsdtTransfer => ctx
-                .tron
-                .prepare_usdt_transfer_plan(ctx.hub.as_ref(), &job.intent_specs)
+                .context("prepare trx transfer plan")?
+            }
+            IntentType::UsdtTransfer => {
+                lease::with_lease_heartbeat(
+                    ctx,
+                    job.job_id,
+                    ctx.tron
+                        .prepare_usdt_transfer_plan(ctx.hub.as_ref(), &job.intent_specs),
+                )
                 .await
-                .context("prepare usdt transfer plan")?,
+                .context("prepare usdt transfer plan")?
+            }
             _ => unreachable!(),
         };
 
@@ -80,11 +89,14 @@ pub(crate) async fn process_claimed_state(
     }
 
     let exec_res = match ty {
-        IntentType::TriggerSmartContract => ctx
-            .tron
-            .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs)
-            .await
-            .context("prepare trigger smart contract"),
+        IntentType::TriggerSmartContract => lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron
+                .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs),
+        )
+        .await
+        .context("prepare trigger smart contract"),
         IntentType::DelegateResource => {
             let pk = match ctx.db.get_delegate_reservation_for_job(job.job_id).await? {
                 Some(r) => {
@@ -106,9 +118,17 @@ pub(crate) async fn process_claimed_state(
                 }
                 None => ensure_delegate_reservation(ctx, job).await?,
             };
-            ctx.tron
-                .prepare_delegate_resource_with_key(ctx.hub.as_ref(), id, pk, &job.intent_specs)
-                .await
+            lease::with_lease_heartbeat(
+                ctx,
+                job.job_id,
+                ctx.tron.prepare_delegate_resource_with_key(
+                    ctx.hub.as_ref(),
+                    id,
+                    pk,
+                    &job.intent_specs,
+                ),
+            )
+            .await
                 .context("prepare delegate resource (reserved key)")
         }
         _ => unreachable!(),
@@ -151,26 +171,37 @@ async fn process_claimed_state_mock(
 ) -> Result<()> {
     tracing::info!(id = %id, "executing tron tx (mock)");
     let exec_res = match ty {
-        IntentType::TriggerSmartContract => ctx
-            .tron
-            .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs)
-            .await
-            .context("execute trigger smart contract"),
-        IntentType::TrxTransfer => ctx
-            .tron
-            .prepare_trx_transfer(ctx.hub.as_ref(), id, &job.intent_specs)
-            .await
-            .context("execute trx transfer"),
-        IntentType::UsdtTransfer => ctx
-            .tron
-            .prepare_usdt_transfer(ctx.hub.as_ref(), id, &job.intent_specs)
-            .await
-            .context("execute usdt transfer"),
-        IntentType::DelegateResource => ctx
-            .tron
-            .prepare_delegate_resource(ctx.hub.as_ref(), id, &job.intent_specs)
-            .await
-            .context("execute delegate resource"),
+        IntentType::TriggerSmartContract => lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron
+                .prepare_trigger_smart_contract(ctx.hub.as_ref(), id, &job.intent_specs),
+        )
+        .await
+        .context("execute trigger smart contract"),
+        IntentType::TrxTransfer => lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron.prepare_trx_transfer(ctx.hub.as_ref(), id, &job.intent_specs),
+        )
+        .await
+        .context("execute trx transfer"),
+        IntentType::UsdtTransfer => lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron
+                .prepare_usdt_transfer(ctx.hub.as_ref(), id, &job.intent_specs),
+        )
+        .await
+        .context("execute usdt transfer"),
+        IntentType::DelegateResource => lease::with_lease_heartbeat(
+            ctx,
+            job.job_id,
+            ctx.tron
+                .prepare_delegate_resource(ctx.hub.as_ref(), id, &job.intent_specs),
+        )
+        .await
+        .context("execute delegate resource"),
     };
 
     let exec = match exec_res {
@@ -263,6 +294,7 @@ async fn process_delegate_resource_resell(ctx: &JobCtx, job: &SolverJob) -> Resu
             providers.sort_by_key(|c| if c.name == p { 0 } else { 1 });
         }
         for p in &providers {
+            let _ = lease::renew_job_lease(ctx, job.job_id).await;
             let provider = tron::JsonApiRentalProvider::new(p.clone());
             if ctx
                 .db
