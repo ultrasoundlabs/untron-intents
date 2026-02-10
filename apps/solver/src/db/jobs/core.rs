@@ -1,5 +1,32 @@
 use super::*;
 
+fn classify_transition_reject_reason(
+    expected_states: &[String],
+    current_state: Option<&str>,
+    current_leased_by: Option<&str>,
+    expected_leased_by: &str,
+    lease_valid: Option<bool>,
+    job_exists: bool,
+) -> &'static str {
+    if !job_exists {
+        return "job_not_found";
+    }
+
+    let Some(cs) = current_state else {
+        return "unknown_conflict";
+    };
+    if !expected_states.iter().any(|s| s == cs) {
+        return "state_mismatch";
+    }
+    if current_leased_by != Some(expected_leased_by) {
+        return "lease_owner_mismatch";
+    }
+    if lease_valid == Some(false) {
+        return "lease_expired";
+    }
+    "unknown_conflict"
+}
+
 impl SolverDb {
     pub async fn insert_job_if_new(
         &self,
@@ -167,8 +194,8 @@ impl SolverDb {
             .await
             .ok()
             .flatten();
+            let job_exists = diag.is_some();
 
-            let mut reason = "unknown_conflict";
             let mut current_state: Option<String> = None;
             let mut current_leased_by: Option<String> = None;
             let mut lease_valid: Option<bool> = None;
@@ -177,19 +204,15 @@ impl SolverDb {
                 current_state = row.try_get("state").ok();
                 current_leased_by = row.try_get("leased_by").ok();
                 lease_valid = row.try_get("lease_valid").ok();
-
-                if let Some(cs) = current_state.as_deref() {
-                    if !expected_states.iter().any(|s| s == cs) {
-                        reason = "state_mismatch";
-                    } else if current_leased_by.as_deref() != Some(leased_by) {
-                        reason = "lease_owner_mismatch";
-                    } else if lease_valid == Some(false) {
-                        reason = "lease_expired";
-                    }
-                }
-            } else {
-                reason = "job_not_found";
             }
+            let reason = classify_transition_reject_reason(
+                &expected_states,
+                current_state.as_deref(),
+                current_leased_by.as_deref(),
+                leased_by,
+                lease_valid,
+                job_exists,
+            );
 
             anyhow::bail!(
                 "[transition_reject:{reason}] rejected state transition for job_id={job_id}: expected one of {:?} -> {} (current_state={:?}, leased_by={:?}, lease_valid={:?})",
@@ -201,5 +224,68 @@ impl SolverDb {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_transition_reject_reason;
+
+    #[test]
+    fn classify_transition_reject_reason_cases() {
+        let expected = vec!["claimed".to_string(), "tron_prepared".to_string()];
+
+        assert_eq!(
+            classify_transition_reject_reason(
+                &expected,
+                Some("done"),
+                Some("solver-a"),
+                "solver-a",
+                Some(true),
+                true,
+            ),
+            "state_mismatch"
+        );
+
+        assert_eq!(
+            classify_transition_reject_reason(
+                &expected,
+                Some("claimed"),
+                Some("solver-b"),
+                "solver-a",
+                Some(true),
+                true,
+            ),
+            "lease_owner_mismatch"
+        );
+
+        assert_eq!(
+            classify_transition_reject_reason(
+                &expected,
+                Some("claimed"),
+                Some("solver-a"),
+                "solver-a",
+                Some(false),
+                true,
+            ),
+            "lease_expired"
+        );
+
+        assert_eq!(
+            classify_transition_reject_reason(
+                &expected,
+                Some("claimed"),
+                Some("solver-a"),
+                "solver-a",
+                Some(true),
+                true,
+            ),
+            "unknown_conflict"
+        );
+
+        assert_eq!(
+            classify_transition_reject_reason(&expected, None, None, "solver-a", None, false,),
+            "job_not_found"
+        );
     }
 }
